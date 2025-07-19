@@ -44,6 +44,20 @@ impl AudioManager {
     }
 
     pub fn get_default_input_device(&self) -> Result<cpal::Device> {
+        // Try to find MiniFuse first, then fall back to default
+        let input_devices = self.host.input_devices()
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to enumerate input devices: {}", e)))?;
+            
+        for device in input_devices {
+            if let Ok(name) = device.name() {
+                if name.contains("MiniFuse") {
+                    println!("🎤 Found MiniFuse: {}", name);
+                    return Ok(device);
+                }
+            }
+        }
+        
+        // Fall back to default device
         self.host.default_input_device()
             .ok_or_else(|| BatcherbirdError::Audio("No default input device found".to_string()))
     }

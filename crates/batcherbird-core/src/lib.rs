@@ -7,6 +7,8 @@ pub mod midi;
 pub mod audio;
 pub mod session;
 pub mod config;
+pub mod sampler;
+pub mod export;
 
 pub use error::{BatcherbirdError, Result};
 
