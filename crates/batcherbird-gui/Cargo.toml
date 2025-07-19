@@ -1,0 +1,10 @@
+[package]
+name = "batcherbird-gui"
+version = "0.1.0"
+edition = "2021"
+description = "GUI interface for Batcherbird hardware synthesizer sampling"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+batcherbird-core = { path = "../batcherbird-core" }
+# Tauri dependencies will be added in Phase 3

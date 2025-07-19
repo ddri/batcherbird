@@ -1,0 +1,43 @@
+[workspace]
+members = [
+    "crates/batcherbird-core",
+    "crates/batcherbird-cli",
+    "crates/batcherbird-gui",
+]
+resolver = "2"
+
+[workspace.dependencies]
+# Audio/MIDI core dependencies
+midir = "0.10"
+cpal = "0.15"
+hound = "3.5"
+
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# UUID for session IDs
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"

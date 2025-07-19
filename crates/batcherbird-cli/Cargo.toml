@@ -1,0 +1,18 @@
+[package]
+name = "batcherbird-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI interface for Batcherbird hardware synthesizer sampling"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "batcherbird"
+path = "src/main.rs"
+
+[dependencies]
+batcherbird-core = { path = "../batcherbird-core" }
+clap = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
