@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0.0",
+  "productName": "Batcherbird",
+  "version": "0.1.0",
+  "identifier": "com.batcherbird.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Batcherbird",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}
