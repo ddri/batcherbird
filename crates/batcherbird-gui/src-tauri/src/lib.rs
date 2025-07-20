@@ -1,51 +1,109 @@
-use batcherbird_core::{midi::MidiManager, audio::AudioManager};
+use batcherbird_core::{
+    midi::MidiManager, 
+    audio::AudioManager
+};
 use midir::MidiOutputConnection;
 use std::sync::Mutex;
 use std::time::Duration;
 
-// Global state for device managers
+// Simple working pattern - don't break what works
 static MIDI_MANAGER: Mutex<Option<MidiManager>> = Mutex::new(None);
 static MIDI_CONNECTION: Mutex<Option<MidiOutputConnection>> = Mutex::new(None);
-static AUDIO_MANAGER: Mutex<Option<AudioManager>> = Mutex::new(None);
 
 #[tauri::command]
 async fn list_midi_devices() -> Result<Vec<String>, String> {
-    let mut midi_manager = MidiManager::new().map_err(|e| e.to_string())?;
-    let devices = midi_manager.list_output_devices().map_err(|e| e.to_string())?;
+    println!("🎹 Listing MIDI devices...");
     
-    // Store the manager for later use
-    *MIDI_MANAGER.lock().unwrap() = Some(midi_manager);
+    let mut manager_guard = MIDI_MANAGER.lock().unwrap();
+    let midi_manager = match manager_guard.as_mut() {
+        Some(manager) => manager,
+        None => {
+            let new_manager = MidiManager::new().map_err(|e| {
+                println!("❌ Failed to create MIDI manager: {}", e);
+                e.to_string()
+            })?;
+            *manager_guard = Some(new_manager);
+            manager_guard.as_mut().unwrap()
+        }
+    };
+    
+    let devices = midi_manager.list_output_devices().map_err(|e| {
+        println!("❌ Failed to list MIDI devices: {}", e);
+        e.to_string()
+    })?;
+    
+    println!("🎹 Found {} MIDI devices:", devices.len());
+    for (i, device) in devices.iter().enumerate() {
+        println!("  {}: {}", i, device);
+    }
     
     Ok(devices)
 }
 
 #[tauri::command]
 async fn list_audio_input_devices() -> Result<Vec<String>, String> {
-    let audio_manager = AudioManager::new().map_err(|e| e.to_string())?;
-    let devices = audio_manager.list_input_devices().map_err(|e| e.to_string())?;
+    println!("🎤 Listing audio input devices...");
+    let audio_manager = AudioManager::new().map_err(|e| {
+        println!("❌ Failed to create audio manager: {}", e);
+        e.to_string()
+    })?;
     
-    // Store the manager for later use
-    *AUDIO_MANAGER.lock().unwrap() = Some(audio_manager);
+    let devices = audio_manager.list_input_devices().map_err(|e| {
+        println!("❌ Failed to list audio input devices: {}", e);
+        e.to_string()
+    })?;
+    
+    println!("🎤 Found {} audio input devices:", devices.len());
+    for (i, device) in devices.iter().enumerate() {
+        println!("  {}: {}", i, device);
+    }
     
     Ok(devices)
 }
 
 #[tauri::command]
 async fn list_audio_output_devices() -> Result<Vec<String>, String> {
-    let audio_manager = AudioManager::new().map_err(|e| e.to_string())?;
-    audio_manager.list_output_devices().map_err(|e| e.to_string())
+    println!("🔊 Listing audio output devices...");
+    let audio_manager = AudioManager::new().map_err(|e| {
+        println!("❌ Failed to create audio manager: {}", e);
+        e.to_string()
+    })?;
+    
+    let devices = audio_manager.list_output_devices().map_err(|e| {
+        println!("❌ Failed to list audio output devices: {}", e);
+        e.to_string()
+    })?;
+    
+    println!("🔊 Found {} audio output devices:", devices.len());
+    for (i, device) in devices.iter().enumerate() {
+        println!("  {}: {}", i, device);
+    }
+    
+    Ok(devices)
 }
 
 #[tauri::command]
 async fn connect_midi_device(device_index: usize) -> Result<String, String> {
+    println!("🔌 Connecting to MIDI device index: {}", device_index);
+    
     let mut manager_guard = MIDI_MANAGER.lock().unwrap();
-    if let Some(ref mut midi_manager) = manager_guard.as_mut() {
-        let connection = midi_manager.connect_output(device_index).map_err(|e| e.to_string())?;
-        *MIDI_CONNECTION.lock().unwrap() = Some(connection);
-        Ok(format!("Connected to MIDI device {}", device_index))
-    } else {
-        Err("MIDI manager not initialized. List devices first.".to_string())
-    }
+    let midi_manager = match manager_guard.as_mut() {
+        Some(manager) => manager,
+        None => {
+            println!("❌ No MIDI manager available - list devices first");
+            return Err("MIDI manager not initialized. Please refresh MIDI devices first.".to_string());
+        }
+    };
+    
+    let connection = midi_manager.connect_output(device_index).map_err(|e| {
+        println!("❌ Failed to connect to MIDI device {}: {}", device_index, e);
+        e.to_string()
+    })?;
+    
+    drop(manager_guard); // Release the manager lock before taking connection lock
+    *MIDI_CONNECTION.lock().unwrap() = Some(connection);
+    println!("✅ MIDI device {} connected successfully", device_index);
+    Ok("MIDI device connected successfully".to_string())
 }
 
 #[tauri::command]
@@ -55,7 +113,7 @@ async fn test_midi_connection() -> Result<String, String> {
         let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
         match connection_guard.take() {
             Some(conn) => conn,
-            None => return Err("No MIDI connection established".to_string()),
+            None => return Err("No MIDI connection established. Please select a MIDI device first.".to_string()),
         }
     };
     
@@ -73,6 +131,39 @@ async fn test_midi_connection() -> Result<String, String> {
     }
 }
 
+#[tauri::command]
+async fn preview_note(note: u8, velocity: u8, duration: u32) -> Result<String, String> {
+    println!("🎵 Preview note: {} (velocity: {}, duration: {}ms)", note, velocity, duration);
+    
+    // Extract the connection from the mutex and drop the guard
+    let mut connection = {
+        let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
+        match connection_guard.take() {
+            Some(conn) => conn,
+            None => return Err("No MIDI connection established. Please select a MIDI device first.".to_string()),
+        }
+    };
+    
+    // Send the note with custom parameters
+    let result = MidiManager::send_test_note(
+        &mut connection, 
+        0, // channel 0
+        note, 
+        velocity, 
+        Duration::from_millis(duration as u64)
+    )
+    .await
+    .map_err(|e| e.to_string());
+    
+    // Put the connection back
+    *MIDI_CONNECTION.lock().unwrap() = Some(connection);
+    
+    match result {
+        Ok(_) => Ok(format!("Preview note {} sent successfully", note)),
+        Err(e) => Err(e),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -80,8 +171,9 @@ pub fn run() {
       list_midi_devices, 
       list_audio_input_devices,
       list_audio_output_devices,
-      connect_midi_device, 
-      test_midi_connection
+      connect_midi_device,
+      test_midi_connection,
+      preview_note
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

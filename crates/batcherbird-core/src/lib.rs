@@ -5,6 +5,7 @@
 pub mod error;
 pub mod midi;
 pub mod audio;
+pub mod device;
 pub mod session;
 pub mod config;
 pub mod sampler;
