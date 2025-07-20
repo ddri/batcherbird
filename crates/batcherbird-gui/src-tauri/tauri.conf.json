@@ -1,26 +1,25 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Tauri App",
+  "productName": "Batcherbird",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "com.batcherbird.gui",
   "build": {
-    "frontendDist": "../dist",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "frontendDist": "../frontend"
   },
   "app": {
     "windows": [
       {
-        "title": "Tauri",
-        "width": 800,
-        "height": 600,
+        "title": "Batcherbird",
+        "width": 1200,
+        "height": 800,
         "resizable": true,
         "fullscreen": false
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": true,
