@@ -1,6 +1,8 @@
 use batcherbird_core::{
     midi::MidiManager, 
-    audio::AudioManager
+    audio::AudioManager,
+    sampler::Sample,
+    export::{SampleExporter, ExportConfig, AudioFormat}
 };
 use midir::MidiOutputConnection;
 use std::sync::Mutex;
@@ -177,17 +179,41 @@ async fn record_sample(note: u8, velocity: u8, duration: u32) -> Result<String, 
         }
     };
     
-    // Create audio manager for recording
-    let audio_manager = AudioManager::new().map_err(|e| {
+    // Create audio manager for recording (will be used for real recording later)
+    let _audio_manager = AudioManager::new().map_err(|e| {
         println!("❌ Failed to create audio manager: {}", e);
         e.to_string()
     })?;
     
     println!("🎤 Starting audio recording...");
     
-    // Simulate recording with a delay (for now)
-    println!("🎤 Simulating audio recording for {}ms...", duration);
-    let audio_data = vec![0.0; 48000 * 2]; // Dummy audio data
+    // Generate a test sine wave for the MIDI note (for now)
+    println!("🎤 Generating test audio for note {} for {}ms...", note, duration);
+    let sample_rate = 48000;
+    let duration_samples = ((duration as f32 / 1000.0) * sample_rate as f32) as usize;
+    let frequency = 440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0); // A4 = 440Hz reference
+    
+    let mut audio_data = Vec::with_capacity(duration_samples * 2); // Stereo
+    for i in 0..duration_samples {
+        let t = i as f32 / sample_rate as f32;
+        let amplitude = 0.3; // Keep volume reasonable
+        let sample_value = amplitude * (2.0 * std::f32::consts::PI * frequency * t).sin();
+        
+        // Apply envelope (attack and decay)
+        let envelope = if i < sample_rate / 10 {
+            // 100ms attack
+            (i as f32) / (sample_rate as f32 / 10.0)
+        } else if i > duration_samples - sample_rate / 5 {
+            // 200ms decay
+            ((duration_samples - i) as f32) / (sample_rate as f32 / 5.0)
+        } else {
+            1.0
+        };
+        
+        let final_sample = sample_value * envelope;
+        audio_data.push(final_sample); // Left channel
+        audio_data.push(final_sample); // Right channel (same as left for mono content)
+    }
     
     // Small delay before triggering MIDI to ensure recording is ready
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -210,14 +236,42 @@ async fn record_sample(note: u8, velocity: u8, duration: u32) -> Result<String, 
     
     // Wait for the MIDI note to complete
     tokio::time::sleep(Duration::from_millis((duration + 500) as u64)).await;
-    println!("🎤 Audio recording simulation completed");
+    println!("🎤 Test audio generation completed ({}Hz sine wave)", frequency);
     
-    println!("✅ Sample recorded successfully! {} samples captured", audio_data.len());
+    let audio_data_len = audio_data.len();
+    println!("✅ Sample recorded successfully! {} samples captured", audio_data_len);
     
-    // TODO: Save audio data to WAV file using export functionality
+    // Create a Sample struct for export
+    let sample = Sample {
+        note,
+        velocity,
+        audio_data,
+        sample_rate: 48000,  // Standard sample rate
+        channels: 2,         // Stereo
+        recorded_at: std::time::SystemTime::now(),
+        midi_timing: Duration::from_millis(duration as u64),
+        audio_timing: Duration::from_millis((duration + 500) as u64),
+    };
     
+    // Set up export configuration
+    let export_config = ExportConfig {
+        output_directory: std::path::PathBuf::from("./samples"),
+        naming_pattern: "batcherbird_{note_name}_{note}_{velocity}.wav".to_string(),
+        sample_format: AudioFormat::Wav24Bit,
+        normalize: true,
+        fade_in_ms: 0.0,
+        fade_out_ms: 10.0,
+    };
+    
+    // Export the sample to WAV file
+    let exporter = SampleExporter::new(export_config).map_err(|e| e.to_string())?;
+    let file_path = exporter.export_sample(&sample).map_err(|e| e.to_string())?;
+    
+    println!("💾 Sample saved to: {}", file_path.display());
+    
+    let sample_count = sample.audio_data.len();
     match midi_result {
-        Ok(_) => Ok(format!("Sample recorded: note {} ({} samples captured)", note, audio_data.len())),
+        Ok(_) => Ok(format!("Sample recorded and saved: {} ({} samples)", file_path.file_name().unwrap().to_string_lossy(), sample_count)),
         Err(e) => Err(format!("MIDI failed but audio recorded: {}", e)),
     }
 }

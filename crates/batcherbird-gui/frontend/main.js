@@ -50,6 +50,24 @@ async function loadMidiDevices() {
                 (!selectedMidiDevice && device.includes('MiniFuse'))) {
                 option.selected = true;
                 selectedMidiDevice = device;
+                
+                // Auto-connect to this device
+                setTimeout(async () => {
+                    try {
+                        console.log('Auto-connecting to MIDI device:', device, 'at index:', index);
+                        const result = await invoke('connect_midi_device', { deviceIndex: index });
+                        console.log('Auto-connection result:', result);
+                        showStatus(`Auto-connected to MIDI: ${device}`, 'success');
+                        
+                        // Enable preview button
+                        const previewBtn = document.getElementById('preview-btn');
+                        previewBtn.disabled = false;
+                        console.log('Preview button auto-enabled');
+                    } catch (error) {
+                        console.error('Auto-connection failed:', error);
+                        showStatus(`Failed to auto-connect to MIDI: ${error}`, 'error');
+                    }
+                }, 500); // Small delay to ensure UI is ready
             }
             
             select.appendChild(option);
