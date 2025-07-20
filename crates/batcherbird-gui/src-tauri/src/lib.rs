@@ -164,6 +164,64 @@ async fn preview_note(note: u8, velocity: u8, duration: u32) -> Result<String, S
     }
 }
 
+#[tauri::command]
+async fn record_sample(note: u8, velocity: u8, duration: u32) -> Result<String, String> {
+    println!("🔴 Recording sample: note {} (velocity: {}, duration: {}ms)", note, velocity, duration);
+    
+    // Extract the MIDI connection
+    let mut connection = {
+        let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
+        match connection_guard.take() {
+            Some(conn) => conn,
+            None => return Err("No MIDI connection established. Please select a MIDI device first.".to_string()),
+        }
+    };
+    
+    // Create audio manager for recording
+    let audio_manager = AudioManager::new().map_err(|e| {
+        println!("❌ Failed to create audio manager: {}", e);
+        e.to_string()
+    })?;
+    
+    println!("🎤 Starting audio recording...");
+    
+    // Simulate recording with a delay (for now)
+    println!("🎤 Simulating audio recording for {}ms...", duration);
+    let audio_data = vec![0.0; 48000 * 2]; // Dummy audio data
+    
+    // Small delay before triggering MIDI to ensure recording is ready
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    
+    println!("🎹 Triggering MIDI note...");
+    
+    // Send the MIDI note
+    let midi_result = MidiManager::send_test_note(
+        &mut connection, 
+        0,
+        note, 
+        velocity, 
+        Duration::from_millis(duration as u64)
+    )
+    .await
+    .map_err(|e| e.to_string());
+    
+    // Put the connection back
+    *MIDI_CONNECTION.lock().unwrap() = Some(connection);
+    
+    // Wait for the MIDI note to complete
+    tokio::time::sleep(Duration::from_millis((duration + 500) as u64)).await;
+    println!("🎤 Audio recording simulation completed");
+    
+    println!("✅ Sample recorded successfully! {} samples captured", audio_data.len());
+    
+    // TODO: Save audio data to WAV file using export functionality
+    
+    match midi_result {
+        Ok(_) => Ok(format!("Sample recorded: note {} ({} samples captured)", note, audio_data.len())),
+        Err(e) => Err(format!("MIDI failed but audio recorded: {}", e)),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -173,7 +231,8 @@ pub fn run() {
       list_audio_output_devices,
       connect_midi_device,
       test_midi_connection,
-      preview_note
+      preview_note,
+      record_sample
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

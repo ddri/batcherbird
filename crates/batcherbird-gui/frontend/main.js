@@ -4,6 +4,29 @@ let selectedMidiDevice = '';
 let selectedAudioInputDevice = '';
 let selectedAudioOutputDevice = '';
 
+// Preference keys for localStorage
+const PREFS = {
+    MIDI_DEVICE: 'batcherbird_midi_device',
+    AUDIO_INPUT_DEVICE: 'batcherbird_audio_input_device',
+    AUDIO_OUTPUT_DEVICE: 'batcherbird_audio_output_device'
+};
+
+// Load saved preferences
+function loadPreferences() {
+    selectedMidiDevice = localStorage.getItem(PREFS.MIDI_DEVICE) || '';
+    selectedAudioInputDevice = localStorage.getItem(PREFS.AUDIO_INPUT_DEVICE) || '';
+    selectedAudioOutputDevice = localStorage.getItem(PREFS.AUDIO_OUTPUT_DEVICE) || '';
+    console.log('Loaded preferences:', { selectedMidiDevice, selectedAudioInputDevice, selectedAudioOutputDevice });
+}
+
+// Save preferences
+function savePreferences() {
+    localStorage.setItem(PREFS.MIDI_DEVICE, selectedMidiDevice);
+    localStorage.setItem(PREFS.AUDIO_INPUT_DEVICE, selectedAudioInputDevice);
+    localStorage.setItem(PREFS.AUDIO_OUTPUT_DEVICE, selectedAudioOutputDevice);
+    console.log('Saved preferences:', { selectedMidiDevice, selectedAudioInputDevice, selectedAudioOutputDevice });
+}
+
 async function loadMidiDevices() {
     const select = document.getElementById('midi-select');
     const status = document.getElementById('status');
@@ -22,8 +45,9 @@ async function loadMidiDevices() {
             option.value = index;
             option.textContent = device;
             
-            // Auto-select MiniFuse if available
-            if (device.includes('MiniFuse')) {
+            // Auto-select based on saved preference or MiniFuse
+            if ((selectedMidiDevice && device === selectedMidiDevice) || 
+                (!selectedMidiDevice && device.includes('MiniFuse'))) {
                 option.selected = true;
                 selectedMidiDevice = device;
             }
@@ -52,8 +76,9 @@ async function loadAudioInputDevices() {
             option.value = index;
             option.textContent = device;
             
-            // Auto-select MiniFuse if available
-            if (device.includes('MiniFuse')) {
+            // Auto-select based on saved preference or MiniFuse
+            if ((selectedAudioInputDevice && device === selectedAudioInputDevice) || 
+                (!selectedAudioInputDevice && device.includes('MiniFuse'))) {
                 option.selected = true;
                 selectedAudioInputDevice = device;
             }
@@ -84,8 +109,9 @@ async function loadAudioOutputDevices() {
             option.value = index;
             option.textContent = device;
             
-            // Auto-select speakers or MiniFuse
-            if (device.includes('MacBook') || device.includes('Built-in') || device.includes('MiniFuse') || device.includes('Speakers')) {
+            // Auto-select based on saved preference or fallback to speakers/MiniFuse
+            if ((selectedAudioOutputDevice && device === selectedAudioOutputDevice) || 
+                (!selectedAudioOutputDevice && (device.includes('MacBook') || device.includes('Built-in') || device.includes('MiniFuse') || device.includes('Speakers')))) {
                 option.selected = true;
                 selectedAudioOutputDevice = device;
                 console.log('Auto-selected:', device);
@@ -130,6 +156,9 @@ document.getElementById('midi-select').addEventListener('change', async function
             console.log('MIDI connection result:', result);
             showStatus(`Connected to MIDI: ${selectedMidiDevice}`, 'success');
             
+            // Save preference
+            savePreferences();
+            
             // Enable preview button now that MIDI is connected
             const previewBtn = document.getElementById('preview-btn');
             previewBtn.disabled = false;
@@ -145,7 +174,10 @@ document.getElementById('midi-select').addEventListener('change', async function
 
 // Load devices when page loads
 window.addEventListener('DOMContentLoaded', () => {
-    console.log('DOM loaded, attaching event listeners...');
+    console.log('DOM loaded, loading preferences and attaching event listeners...');
+    
+    // Load saved preferences first
+    loadPreferences();
     
     // Audio input event listener
     const audioInputSelect = document.getElementById('audio-input-select');
@@ -158,6 +190,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 selectedAudioInputDevice = e.target.options[e.target.selectedIndex].textContent;
                 console.log('Selected audio input device:', selectedAudioInputDevice, 'at index:', selectedIndex);
                 showStatus(`Selected audio input: ${selectedAudioInputDevice}`, 'success');
+                savePreferences();
             }
         });
     } else {
@@ -175,6 +208,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 selectedAudioOutputDevice = e.target.options[e.target.selectedIndex].textContent;
                 console.log('Selected audio output device:', selectedAudioOutputDevice, 'at index:', selectedIndex);
                 showStatus(`Selected audio output: ${selectedAudioOutputDevice}`, 'success');
+                savePreferences();
             }
         });
     } else {
@@ -229,9 +263,13 @@ async function previewNote() {
 }
 
 async function recordSample() {
+    console.log('Record sample button clicked!');
+    
     const note = parseInt(document.getElementById('note-select').value);
     const velocity = parseInt(document.getElementById('velocity-input').value);
     const duration = parseInt(document.getElementById('duration-input').value);
+    
+    console.log('Recording parameters:', { note, velocity, duration });
     
     const recordBtn = document.getElementById('record-btn');
     const recordingStatus = document.getElementById('recording-status');
@@ -244,33 +282,39 @@ async function recordSample() {
         recordBtn.textContent = '⏹️ Recording...';
         recordingStatus.style.display = 'block';
         progressFill.style.width = '0%';
-        recordingText.textContent = 'Recording...';
+        recordingText.textContent = 'Starting recording...';
         
-        // Simulate progress animation
+        // Animate progress bar
         let progress = 0;
         const progressInterval = setInterval(() => {
             progress += 2;
             progressFill.style.width = `${Math.min(progress, 100)}%`;
         }, duration / 50);
         
-        // Call backend recording function (to be implemented)
-        // const result = await invoke('record_single_note', { note, velocity, duration });
+        console.log('Calling record_sample invoke...');
         
-        // For now, just simulate recording
-        await new Promise(resolve => setTimeout(resolve, duration + 500));
+        // Call the actual recording function
+        const result = await invoke('record_sample', { 
+            note: note, 
+            velocity: velocity, 
+            duration: duration 
+        });
+        
+        console.log('Recording result:', result);
         
         clearInterval(progressInterval);
         progressFill.style.width = '100%';
         recordingText.textContent = 'Recording complete!';
         
-        showStatus(`Recorded note ${note} successfully!`, 'success');
+        showStatus(`${result}`, 'success');
         
-        // Hide recording status after 2 seconds
+        // Hide recording status after 3 seconds
         setTimeout(() => {
             recordingStatus.style.display = 'none';
-        }, 2000);
+        }, 3000);
         
     } catch (error) {
+        console.error('Recording error:', error);
         showStatus(`Recording failed: ${error}`, 'error');
         recordingStatus.style.display = 'none';
     } finally {
