@@ -295,7 +295,7 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
             
             let mut output_path = std::path::PathBuf::from(&output_dir);
             
-            // Create subfolder if sample name is provided (SampleRobot-style organization)
+            // Create subfolder if sample name is provided (professional organization)
             if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
                 output_path = output_path.join(name.trim());
                 println!("📁 GUI: Creating subfolder for sample: {}", name.trim());
@@ -450,7 +450,7 @@ fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, outpu
             
             let mut output_path = std::path::PathBuf::from(&output_dir);
             
-            // Create subfolder if sample name is provided (SampleRobot-style organization)
+            // Create subfolder if sample name is provided (professional organization)
             if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
                 output_path = output_path.join(name.trim());
                 println!("📁 GUI: Creating subfolder for range samples: {}", name.trim());

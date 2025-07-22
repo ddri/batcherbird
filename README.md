@@ -2,7 +2,7 @@
 
 **Professional auto-sampling tool for hardware synthesizers**
 
-Batcherbird is an open-source alternative to commercial sampling tools like SampleRobot. Built with Rust and Tauri, it provides professional-grade batch sampling of hardware synthesizers with pristine audio quality.
+Batcherbird is an open-source hardware sampling tool built with Rust and Tauri. It provides professional-grade batch sampling of hardware synthesizers with pristine audio quality, offering an accessible alternative to expensive commercial solutions.
 
 ![Batcherbird Screenshot](screenshot.png)
 
@@ -38,10 +38,10 @@ Batcherbird is an open-source alternative to commercial sampling tools like Samp
 - **Visual Feedback**: Color-coded status (Green=Connected, Red=Recording)
 
 ### 🗂️ **Smart File Organization**
-- **SampleRobot-style Folders**: Automatic instrument subfolders
-- **Kontakt-Compatible Naming**: Both note name (C4) and MIDI number (60)
+- **Professional Folder Structure**: Automatic instrument subfolders
+- **Industry-Standard Naming**: Both note name (C4) and MIDI number (60)
 - **Consistent Velocity Format**: Always use `vel064`, `vel127` format
-- **Export Format Ready**: Prepared for Kontakt (.nki) and Decent Sampler (.dspreset)
+- **Sampler-Ready Format**: Prepared for professional sampler import
 
 ### 🛠️ **Professional Workflow**
 - Native macOS folder picker integration
@@ -272,7 +272,7 @@ See [IMPLEMENTATION_PRD.md](IMPLEMENTATION_PRD.md) for technical implementation 
 
 - **macOS Only**: Currently supports macOS only (Linux/Windows planned for v0.3)
 - **Audio Permission**: Requires microphone permission for recording
-- **Export Formats**: Kontakt (.nki) and Decent Sampler (.dspreset) export planned for v0.2
+- **Export Formats**: Professional sampler format export planned for v0.2
 
 ## 📄 License
 
@@ -283,7 +283,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 - Built with [Tauri](https://tauri.app/) for native performance
 - Audio powered by [CPAL](https://github.com/RustAudio/cpal) and Core Audio
 - MIDI handling via [midir](https://github.com/Boddlnagg/midir)
-- Inspired by SampleRobot, built for the open-source community
+- Inspired by professional sampling workflows, built for the open-source community
 
 ---
 
