@@ -5,6 +5,7 @@ use crate::detection::{SampleDetector, DetectionConfig, DetectionResult};
 use midir::MidiOutputConnection;
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::time::Instant;
 use cpal::traits::{DeviceTrait, StreamTrait};
 
@@ -31,6 +32,138 @@ impl Default for SamplingConfig {
     }
 }
 
+/// Professional audio level detector for real-time metering
+#[derive(Debug)]
+pub struct AudioLevelDetector {
+    peak_level: f32,
+    rms_accumulator: f32,
+    rms_sample_count: usize,
+    rms_window_size: usize,
+    #[allow(dead_code)] // Reserved for future advanced RMS windowing
+    rms_window_samples: f32,
+}
+
+impl AudioLevelDetector {
+    pub fn new(sample_rate: u32) -> Self {
+        // Professional RMS window: 300ms for VU-style integration
+        let rms_window_size = (sample_rate as f32 * 0.3) as usize; // 300ms window
+        Self {
+            peak_level: 0.0,
+            rms_accumulator: 0.0,
+            rms_sample_count: 0,
+            rms_window_size,
+            rms_window_samples: 0.0,
+        }
+    }
+    
+    /// Process audio samples and update levels (called from audio thread)
+    pub fn process_samples(&mut self, samples: &[f32]) -> AudioLevels {
+        // Calculate peak level (instantaneous maximum)
+        for &sample in samples {
+            let abs_sample = sample.abs();
+            if abs_sample > self.peak_level {
+                self.peak_level = abs_sample;
+            }
+            
+            // Accumulate for RMS calculation
+            self.rms_accumulator += sample * sample;
+            self.rms_sample_count += 1;
+        }
+        
+        // Calculate RMS over the integration window (VU-style)
+        let rms_level = if self.rms_sample_count > 0 {
+            (self.rms_accumulator / self.rms_sample_count as f32).sqrt()
+        } else {
+            0.0
+        };
+        
+        // Reset RMS accumulator if window is full
+        if self.rms_sample_count >= self.rms_window_size {
+            self.rms_accumulator = 0.0;
+            self.rms_sample_count = 0;
+        }
+        
+        AudioLevels {
+            peak: self.peak_level,
+            rms: rms_level,
+            peak_db: if self.peak_level > 0.0 { 20.0 * self.peak_level.log10() } else { -60.0 },
+            rms_db: if rms_level > 0.0 { 20.0 * rms_level.log10() } else { -60.0 },
+        }
+    }
+    
+    /// Reset peak level (called periodically for peak hold behavior)
+    pub fn reset_peak(&mut self) {
+        self.peak_level = 0.0;
+    }
+}
+
+/// Real-time audio levels (thread-safe)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AudioLevels {
+    pub peak: f32,      // Linear peak level (0.0 to 1.0)
+    pub rms: f32,       // RMS level (0.0 to 1.0)
+    pub peak_db: f32,   // Peak in dBFS
+    pub rms_db: f32,    // RMS in dBFS
+}
+
+impl Default for AudioLevels {
+    fn default() -> Self {
+        Self {
+            peak: 0.0,
+            rms: 0.0,
+            peak_db: -60.0,
+            rms_db: -60.0,
+        }
+    }
+}
+
+/// Thread-safe level meter state using atomic operations
+#[derive(Debug)]
+pub struct LevelMeterState {
+    input_peak: AtomicU32,      // Store f32 as u32 bits for atomicity
+    input_rms: AtomicU32,
+    input_peak_db: AtomicU32,
+    input_rms_db: AtomicU32,
+    #[allow(dead_code)] // Reserved for future rate limiting features
+    last_update: std::time::Instant,
+}
+
+impl LevelMeterState {
+    pub fn new() -> Self {
+        Self {
+            input_peak: AtomicU32::new(0),
+            input_rms: AtomicU32::new(0),
+            input_peak_db: AtomicU32::new(f32::to_bits(-60.0)),
+            input_rms_db: AtomicU32::new(f32::to_bits(-60.0)),
+            last_update: std::time::Instant::now(),
+        }
+    }
+    
+    /// Update levels from audio thread (atomic write)
+    pub fn update_levels(&self, levels: AudioLevels) {
+        self.input_peak.store(f32::to_bits(levels.peak), Ordering::Relaxed);
+        self.input_rms.store(f32::to_bits(levels.rms), Ordering::Relaxed);
+        self.input_peak_db.store(f32::to_bits(levels.peak_db), Ordering::Relaxed);
+        self.input_rms_db.store(f32::to_bits(levels.rms_db), Ordering::Relaxed);
+    }
+    
+    /// Get current levels for UI (atomic read)
+    pub fn get_levels(&self) -> AudioLevels {
+        AudioLevels {
+            peak: f32::from_bits(self.input_peak.load(Ordering::Relaxed)),
+            rms: f32::from_bits(self.input_rms.load(Ordering::Relaxed)),
+            peak_db: f32::from_bits(self.input_peak_db.load(Ordering::Relaxed)),
+            rms_db: f32::from_bits(self.input_rms_db.load(Ordering::Relaxed)),
+        }
+    }
+}
+
+impl Default for LevelMeterState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Sample {
     pub note: u8,
@@ -46,6 +179,7 @@ pub struct Sample {
 pub struct SamplingEngine {
     audio_manager: AudioManager,
     config: SamplingConfig,
+    level_meter_state: Arc<LevelMeterState>,
 }
 
 impl SamplingEngine {
@@ -55,8 +189,97 @@ impl SamplingEngine {
         Ok(Self {
             audio_manager,
             config,
+            level_meter_state: Arc::new(LevelMeterState::new()),
         })
     }
+    
+    /// Get current audio levels for UI (thread-safe)
+    pub fn get_audio_levels(&self) -> AudioLevels {
+        self.level_meter_state.get_levels()
+    }
+    
+    /// Start persistent audio monitoring stream (separate from recording)
+    pub fn start_monitoring_stream(&self) -> Result<cpal::Stream> {
+        println!("🎛️ Starting persistent audio monitoring stream");
+        
+        let device = self.audio_manager.get_default_input_device()?;
+        let config = device.default_input_config()
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
+
+        let sample_rate = config.sample_rate().0;
+        let level_state = Arc::clone(&self.level_meter_state);
+        
+        use cpal::{SampleFormat, StreamConfig};
+
+        let stream_config = StreamConfig {
+            channels: config.channels(),
+            sample_rate: config.sample_rate(),
+            buffer_size: cpal::BufferSize::Default,
+        };
+
+        let stream = match config.sample_format() {
+            SampleFormat::F32 => {
+                let level_state_clone = Arc::clone(&level_state);
+                let mut level_detector = AudioLevelDetector::new(sample_rate);
+                
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        // Continuous level detection for monitoring
+                        let levels = level_detector.process_samples(data);
+                        level_state_clone.update_levels(levels);
+                    },
+                    |err| eprintln!("Audio monitoring error: {}", err),
+                    None,
+                ).map_err(|e| BatcherbirdError::Audio(format!("Failed to build monitoring stream: {}", e)))?
+            }
+            SampleFormat::I16 => {
+                let level_state_clone = Arc::clone(&level_state);
+                let mut level_detector = AudioLevelDetector::new(sample_rate);
+                
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        // Convert to f32 for level detection
+                        let f32_samples: Vec<f32> = data.iter()
+                            .map(|&sample| sample as f32 / i16::MAX as f32)
+                            .collect();
+                        
+                        let levels = level_detector.process_samples(&f32_samples);
+                        level_state_clone.update_levels(levels);
+                    },
+                    |err| eprintln!("Audio monitoring error: {}", err),
+                    None,
+                ).map_err(|e| BatcherbirdError::Audio(format!("Failed to build monitoring stream: {}", e)))?
+            }
+            SampleFormat::U16 => {
+                let level_state_clone = Arc::clone(&level_state);
+                let mut level_detector = AudioLevelDetector::new(sample_rate);
+                
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                        // Convert to f32 for level detection
+                        let f32_samples: Vec<f32> = data.iter()
+                            .map(|&sample| (sample as f32 - 32768.0) / 32768.0)
+                            .collect();
+                        
+                        let levels = level_detector.process_samples(&f32_samples);
+                        level_state_clone.update_levels(levels);
+                    },
+                    |err| eprintln!("Audio monitoring error: {}", err),
+                    None,
+                ).map_err(|e| BatcherbirdError::Audio(format!("Failed to build monitoring stream: {}", e)))?
+            }
+            _ => {
+                return Err(BatcherbirdError::Audio(format!("Unsupported sample format: {:?}", config.sample_format())));
+            }
+        };
+
+        println!("✅ Persistent audio monitoring stream created");
+        Ok(stream)
+    }
+    
 
     /// Blocking interface for Tauri GUI layer (follows TAURI_AUDIO_ARCHITECTURE.md)
     pub fn sample_single_note_blocking(
@@ -176,6 +399,8 @@ impl SamplingEngine {
         samples: Arc<Mutex<Vec<f32>>>,
         complete: Arc<Mutex<bool>>,
     ) -> Result<cpal::Stream> {
+        let level_state = Arc::clone(&self.level_meter_state);
+        let sample_rate = config.sample_rate().0;
         use cpal::{SampleFormat, StreamConfig};
 
         let stream_config = StreamConfig {
@@ -186,9 +411,16 @@ impl SamplingEngine {
 
         let stream = match config.sample_format() {
             SampleFormat::F32 => {
+                let level_state_clone = Arc::clone(&level_state);
+                let mut level_detector = AudioLevelDetector::new(sample_rate);
+                
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        // Professional level detection in audio thread
+                        let levels = level_detector.process_samples(data);
+                        level_state_clone.update_levels(levels);
+                        
                         let mut audio_samples = samples.lock().unwrap();
                         let recording_complete = complete.lock().unwrap();
                         
@@ -201,6 +433,9 @@ impl SamplingEngine {
                 ).map_err(|e| BatcherbirdError::Audio(format!("Failed to build input stream: {}", e)))?
             }
             SampleFormat::I16 => {
+                let level_state_clone = Arc::clone(&level_state);
+                let mut level_detector = AudioLevelDetector::new(sample_rate);
+                
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
@@ -208,9 +443,16 @@ impl SamplingEngine {
                         let recording_complete = complete.lock().unwrap();
                         
                         if !*recording_complete {
-                            for &sample in data {
-                                audio_samples.push(sample as f32 / i16::MAX as f32);
-                            }
+                            // Convert to f32 for level detection and storage
+                            let f32_samples: Vec<f32> = data.iter()
+                                .map(|&sample| sample as f32 / i16::MAX as f32)
+                                .collect();
+                            
+                            // Professional level detection in audio thread
+                            let levels = level_detector.process_samples(&f32_samples);
+                            level_state_clone.update_levels(levels);
+                            
+                            audio_samples.extend(f32_samples);
                         }
                     },
                     |err| eprintln!("Audio input error: {}", err),
@@ -218,6 +460,9 @@ impl SamplingEngine {
                 ).map_err(|e| BatcherbirdError::Audio(format!("Failed to build input stream: {}", e)))?
             }
             SampleFormat::U16 => {
+                let level_state_clone = Arc::clone(&level_state);
+                let mut level_detector = AudioLevelDetector::new(sample_rate);
+                
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
@@ -225,9 +470,16 @@ impl SamplingEngine {
                         let recording_complete = complete.lock().unwrap();
                         
                         if !*recording_complete {
-                            for &sample in data {
-                                audio_samples.push((sample as f32 - 32768.0) / 32768.0);
-                            }
+                            // Convert to f32 for level detection and storage
+                            let f32_samples: Vec<f32> = data.iter()
+                                .map(|&sample| (sample as f32 - 32768.0) / 32768.0)
+                                .collect();
+                            
+                            // Professional level detection in audio thread
+                            let levels = level_detector.process_samples(&f32_samples);
+                            level_state_clone.update_levels(levels);
+                            
+                            audio_samples.extend(f32_samples);
                         }
                     },
                     |err| eprintln!("Audio input error: {}", err),
@@ -251,6 +503,8 @@ impl SamplingEngine {
         samples: Arc<Mutex<Vec<f32>>>,
         recording_active: Arc<Mutex<bool>>,
     ) -> Result<cpal::Stream> {
+        let level_state = Arc::clone(&self.level_meter_state);
+        let sample_rate = config.sample_rate().0;
         use cpal::{SampleFormat, StreamConfig};
 
         let stream_config = StreamConfig {
@@ -261,9 +515,16 @@ impl SamplingEngine {
 
         let stream = match config.sample_format() {
             SampleFormat::F32 => {
+                let level_state_clone = Arc::clone(&level_state);
+                let mut level_detector = AudioLevelDetector::new(sample_rate);
+                
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        // Always update level meters, even when not recording
+                        let levels = level_detector.process_samples(data);
+                        level_state_clone.update_levels(levels);
+                        
                         let recording_flag = recording_active.lock().unwrap();
                         
                         // Only collect samples when recording is active
@@ -278,16 +539,26 @@ impl SamplingEngine {
                 ).map_err(|e| BatcherbirdError::Audio(format!("Failed to build persistent input stream: {}", e)))?
             }
             SampleFormat::I16 => {
+                let level_state_clone = Arc::clone(&level_state);
+                let mut level_detector = AudioLevelDetector::new(sample_rate);
+                
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        // Convert to f32 for level detection
+                        let f32_samples: Vec<f32> = data.iter()
+                            .map(|&sample| sample as f32 / i16::MAX as f32)
+                            .collect();
+                        
+                        // Always update level meters
+                        let levels = level_detector.process_samples(&f32_samples);
+                        level_state_clone.update_levels(levels);
+                        
                         let recording_flag = recording_active.lock().unwrap();
                         
                         if *recording_flag {
                             let mut audio_samples = samples.lock().unwrap();
-                            for &sample in data {
-                                audio_samples.push(sample as f32 / i16::MAX as f32);
-                            }
+                            audio_samples.extend(f32_samples);
                         }
                     },
                     |err| eprintln!("Persistent stream audio input error: {}", err),
@@ -295,16 +566,26 @@ impl SamplingEngine {
                 ).map_err(|e| BatcherbirdError::Audio(format!("Failed to build persistent input stream: {}", e)))?
             }
             SampleFormat::U16 => {
+                let level_state_clone = Arc::clone(&level_state);
+                let mut level_detector = AudioLevelDetector::new(sample_rate);
+                
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                        // Convert to f32 for level detection
+                        let f32_samples: Vec<f32> = data.iter()
+                            .map(|&sample| (sample as f32 - 32768.0) / 32768.0)
+                            .collect();
+                        
+                        // Always update level meters
+                        let levels = level_detector.process_samples(&f32_samples);
+                        level_state_clone.update_levels(levels);
+                        
                         let recording_flag = recording_active.lock().unwrap();
                         
                         if *recording_flag {
                             let mut audio_samples = samples.lock().unwrap();
-                            for &sample in data {
-                                audio_samples.push((sample as f32 - 32768.0) / 32768.0);
-                            }
+                            audio_samples.extend(f32_samples);
                         }
                     },
                     |err| eprintln!("Persistent stream audio input error: {}", err),

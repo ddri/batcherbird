@@ -53,6 +53,14 @@ Create the most professional, user-friendly hardware sampling tool available, co
 - [x] Professional dark theme UI
 - [x] Comprehensive error handling and user feedback
 
+### Waveform Visualization ✅
+- [x] Post-recording waveform visualization with Wavesurfer.js integration
+- [x] Interactive playback controls (play/pause, zoom, reset)
+- [x] Tauri 2.0 asset protocol integration for secure file access
+- [x] Range recording waveform display with real-time updates
+- [x] Sample information display (duration, note, velocity)
+- [x] Professional dark theme integration
+
 ---
 
 ## 🚀 **Next Release (v0.2 - Sampler Compatibility)**
@@ -84,11 +92,39 @@ Create the most professional, user-friendly hardware sampling tool available, co
   - Reason NN-XT format
   - Hardware sampler formats (Korg, etc.)
 
-### Audio Monitoring
-- [ ] **Real-time level meters**
-  - Input level monitoring during recording
-  - Peak and RMS level display
-  - Clipping detection and warnings
+### Advanced Sampling Features 🔄
+- [ ] **Real-time level meters during recording** *(Priority 1)*
+  - Professional VU-style meters with peak and RMS display
+  - Color-coded zones: Green (good), Yellow (loud), Red (clipping)
+  - Input and output level monitoring with MiniFuse integration
+  - Clipping detection with visual and audio warnings
+  - Hold peak functionality for maximum level tracking
+  - Professional broadcast-standard meter ballistics
+  
+  **Implementation Plan:**
+  - Phase 1: Backend audio analysis with atomic level storage
+  - Phase 2: Tauri command interface for frontend communication
+  - Phase 3: Professional UI components with color-coded zones
+  - Phase 4: JavaScript real-time updates at 60 FPS
+  - Phase 5: Advanced features (peak hold, clipping detection)
+  - Phase 6: Integration testing with real hardware
+
+- [ ] **Batch thumbnail view for range samples** *(Priority 2)*
+  - Grid layout of waveform thumbnails during range recording
+  - Real-time thumbnail generation as samples are recorded
+  - Visual quality assessment: identify failed recordings instantly
+  - Click-to-preview functionality for individual samples
+  - Color coding: Green (successful), Red (failed), Yellow (suspicious)
+  - Re-record failed samples workflow integration
+
+- [ ] **Sample boundary adjustment with waveform markers** *(Priority 3)*
+  - Interactive start/end boundary markers on waveform display
+  - Drag-to-adjust functionality with real-time audio preview
+  - Visual feedback: Green (start), Red (end) boundary lines
+  - Auto-detection suggestions with manual override capability
+  - Precision editing with sample-accurate positioning
+  - Batch boundary adjustment for range recordings
+  - Integration with auto-detection algorithms for refinement
 
 ---
 
@@ -101,11 +137,13 @@ Create the most professional, user-friendly hardware sampling tool available, co
   - Crossfade zones between velocity layers
   - MIDI Attack Velocity mapping reference
 
-- [ ] **Loop point detection**
-  - Automatic loop point suggestion
-  - Manual loop point adjustment
-  - Crossfade loop creation
-  - Multiple loop modes and types
+- [ ] **Advanced waveform analysis**
+  - Real-time waveform display during recording
+  - Velocity layer overlay and comparison visualization
+  - Spectral analysis integration for frequency content
+  - Loop point detection with visual crossfade preview
+  - Automatic loop point suggestion and manual adjustment
+  - Multiple loop modes with visual feedback
 
 - [ ] **Advanced sample processing**
   - Automatic sample normalization options
@@ -174,8 +212,8 @@ Create the most professional, user-friendly hardware sampling tool available, co
 - **Long-term**: Real-time analysis and visualization
 
 ### Performance Targets
-- **v0.2**: SFZ export and improved format compatibility
-- **v0.3**: Support for 128 velocity layers (professional parity)
+- **v0.2**: Waveform visualization and professional sampler format export
+- **v0.3**: Advanced waveform analysis and 128 velocity layer support
 - **v0.4**: VST host integration and automated workflows
 - **v0.5**: Sub-10ms MIDI-to-audio latency and real-time processing
 
@@ -216,10 +254,11 @@ Batcherbird welcomes contributions in all areas:
 - **Developers**: Cross-platform support, performance optimization
 
 ### Current Priorities for Contributors
-1. **Professional sampler file generation** - XML parsing and instrument creation
-2. **XML sampler export** - Sample mapping XML generation
-3. **Windows ASIO support** - Cross-platform audio driver integration
-4. **Real-time level meters** - Audio visualization and monitoring
+1. **Real-time level meters** - Professional VU-style meters with peak/RMS display and clipping detection
+2. **Professional sampler file generation** - SFZ, Kontakt (.nki), and Decent Sampler (.dspreset) export
+3. **Batch thumbnail visualization** - Grid layout of waveform thumbnails during range recording
+4. **Sample boundary editing** - Interactive drag-to-adjust waveform markers with real-time preview
+5. **Windows ASIO support** - Cross-platform audio driver integration
 
 ---
 
@@ -233,4 +272,4 @@ Batcherbird welcomes contributions in all areas:
 
 *Batcherbird is committed to providing professional-quality sampling tools that are accessible, open-source, and community-driven. Our goal is to democratize music production by offering the same capabilities as expensive commercial tools, free for all musicians.*
 
-**Next milestone: Professional sampler format export support** 🎹
+**Next milestone: Real-time level meters and advanced sampling features** 📊

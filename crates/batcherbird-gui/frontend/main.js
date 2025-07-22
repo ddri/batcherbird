@@ -1,4 +1,5 @@
 const { invoke } = window.__TAURI__.core;
+const { convertFileSrc } = window.__TAURI__.core;
 
 let selectedMidiDevice = '';
 let selectedAudioInputDevice = '';
@@ -667,6 +668,24 @@ async function recordSample() {
             recordingText.textContent = 'Recording complete!';
             showStatus(result, 'success');
             
+            // Extract file path from result message and show waveform
+            setTimeout(async () => {
+                try {
+                    // Parse the file path from the result message
+                    // Example result: "Recording saved: DW6000_C4_60_vel127.wav (45056 samples)\nLocation: /path/to/file.wav"
+                    const locationMatch = result.match(/Location: (.+\.wav)/);
+                    if (locationMatch) {
+                        const filePath = locationMatch[1];
+                        console.log('🌊 Showing waveform for recorded file:', filePath);
+                        await showWaveform(filePath, false);
+                    } else {
+                        console.log('ℹ️ Could not extract file path for waveform display');
+                    }
+                } catch (waveformError) {
+                    console.error('❌ Failed to show waveform:', waveformError);
+                }
+            }, 1000); // Delay to let file system sync
+            
         } catch (backendError) {
             console.error('❌ Backend recording failed:', backendError);
             recordingText.textContent = 'Recording failed!';
@@ -827,6 +846,9 @@ async function recordRange() {
             ? `Recording ${totalNotes} notes × ${velocities.length} velocities...`
             : `Recording ${totalNotes} notes...`;
         rangeCurrentNote.textContent = `Starting range recording...`;
+        
+        // Hide previous range waveform if shown
+        hideWaveform(true);
         
         // Show velocity info if using layers
         const rangeVelocityInfo = document.getElementById('range-velocity-info');
@@ -1289,6 +1311,30 @@ async function recordNotesWithVelocityLayersResponsiveUI(startNote, endNote, vel
                 // Update current note to show success
                 rangeCurrentNote.textContent = `✅ ${noteName} (${currentNote}) vel ${velocity} recorded`;
                 
+                // Show waveform for the recorded sample
+                try {
+                    const locationMatch = result.match(/Location: (.+\.wav)/);
+                    if (locationMatch) {
+                        const filePath = locationMatch[1];
+                        console.log('🌊 Showing range waveform for:', filePath);
+                        await showWaveform(filePath, true); // true for range mode
+                        
+                        // Update range waveform info
+                        const rangeWaveformNote = document.getElementById('range-waveform-note');
+                        const rangeWaveformVelocity = document.getElementById('range-waveform-velocity');
+                        const rangeSamplesCount = document.getElementById('range-samples-count');
+                        
+                        if (rangeWaveformNote) rangeWaveformNote.textContent = `Note: ${noteName} (${currentNote})`;
+                        if (rangeWaveformVelocity) rangeWaveformVelocity.textContent = `Velocity: ${velocity}`;
+                        if (rangeSamplesCount) {
+                            rangeSamplesCount.textContent = `Sample: ${window.rangeRecordingResults.successfulRecordings}/${totalSamples}`;
+                        }
+                    }
+                } catch (waveformError) {
+                    console.error('❌ Failed to show range waveform:', waveformError);
+                    // Don't stop recording if waveform fails
+                }
+                
             } catch (sampleError) {
                 console.error(`❌ Failed to record sample ${noteName} (${currentNote}) vel ${velocity}:`, sampleError);
                 
@@ -1594,10 +1640,505 @@ window.closeSetupModal = closeSetupModal;
 window.switchRecordingMode = switchRecordingMode;
 window.updateStatusBar = updateStatusBar;
 
+// ============================================================================
+// WAVEFORM VISUALIZATION SYSTEM
+// ============================================================================
+
+let wavesurferInstance = null;
+let rangeWavesurferInstance = null;
+let currentSamplePath = null;
+
+// Initialize Wavesurfer.js when needed
+async function initializeWaveform(containerId) {
+    console.log(`🌊 Initializing waveform in container: ${containerId}`);
+    
+    try {
+        // Import Wavesurfer dynamically
+        const WaveSurfer = (await import('https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.esm.js')).default;
+        
+        const container = document.getElementById(containerId);
+        if (!container) {
+            console.error(`❌ Waveform container not found: ${containerId}`);
+            return null;
+        }
+        
+        const wavesurfer = WaveSurfer.create({
+            container: container,
+            waveColor: '#4682B4',
+            progressColor: '#dc2626',
+            backgroundColor: '#1e1e1e',
+            height: 128,
+            normalize: true,
+            fillParent: true,
+            responsive: true
+        });
+        
+        console.log('✅ Wavesurfer instance created successfully');
+        return wavesurfer;
+        
+    } catch (error) {
+        console.error('❌ Failed to initialize Wavesurfer:', error);
+        return null;
+    }
+}
+
+// Show waveform for a recorded sample
+async function showWaveform(samplePath, isRangeMode = false) {
+    console.log(`🌊 Showing waveform for: ${samplePath}`);
+    
+    const containerId = isRangeMode ? 'range-waveform-display' : 'waveform-display';
+    const containerElement = document.getElementById(isRangeMode ? 'range-waveform-container' : 'waveform-container');
+    
+    if (!containerElement) {
+        console.error(`❌ Waveform container not found`);
+        return;
+    }
+    
+    // Show loading state
+    const displayElement = document.getElementById(containerId);
+    displayElement.innerHTML = '<div class="waveform-loading">Loading waveform...</div>';
+    containerElement.style.display = 'block';
+    
+    try {
+        // Clean the file path (remove file:// prefix if present)
+        let cleanPath = samplePath;
+        if (cleanPath.startsWith('file://')) {
+            cleanPath = cleanPath.replace('file://', '');
+        }
+        
+        console.log(`🔧 Converting file path for Tauri: ${cleanPath}`);
+        
+        // Use Tauri's convertFileSrc to get proper asset URL
+        const audioFileUrl = convertFileSrc(cleanPath);
+        console.log(`✅ Converted to asset URL: ${audioFileUrl}`);
+        
+        // Initialize wavesurfer instance if needed
+        let wavesurfer = isRangeMode ? rangeWavesurferInstance : wavesurferInstance;
+        
+        if (!wavesurfer) {
+            // Clear loading state first
+            displayElement.innerHTML = '';
+            
+            wavesurfer = await initializeWaveform(containerId);
+            if (!wavesurfer) {
+                throw new Error('Failed to initialize Wavesurfer');
+            }
+            
+            if (isRangeMode) {
+                rangeWavesurferInstance = wavesurfer;
+            } else {
+                wavesurferInstance = wavesurfer;
+            }
+        }
+        
+        // Load the audio file using the proper asset URL
+        console.log(`🌊 Loading waveform with asset URL: ${audioFileUrl}`);
+        await wavesurfer.load(audioFileUrl);
+        currentSamplePath = audioFileUrl;
+        
+        // Update info display
+        updateWaveformInfo(wavesurfer, isRangeMode);
+        
+        console.log('✅ Waveform loaded successfully');
+        
+    } catch (error) {
+        console.error('❌ Failed to load waveform:', error);
+        displayElement.innerHTML = `<div class="waveform-loading">Failed to load waveform: ${error.message}</div>`;
+    }
+}
+
+// Update waveform information display
+function updateWaveformInfo(wavesurfer, isRangeMode = false) {
+    const duration = wavesurfer.getDuration();
+    
+    if (isRangeMode) {
+        const durationSpan = document.getElementById('range-waveform-note');
+        if (durationSpan) {
+            durationSpan.textContent = `Duration: ${duration.toFixed(2)}s`;
+        }
+    } else {
+        const durationSpan = document.getElementById('waveform-duration');
+        if (durationSpan) {
+            durationSpan.textContent = `Duration: ${duration.toFixed(2)}s`;
+        }
+        
+        // TODO: Add auto-detection boundary info
+        const boundariesSpan = document.getElementById('waveform-boundaries');
+        if (boundariesSpan) {
+            boundariesSpan.textContent = `Auto-detected: Start 0.00s, End ${duration.toFixed(2)}s`;
+        }
+    }
+}
+
+// Waveform control functions
+function zoomWaveform(factor) {
+    if (wavesurferInstance) {
+        wavesurferInstance.zoom(wavesurferInstance.options.minPxPerSec * factor);
+        console.log(`🔍 Zoomed waveform by factor: ${factor}`);
+    }
+}
+
+function playWaveform() {
+    if (wavesurferInstance) {
+        if (wavesurferInstance.isPlaying()) {
+            wavesurferInstance.pause();
+            document.getElementById('waveform-play').textContent = '▶️';
+        } else {
+            wavesurferInstance.play();
+            document.getElementById('waveform-play').textContent = '⏸️';
+        }
+    }
+}
+
+function playRangeWaveform() {
+    if (rangeWavesurferInstance) {
+        if (rangeWavesurferInstance.isPlaying()) {
+            rangeWavesurferInstance.pause();
+            document.getElementById('range-waveform-play').textContent = '▶️';
+        } else {
+            rangeWavesurferInstance.play();
+            document.getElementById('range-waveform-play').textContent = '⏸️';
+        }
+    }
+}
+
+function resetWaveformView() {
+    if (wavesurferInstance) {
+        wavesurferInstance.zoom(1);
+        wavesurferInstance.seekTo(0);
+        console.log('🔄 Reset waveform view');
+    }
+}
+
+function showBatchThumbnails() {
+    // TODO: Implement batch thumbnail view
+    console.log('🖼️ Batch thumbnails feature - coming soon!');
+    showStatus('Batch thumbnails view coming in next update!', 'success');
+}
+
+// Hide waveform display
+function hideWaveform(isRangeMode = false) {
+    const containerElement = document.getElementById(isRangeMode ? 'range-waveform-container' : 'waveform-container');
+    if (containerElement) {
+        containerElement.style.display = 'none';
+    }
+}
+
+// Export waveform functions to global scope
+window.zoomWaveform = zoomWaveform;
+window.playWaveform = playWaveform;
+window.playRangeWaveform = playRangeWaveform;
+window.resetWaveformView = resetWaveformView;
+window.showBatchThumbnails = showBatchThumbnails;
+window.showWaveform = showWaveform;
+window.hideWaveform = hideWaveform;
+
+// ============================================================================
+// REAL-TIME LEVEL METERS SYSTEM - 60 FPS Professional Audio Monitoring
+// ============================================================================
+
+let levelMeterUpdateInterval = null;
+let isLevelMeterActive = false;
+let isInputMonitoringEnabled = false;
+
+// Professional level meter configuration
+const LEVEL_METER_CONFIG = {
+    updateIntervalMs: 100, // 10 FPS for development (less spam, still responsive)
+    dbFloor: -60,          // Minimum dB level to display
+    dbCeiling: 0,          // Maximum dB level (0 dBFS)
+    peakHoldTimeMs: 1500,  // Peak hold duration
+    peakDecayRate: 0.02    // Peak decay speed per frame
+};
+
+// Peak hold state for animation
+let inputPeakHold = {
+    level: LEVEL_METER_CONFIG.dbFloor,
+    timestamp: 0,
+    isDecaying: false
+};
+
+// AKAI-style input monitoring toggle function
+async function toggleInputMonitoring() {
+    const monitorBtn = document.getElementById('monitor-input-btn');
+    
+    if (!isInputMonitoringEnabled) {
+        // Start monitoring
+        try {
+            monitorBtn.textContent = '⏳ Starting...';
+            monitorBtn.disabled = true;
+            
+            await startInputMonitoring();
+            monitorBtn.classList.add('active');
+            monitorBtn.textContent = '🔴 Monitoring...';
+            console.log('🎛️ Input monitoring enabled (AKAI style)');
+            
+        } catch (error) {
+            console.error('❌ Failed to start monitoring:', error);
+            monitorBtn.textContent = '🎛️ Monitor Input';
+        } finally {
+            monitorBtn.disabled = false;
+        }
+    } else {
+        // Stop monitoring  
+        try {
+            monitorBtn.textContent = '⏳ Stopping...';
+            monitorBtn.disabled = true;
+            
+            await stopInputMonitoring();
+            monitorBtn.classList.remove('active');
+            monitorBtn.textContent = '🎛️ Monitor Input';
+            console.log('🎛️ Input monitoring disabled');
+            
+        } catch (error) {
+            console.error('❌ Failed to stop monitoring:', error);
+        } finally {
+            monitorBtn.disabled = false;
+        }
+    }
+}
+
+// Start input monitoring (professional sampler pattern)
+async function startInputMonitoring() {
+    console.log('📊 Starting input monitoring with real-time level meters');
+    
+    try {
+        // Start backend monitoring stream
+        const result = await invoke('start_input_monitoring');
+        console.log('✅ Backend monitoring started:', result);
+        
+        isInputMonitoringEnabled = true;
+        startLevelMeterUpdates();
+        
+    } catch (error) {
+        console.error('❌ Failed to start backend monitoring:', error);
+        // Reset UI on error
+        const monitorBtn = document.getElementById('monitor-input-btn');
+        monitorBtn.classList.remove('active');
+        monitorBtn.textContent = '🎛️ Monitor Input';
+        throw error;
+    }
+}
+
+// Stop input monitoring
+async function stopInputMonitoring() {
+    console.log('📊 Stopping input monitoring');
+    
+    try {
+        // Stop backend monitoring stream
+        const result = await invoke('stop_input_monitoring');
+        console.log('✅ Backend monitoring stopped:', result);
+        
+    } catch (error) {
+        console.error('❌ Failed to stop backend monitoring:', error);
+        // Continue with UI cleanup even if backend fails
+    }
+    
+    isInputMonitoringEnabled = false;
+    stopLevelMeterUpdates();
+    
+    // Reset meters to offline state
+    updateLevelMeterDisplay(null);
+}
+
+// Internal function to start level meter UI updates
+function startLevelMeterUpdates() {
+    if (levelMeterUpdateInterval) {
+        clearInterval(levelMeterUpdateInterval);
+    }
+    
+    isLevelMeterActive = true;
+    
+    // Update loop only runs when monitoring is enabled
+    levelMeterUpdateInterval = setInterval(async () => {
+        if (!isLevelMeterActive || !isInputMonitoringEnabled) {
+            return;
+        }
+        
+        try {
+            // Query backend for current audio levels
+            const audioLevels = await invoke('get_audio_levels');
+            updateLevelMeterDisplay(audioLevels);
+            
+        } catch (error) {
+            // Show offline state on error
+            updateLevelMeterDisplay(null);
+        }
+    }, LEVEL_METER_CONFIG.updateIntervalMs);
+    
+    console.log('✅ Level meter updates started');
+}
+
+// Internal function to stop level meter UI updates
+function stopLevelMeterUpdates() {
+    isLevelMeterActive = false;
+    
+    if (levelMeterUpdateInterval) {
+        clearInterval(levelMeterUpdateInterval);
+        levelMeterUpdateInterval = null;
+    }
+    
+    console.log('✅ Level meter updates stopped');
+}
+
+
+// Update level meter UI components with audio data
+function updateLevelMeterDisplay(audioLevels) {
+    const meterFill = document.getElementById('input-meter-fill');
+    const peakHold = document.getElementById('input-peak-hold');
+    const levelReadout = document.getElementById('input-level-readout');
+    const clippingWarning = document.getElementById('clipping-warning');
+    const metersPanel = document.getElementById('level-meters-panel');
+    
+    if (!meterFill || !peakHold || !levelReadout) {
+        return; // UI elements not available
+    }
+    
+    if (!audioLevels) {
+        // Show offline state
+        metersPanel.classList.add('meters-offline');
+        meterFill.style.width = '0%';
+        peakHold.style.left = '0%';
+        levelReadout.textContent = '-∞ dB';
+        clippingWarning.style.display = 'none';
+        return;
+    }
+    
+    // Remove offline state
+    metersPanel.classList.remove('meters-offline');
+    
+    const currentDb = audioLevels.rms_db;
+    const peakDb = audioLevels.peak_db;
+    
+    // Convert dB to percentage for visual display (professional VU-style)
+    // -60dB = 0%, 0dB = 100%
+    const rmsPercent = dbToPercent(currentDb);
+    const peakPercent = dbToPercent(peakDb);
+    
+    // Update RMS level bar (smooth VU-style movement)
+    meterFill.style.width = `${rmsPercent}%`;
+    
+    // Professional peak hold logic with decay animation
+    updatePeakHoldDisplay(peakDb, peakPercent, peakHold);
+    
+    // Update digital readout with precision
+    if (currentDb <= LEVEL_METER_CONFIG.dbFloor) {
+        levelReadout.textContent = '-∞ dB';
+    } else {
+        levelReadout.textContent = `${currentDb.toFixed(1)} dB`;
+    }
+    
+    // Clipping detection and warning
+    const isClipping = peakDb >= -0.1; // Near 0 dBFS
+    clippingWarning.style.display = isClipping ? 'block' : 'none';
+    
+    // Professional color zones based on level
+    updateMeterColors(meterFill, rmsPercent);
+}
+
+// Convert dB to percentage for meter display
+function dbToPercent(db) {
+    if (db <= LEVEL_METER_CONFIG.dbFloor) return 0;
+    if (db >= LEVEL_METER_CONFIG.dbCeiling) return 100;
+    
+    // Linear conversion from dB range to 0-100%
+    const range = LEVEL_METER_CONFIG.dbCeiling - LEVEL_METER_CONFIG.dbFloor;
+    const normalized = (db - LEVEL_METER_CONFIG.dbFloor) / range;
+    return Math.max(0, Math.min(100, normalized * 100));
+}
+
+// Professional peak hold with decay animation
+function updatePeakHoldDisplay(currentPeakDb, currentPeakPercent, peakHoldElement) {
+    const now = Date.now();
+    
+    // If current peak is higher, update peak hold
+    if (currentPeakDb > inputPeakHold.level) {
+        inputPeakHold.level = currentPeakDb;
+        inputPeakHold.timestamp = now;
+        inputPeakHold.isDecaying = false;
+    }
+    
+    // Check if peak hold should start decaying
+    if (!inputPeakHold.isDecaying && 
+        (now - inputPeakHold.timestamp) > LEVEL_METER_CONFIG.peakHoldTimeMs) {
+        inputPeakHold.isDecaying = true;
+    }
+    
+    // Apply decay if active
+    if (inputPeakHold.isDecaying) {
+        inputPeakHold.level -= LEVEL_METER_CONFIG.peakDecayRate;
+        
+        // Don't decay below current level or floor
+        if (inputPeakHold.level < Math.max(currentPeakDb, LEVEL_METER_CONFIG.dbFloor)) {
+            inputPeakHold.level = Math.max(currentPeakDb, LEVEL_METER_CONFIG.dbFloor);
+            inputPeakHold.isDecaying = false;
+        }
+    }
+    
+    // Update peak hold position
+    const holdPercent = dbToPercent(inputPeakHold.level);
+    peakHoldElement.style.left = `${holdPercent}%`;
+}
+
+// Professional meter color zones (broadcast standard)
+function updateMeterColors(meterFill, percent) {
+    // The CSS gradient handles colors automatically based on percentage:
+    // Green: 0-67% (-60 to -20dB)
+    // Yellow: 67-85% (-20 to -9dB)  
+    // Red: 85-100% (-9 to 0dB)
+    
+    // Colors are handled by CSS gradient, no JavaScript needed
+    // This function is reserved for future advanced color features
+}
+
+
+// Enhanced recording functions with level meter integration
+function startRecordingWithMeters() {
+    console.log('🔴 Starting recording with active level monitoring');
+    
+    // Ensure level meters are running during recording
+    if (!isLevelMeterActive) {
+        startLevelMeters();
+    }
+    
+    // TODO: Update meter state to show recording (red indicator)
+    const metersPanel = document.getElementById('level-meters-panel');
+    if (metersPanel) {
+        metersPanel.classList.add('recording-active');
+    }
+}
+
+function stopRecordingWithMeters() {
+    console.log('⏹️ Stopping recording, maintaining level monitoring');
+    
+    // Remove recording state from meters
+    const metersPanel = document.getElementById('level-meters-panel');
+    if (metersPanel) {
+        metersPanel.classList.remove('recording-active');
+    }
+    
+    // Keep level meters running for continued monitoring
+}
+
+// Initialize level meter system when page loads
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('📊 Initializing AKAI-style level meter system');
+    
+    // Initialize meters in offline state (user must click Monitor Input to activate)
+    updateLevelMeterDisplay(null);
+});
+
+// Export level meter functions to global scope
+window.toggleInputMonitoring = toggleInputMonitoring;
+window.startInputMonitoring = startInputMonitoring;
+window.stopInputMonitoring = stopInputMonitoring;
+window.updateLevelMeterDisplay = updateLevelMeterDisplay;
+
+
 // Debug: Verify functions are available
 console.log('🔧 Functions exported to window:', {
     loadMidiDevices: typeof window.loadMidiDevices,
     testMidiConnection: typeof window.testMidiConnection,
     previewNote: typeof window.previewNote,
-    recordSample: typeof window.recordSample
+    recordSample: typeof window.recordSample,
+    showWaveform: typeof window.showWaveform
 });

@@ -13,6 +13,7 @@ pub mod export;
 pub mod detection;
 
 pub use error::{BatcherbirdError, Result};
+pub use sampler::{AudioLevels, LevelMeterState};
 
 #[cfg(test)]
 mod tests {

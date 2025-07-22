@@ -1,17 +1,177 @@
 use batcherbird_core::{
     midi::MidiManager, 
     audio::AudioManager,
-    sampler::{SamplingEngine, SamplingConfig},
-    export::{SampleExporter, ExportConfig, AudioFormat}
+    sampler::{SamplingEngine, SamplingConfig, AudioLevels},
+    export::{SampleExporter, ExportConfig, AudioFormat},
 };
 use midir::MidiOutputConnection;
-use std::sync::Mutex;
+use std::sync::{Mutex, Arc};
 use std::time::Duration;
 use std::process::Command;
 
 // Simple working pattern - don't break what works
 static MIDI_MANAGER: Mutex<Option<MidiManager>> = Mutex::new(None);
 static MIDI_CONNECTION: Mutex<Option<MidiOutputConnection>> = Mutex::new(None);
+
+// Simplified monitoring state (professional approach - use existing SamplingEngine)
+static MONITORING_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static GLOBAL_SAMPLING_ENGINE: Mutex<Option<Arc<SamplingEngine>>> = Mutex::new(None);
+static MONITORING_THREAD: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
+
+
+/// Start audio input monitoring (simplified professional approach)
+#[tauri::command]
+async fn start_input_monitoring() -> Result<String, String> {
+    println!("🎛️ Starting audio input monitoring (professional approach)");
+    
+    // Check if already monitoring
+    if MONITORING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok("Audio monitoring already active".to_string());
+    }
+    
+    // Set monitoring flag first
+    MONITORING_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+    
+    // Create monitoring in a separate thread (avoids Send+Sync issues)
+    // Note: Can't clone AtomicBool, but we can access the static directly from the thread
+    
+    let handle = std::thread::spawn(move || {
+        println!("🧵 Monitoring thread started (using SamplingEngine)");
+        
+        // Create SamplingEngine in this thread
+        let config = SamplingConfig {
+            note_duration_ms: 0,     // Not used for monitoring
+            release_time_ms: 0,      // Not used for monitoring 
+            pre_delay_ms: 0,         // Not used for monitoring
+            post_delay_ms: 0,        // Not used for monitoring
+            midi_channel: 0,         // Not used for monitoring
+            velocity: 100,           // Not used for monitoring
+        };
+        
+        let sampling_engine = match SamplingEngine::new(config) {
+            Ok(engine) => {
+                println!("✅ SamplingEngine created for monitoring");
+                Arc::new(engine)
+            },
+            Err(e) => {
+                println!("❌ Failed to create SamplingEngine: {}", e);
+                MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+        };
+        
+        // Store the engine globally so we can access levels from get_audio_levels
+        {
+            let mut engine_guard = GLOBAL_SAMPLING_ENGINE.lock().unwrap();
+            *engine_guard = Some(Arc::clone(&sampling_engine));
+        }
+        
+        // Start monitoring stream using SamplingEngine's built-in method
+        let stream = match sampling_engine.start_monitoring_stream() {
+            Ok(s) => s,
+            Err(e) => {
+                println!("❌ Failed to create monitoring stream: {}", e);
+                MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+        };
+        
+        // Start the stream
+        use cpal::traits::StreamTrait;
+        if let Err(e) = stream.play() {
+            println!("❌ Failed to start monitoring stream: {}", e);
+            MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+            return;
+        }
+        
+        println!("✅ SamplingEngine monitoring stream started and playing");
+        
+        // Keep the stream alive while monitoring is active
+        while MONITORING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        
+        // Stop the stream
+        if let Err(e) = stream.pause() {
+            println!("⚠️ Warning: Failed to pause monitoring stream: {}", e);
+        }
+        
+        println!("✅ SamplingEngine monitoring thread finished");
+    });
+    
+    // Store the thread handle
+    {
+        let mut thread_guard = MONITORING_THREAD.lock().unwrap();
+        *thread_guard = Some(handle);
+    }
+    
+    println!("✅ Audio input monitoring started (using SamplingEngine infrastructure)");
+    Ok("Audio input monitoring started".to_string())
+}
+
+
+/// Stop audio input monitoring
+#[tauri::command]
+async fn stop_input_monitoring() -> Result<String, String> {
+    println!("🎛️ Stopping audio input monitoring");
+    
+    // Clear monitoring flag - this will cause the monitoring thread to exit
+    MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+    
+    // Wait for the monitoring thread to finish
+    {
+        let mut thread_guard = MONITORING_THREAD.lock().unwrap();
+        if let Some(handle) = thread_guard.take() {
+            // Drop the lock before joining to avoid deadlock
+            drop(thread_guard);
+            
+            if let Err(e) = handle.join() {
+                println!("⚠️ Warning: SamplingEngine monitoring thread did not exit cleanly: {:?}", e);
+            } else {
+                println!("✅ SamplingEngine monitoring thread joined successfully");
+            }
+        }
+    }
+    
+    // Remove the global sampling engine
+    {
+        let mut engine_guard = GLOBAL_SAMPLING_ENGINE.lock().unwrap();
+        *engine_guard = None;
+    }
+    
+    println!("✅ Audio input monitoring stopped");
+    Ok("Audio input monitoring stopped".to_string())
+}
+
+/// Get current audio levels for UI meters (simplified professional approach)
+#[tauri::command]
+async fn get_audio_levels() -> Result<AudioLevels, String> {
+    // Only return real levels when monitoring is active
+    if !MONITORING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        // Return silent levels when monitoring is off (AKAI style)
+        return Ok(AudioLevels {
+            peak: 0.0,
+            rms: 0.0,
+            peak_db: -60.0,
+            rms_db: -60.0,
+        });
+    }
+    
+    // Get levels from the global sampling engine (reuse existing infrastructure)
+    let engine_guard = GLOBAL_SAMPLING_ENGINE.lock().unwrap();
+    if let Some(engine) = engine_guard.as_ref() {
+        let levels = engine.get_audio_levels();
+        Ok(levels)
+    } else {
+        // Engine not available, return silent levels
+        Ok(AudioLevels {
+            peak: 0.0,
+            rms: 0.0,
+            peak_db: -60.0,
+            rms_db: -60.0,
+        })
+    }
+}
 
 #[tauri::command]
 async fn list_midi_devices() -> Result<Vec<String>, String> {
@@ -551,6 +711,7 @@ async fn send_midi_panic() -> Result<String, String> {
     }
 }
 
+
 #[tauri::command]
 fn show_samples_in_finder() -> Result<String, String> {
     println!("📁 Opening samples folder in Finder...");
@@ -595,7 +756,10 @@ pub fn run() {
       record_range,
       select_output_directory,
       show_samples_in_finder,
-      send_midi_panic
+      send_midi_panic,
+      start_input_monitoring,
+      stop_input_monitoring,
+      get_audio_levels
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
