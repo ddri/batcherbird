@@ -132,7 +132,7 @@ impl MidiManager {
         Ok(conn_in)
     }
 
-    fn print_midi_message(timestamp_ms: u128, midi_timestamp: u64, message: &[u8]) {
+    fn print_midi_message(timestamp_ms: u128, _midi_timestamp: u64, message: &[u8]) {
         if message.is_empty() {
             return;
         }
@@ -186,5 +186,76 @@ impl MidiManager {
         let octave = (note / 12).saturating_sub(1);
         let note_name = note_names[(note % 12) as usize];
         format!("{}{}", note_name, octave)
+    }
+
+    /// Send MIDI Panic - All Notes Off on all channels
+    /// Professional standard for handling stuck notes (like Logic/Ableton's panic button)
+    /// Enhanced for vintage synths like DW6000 that need specific timing
+    pub fn send_midi_panic(conn: &mut MidiOutputConnection) -> Result<()> {
+        println!("🚨 MIDI Panic: Enhanced panic for vintage synths...");
+        
+        let mut notes_sent = 0;
+        
+        // PHASE 1: Quick emergency stop (most reliable for stuck notes)
+        for channel in 0..16 {
+            // Send All Notes Off CC (123) - fastest method
+            let all_notes_off = [0xB0 | channel, 123, 0];
+            let _ = conn.send(&all_notes_off); // Best effort, don't fail on error
+            
+            // Send All Sound Off CC (120) - more aggressive  
+            let all_sound_off = [0xB0 | channel, 120, 0];
+            let _ = conn.send(&all_sound_off);
+        }
+        
+        // Brief pause for vintage synths to process CCs (DW6000 needs this)
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        
+        // PHASE 2: Individual note offs for synths that ignore CCs
+        for channel in 0..16 {
+            for note in 0..128 {
+                let note_off = [0x80 | channel, note, 0];
+                if conn.send(&note_off).is_ok() {
+                    notes_sent += 1;
+                }
+                
+                // Tiny delay every 32 notes for vintage MIDI parsing
+                if note % 32 == 31 {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+            
+            // Reset All Controllers CC (121) 
+            let reset_controllers = [0xB0 | channel, 121, 0];
+            let _ = conn.send(&reset_controllers);
+        }
+        
+        // PHASE 3: Final safety (some synths need repeated messages)
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        for channel in 0..16 {
+            let all_notes_off = [0xB0 | channel, 123, 0];
+            let _ = conn.send(&all_notes_off);
+        }
+        
+        println!("✅ Enhanced MIDI Panic complete: {} individual note-offs + CC messages", notes_sent);
+        Ok(())
+    }
+
+    /// Send a quick MIDI panic for a specific channel
+    pub fn send_channel_panic(conn: &mut MidiOutputConnection, channel: u8) -> Result<()> {
+        let channel = channel & 0x0F;
+        println!("🚨 Channel {} Panic: Sending All Notes Off...", channel + 1);
+        
+        // Send All Notes Off CC
+        let all_notes_off = [0xB0 | channel, 123, 0];
+        conn.send(&all_notes_off)
+            .map_err(|e| BatcherbirdError::Session(format!("Failed to send All Notes Off: {:?}", e)))?;
+        
+        // Send Reset All Controllers CC
+        let reset_controllers = [0xB0 | channel, 121, 0];
+        conn.send(&reset_controllers)
+            .map_err(|e| BatcherbirdError::Session(format!("Failed to send Reset Controllers: {:?}", e)))?;
+        
+        println!("✅ Channel {} panic complete", channel + 1);
+        Ok(())
     }
 }

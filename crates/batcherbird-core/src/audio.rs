@@ -1,5 +1,5 @@
 use crate::{Result, BatcherbirdError};
-use cpal::{Host, Stream, StreamConfig, SampleFormat, traits::{DeviceTrait, HostTrait, StreamTrait}};
+use cpal::{Host, StreamConfig, SampleFormat, traits::{DeviceTrait, HostTrait, StreamTrait}};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 

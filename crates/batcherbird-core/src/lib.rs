@@ -10,6 +10,7 @@ pub mod session;
 pub mod config;
 pub mod sampler;
 pub mod export;
+pub mod detection;
 
 pub use error::{BatcherbirdError, Result};
 

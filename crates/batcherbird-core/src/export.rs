@@ -1,5 +1,6 @@
 use crate::{Result, BatcherbirdError};
 use crate::sampler::Sample;
+use crate::detection::DetectionConfig;
 use hound::{WavWriter, WavSpec, SampleFormat};
 use std::path::{Path, PathBuf};
 use std::fs;
@@ -12,6 +13,8 @@ pub struct ExportConfig {
     pub normalize: bool,
     pub fade_in_ms: f32,
     pub fade_out_ms: f32,
+    pub apply_detection: bool,
+    pub detection_config: DetectionConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +33,8 @@ impl Default for ExportConfig {
             normalize: false,
             fade_in_ms: 0.0,
             fade_out_ms: 10.0,
+            apply_detection: true,  // Enable detection by default
+            detection_config: DetectionConfig::default(),
         }
     }
 }
@@ -55,8 +60,31 @@ impl SampleExporter {
         
         println!("💾 Exporting sample: {}", filename);
         
+        // Clone sample for processing (detection may modify audio data)
+        let mut sample_copy = sample.clone();
+        
+        // Apply sample detection if enabled
+        if self.config.apply_detection {
+            println!("🔍 Applying sample detection...");
+            match sample_copy.apply_detection(self.config.detection_config.clone()) {
+                Ok(detection_result) => {
+                    if detection_result.success {
+                        println!("   ✅ Detection successful, sample trimmed");
+                    } else {
+                        println!("   ⚠️ Detection failed: {}", 
+                            detection_result.failure_reason.as_deref().unwrap_or("Unknown"));
+                        println!("   📝 Exporting original sample without trimming");
+                    }
+                },
+                Err(e) => {
+                    println!("   ❌ Detection error: {}", e);
+                    println!("   📝 Exporting original sample without trimming");
+                }
+            }
+        }
+        
         // Process audio data
-        let mut audio_data = sample.audio_data.clone();
+        let mut audio_data = sample_copy.audio_data.clone();
         
         // Apply fades if configured
         if self.config.fade_in_ms > 0.0 || self.config.fade_out_ms > 0.0 {
@@ -94,10 +122,11 @@ impl SampleExporter {
         let note_name = Self::note_to_name(sample.note);
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
         
+        // Consistent "vel" prefix naming for all samples: C4_60_vel127.wav
         self.config.naming_pattern
             .replace("{note}", &sample.note.to_string())
             .replace("{note_name}", &note_name)
-            .replace("{velocity}", &sample.velocity.to_string())
+            .replace("{velocity}", &format!("vel{:03}", sample.velocity)) // vel064, vel127
             .replace("{timestamp}", &timestamp.to_string())
             .replace("{sample_rate}", &sample.sample_rate.to_string())
     }
@@ -146,6 +175,16 @@ impl SampleExporter {
     }
 
     fn write_wav_file(&self, filepath: &Path, audio_data: &[f32], sample: &Sample) -> Result<()> {
+        println!("🔍 Writing WAV file: {} ({} samples)", filepath.display(), audio_data.len());
+        
+        // Validate audio data first
+        if audio_data.is_empty() {
+            return Err(BatcherbirdError::Export(std::io::Error::new(
+                std::io::ErrorKind::InvalidData, 
+                "Cannot export empty audio data"
+            )));
+        }
+        
         let spec = match self.config.sample_format {
             AudioFormat::Wav16Bit => WavSpec {
                 channels: sample.channels,
@@ -167,34 +206,94 @@ impl SampleExporter {
             },
         };
 
-        let mut writer = WavWriter::create(filepath, spec)
-            .map_err(|e| BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        println!("🔍 WAV spec: {}Hz, {} channels, {} bits", spec.sample_rate, spec.channels, spec.bits_per_sample);
 
+        // Create writer with explicit error handling
+        let mut writer = match WavWriter::create(filepath, spec) {
+            Ok(w) => {
+                println!("✅ WAV writer created successfully");
+                w
+            },
+            Err(e) => {
+                println!("❌ Failed to create WAV writer: {}", e);
+                return Err(BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)));
+            }
+        };
+
+        // Write samples with progress tracking
+        let total_samples = audio_data.len();
         match self.config.sample_format {
             AudioFormat::Wav16Bit => {
-                for &sample in audio_data {
+                for (i, &sample) in audio_data.iter().enumerate() {
                     let sample_i16 = (sample * i16::MAX as f32) as i16;
-                    writer.write_sample(sample_i16)
-                        .map_err(|e| BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                    if let Err(e) = writer.write_sample(sample_i16) {
+                        println!("❌ Failed to write sample {} of {}: {}", i, total_samples, e);
+                        return Err(BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)));
+                    }
                 }
             }
             AudioFormat::Wav24Bit => {
-                for &sample in audio_data {
+                for (i, &sample) in audio_data.iter().enumerate() {
                     let sample_i32 = (sample * 8_388_607.0) as i32; // 24-bit max value
-                    writer.write_sample(sample_i32)
-                        .map_err(|e| BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                    if let Err(e) = writer.write_sample(sample_i32) {
+                        println!("❌ Failed to write sample {} of {}: {}", i, total_samples, e);
+                        return Err(BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)));
+                    }
                 }
             }
             AudioFormat::Wav32BitFloat => {
-                for &sample in audio_data {
-                    writer.write_sample(sample)
-                        .map_err(|e| BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                for (i, &sample) in audio_data.iter().enumerate() {
+                    if let Err(e) = writer.write_sample(sample) {
+                        println!("❌ Failed to write sample {} of {}: {}", i, total_samples, e);
+                        return Err(BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)));
+                    }
                 }
             }
         }
 
-        writer.finalize()
-            .map_err(|e| BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        println!("✅ All {} samples written, finalizing...", total_samples);
+
+        // Finalize with explicit error handling
+        match writer.finalize() {
+            Ok(_) => {
+                println!("✅ WAV file finalized successfully");
+            },
+            Err(e) => {
+                println!("❌ Failed to finalize WAV file: {}", e);
+                return Err(BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)));
+            }
+        }
+
+        // Explicitly sync file to disk to prevent corruption during rapid batch exports
+        match std::fs::File::open(filepath) {
+            Ok(file) => {
+                if let Err(e) = file.sync_all() {
+                    println!("⚠️ Warning: Failed to sync file to disk: {}", e);
+                } else {
+                    println!("✅ File synced to disk successfully");
+                }
+            },
+            Err(e) => {
+                println!("⚠️ Warning: Could not reopen file for sync: {}", e);
+            }
+        }
+
+        // Verify file was created and has reasonable size
+        match std::fs::metadata(filepath) {
+            Ok(metadata) => {
+                let file_size = metadata.len();
+                println!("✅ File created: {} bytes", file_size);
+                
+                // Basic sanity check - WAV header is 44 bytes, so file should be larger
+                if file_size < 100 {
+                    println!("⚠️ Warning: File size suspiciously small: {} bytes", file_size);
+                }
+            },
+            Err(e) => {
+                println!("❌ Failed to verify file creation: {}", e);
+                return Err(BatcherbirdError::Export(e));
+            }
+        }
 
         Ok(())
     }

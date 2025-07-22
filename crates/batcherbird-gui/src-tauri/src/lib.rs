@@ -1,12 +1,13 @@
 use batcherbird_core::{
     midi::MidiManager, 
     audio::AudioManager,
-    sampler::Sample,
+    sampler::{SamplingEngine, SamplingConfig},
     export::{SampleExporter, ExportConfig, AudioFormat}
 };
 use midir::MidiOutputConnection;
 use std::sync::Mutex;
 use std::time::Duration;
+use std::process::Command;
 
 // Simple working pattern - don't break what works
 static MIDI_MANAGER: Mutex<Option<MidiManager>> = Mutex::new(None);
@@ -167,10 +168,45 @@ async fn preview_note(note: u8, velocity: u8, duration: u32) -> Result<String, S
 }
 
 #[tauri::command]
-async fn record_sample(note: u8, velocity: u8, duration: u32) -> Result<String, String> {
-    println!("🔴 Recording sample: note {} (velocity: {}, duration: {}ms)", note, velocity, duration);
+async fn select_output_directory(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_dialog::DialogExt;
+    use std::sync::mpsc;
     
-    // Extract the MIDI connection
+    println!("📁 Opening native macOS directory picker...");
+    
+    let (tx, rx) = mpsc::channel();
+    
+    app.dialog()
+        .file()
+        .set_title("Select Sample Output Directory")
+        .pick_folder(move |file_path| {
+            let _ = tx.send(file_path);
+        });
+    
+    match rx.recv() {
+        Ok(Some(path)) => {
+            let path_str = path.to_string();
+            println!("✅ User selected directory: {}", path_str);
+            Ok(path_str)
+        },
+        Ok(None) => {
+            println!("❌ User cancelled directory selection");
+            Err("Directory selection cancelled".to_string())
+        },
+        Err(e) => {
+            println!("❌ Directory picker error: {}", e);
+            Err(format!("Directory picker failed: {}", e))
+        }
+    }
+}
+
+/// GUI Layer: Blocking orchestration following TAURI_AUDIO_ARCHITECTURE.md
+/// Uses dedicated thread + channels pattern for thread safety
+#[tauri::command]  // BLOCKING command (no async) - this is correct for audio
+fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option<String>, sample_name: Option<String>) -> Result<String, String> {
+    println!("🎛️ GUI: Recording sample (note: {}, velocity: {}, duration: {}ms)", note, velocity, duration);
+    
+    // Step 1: Get MIDI connection (GUI responsibility)
     let mut connection = {
         let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
         match connection_guard.take() {
@@ -179,106 +215,375 @@ async fn record_sample(note: u8, velocity: u8, duration: u32) -> Result<String, 
         }
     };
     
-    // Create audio manager for recording (will be used for real recording later)
-    let _audio_manager = AudioManager::new().map_err(|e| {
-        println!("❌ Failed to create audio manager: {}", e);
-        e.to_string()
-    })?;
+    // Step 2: Audio processing in dedicated thread (follows architecture pattern)
+    println!("📡 GUI: Delegating to Core Audio Engine in dedicated thread...");
     
-    println!("🎤 Starting audio recording...");
-    
-    // Generate a test sine wave for the MIDI note (for now)
-    println!("🎤 Generating test audio for note {} for {}ms...", note, duration);
-    let sample_rate = 48000;
-    let duration_samples = ((duration as f32 / 1000.0) * sample_rate as f32) as usize;
-    let frequency = 440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0); // A4 = 440Hz reference
-    
-    let mut audio_data = Vec::with_capacity(duration_samples * 2); // Stereo
-    for i in 0..duration_samples {
-        let t = i as f32 / sample_rate as f32;
-        let amplitude = 0.3; // Keep volume reasonable
-        let sample_value = amplitude * (2.0 * std::f32::consts::PI * frequency * t).sin();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        println!("🧵 Audio thread started");
         
-        // Apply envelope (attack and decay)
-        let envelope = if i < sample_rate / 10 {
-            // 100ms attack
-            (i as f32) / (sample_rate as f32 / 10.0)
-        } else if i > duration_samples - sample_rate / 5 {
-            // 200ms decay
-            ((duration_samples - i) as f32) / (sample_rate as f32 / 5.0)
-        } else {
-            1.0
+        // Configure Core Audio Engine
+        println!("🔧 Configuring sampling engine...");
+        let sampling_config = SamplingConfig {
+            note_duration_ms: duration as u64,
+            release_time_ms: 500,  // Professional standard: 500ms release capture
+            pre_delay_ms: 100,     // Professional standard: 100ms pre-roll  
+            post_delay_ms: 100,    // Clean buffer flush
+            midi_channel: 0,       // Channel 1 (0-indexed)
+            velocity,
         };
         
-        let final_sample = sample_value * envelope;
-        audio_data.push(final_sample); // Left channel
-        audio_data.push(final_sample); // Right channel (same as left for mono content)
+        println!("🎛️ Creating SamplingEngine with config: {:?}", sampling_config);
+        let sampling_engine = match SamplingEngine::new(sampling_config) {
+            Ok(engine) => {
+                println!("✅ SamplingEngine created successfully");
+                engine
+            },
+            Err(e) => {
+                println!("❌ Failed to create SamplingEngine: {}", e);
+                let _ = tx.send((Err(e), connection));
+                return;
+            }
+        };
+        
+        // Use blocking method from Core Audio Engine
+        println!("🎵 Starting sample recording for note {}", note);
+        let result = sampling_engine.sample_single_note_blocking(&mut connection, note);
+        
+        match &result {
+            Ok(sample) => println!("✅ Recording completed: {} samples", sample.audio_data.len()),
+            Err(e) => println!("❌ Recording failed: {}", e),
+        }
+        
+        // Send result back via channel
+        println!("📡 Sending result back to main thread");
+        let _ = tx.send((result, connection));
+    });
+    
+    // Step 3: Block until audio operation completes (this is correct for audio)
+    let (recording_result, returned_connection) = rx.recv()
+        .map_err(|e| format!("Audio thread communication failed: {}", e))?;
+    
+    // Put the connection back
+    *MIDI_CONNECTION.lock().unwrap() = Some(returned_connection);
+    
+    match recording_result {
+        Ok(recorded_sample) => {
+            println!("✅ GUI: Core Audio Engine completed recording successfully");
+            println!("📊 GUI: Received {} samples from Core Engine", recorded_sample.audio_data.len());
+            
+            // Step 4: Handle export (GUI orchestration)
+            let output_dir = if let Some(dir) = output_directory {
+                if dir.trim().is_empty() {
+                    // Use Desktop/Batcherbird Samples when field is empty
+                    dirs::desktop_dir()
+                        .map(|desktop| desktop.join("Batcherbird Samples"))
+                        .unwrap_or_else(|| std::path::PathBuf::from("samples"))
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    dir
+                }
+            } else {
+                // Default to Desktop/Batcherbird Samples
+                dirs::desktop_dir()
+                    .map(|desktop| desktop.join("Batcherbird Samples"))
+                    .unwrap_or_else(|| std::path::PathBuf::from("samples"))
+                    .to_string_lossy()
+                    .to_string()
+            };
+            
+            let mut output_path = std::path::PathBuf::from(&output_dir);
+            
+            // Create subfolder if sample name is provided (SampleRobot-style organization)
+            if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
+                output_path = output_path.join(name.trim());
+                println!("📁 GUI: Creating subfolder for sample: {}", name.trim());
+            }
+            
+            // Ensure output directory exists (including subfolder)
+            if let Err(e) = std::fs::create_dir_all(&output_path) {
+                println!("❌ GUI: Failed to create output directory: {}", e);
+                return Err(format!("Failed to create output directory '{}': {}", output_path.display(), e));
+            }
+            
+            println!("📁 GUI: Using output directory: {}", output_path.display());
+            
+            // Build naming pattern with optional sample name prefix
+            let naming_pattern = if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
+                format!("{}_{{note_name}}_{{note}}_{{velocity}}.wav", name.trim())
+            } else {
+                "{note_name}_{note}_{velocity}.wav".to_string()
+            };
+            
+            let export_config = ExportConfig {
+                output_directory: output_path,
+                naming_pattern,
+                sample_format: AudioFormat::Wav32BitFloat, // Professional 32-bit float
+                normalize: false, // Preserve original dynamics from core
+                fade_in_ms: 0.0,
+                fade_out_ms: 10.0,
+                apply_detection: true, // Enable detection by default
+                detection_config: Default::default(),
+            };
+            
+            println!("🔧 GUI: Creating sample exporter...");
+            let exporter = SampleExporter::new(export_config).map_err(|e| {
+                println!("❌ GUI: Failed to create exporter: {}", e);
+                format!("Failed to create sample exporter: {}", e)
+            })?;
+            
+            println!("💾 GUI: Exporting sample...");
+            let file_path = exporter.export_sample(&recorded_sample).map_err(|e| {
+                println!("❌ GUI: Export failed: {}", e);
+                format!("Failed to export sample: {}", e)
+            })?;
+            
+            println!("💾 GUI: Sample exported to: {}", file_path.display());
+            
+            // Step 5: Return success to UI
+            let filename = file_path.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            
+            let success_message = format!("Recording saved: {} ({} samples)\nLocation: {}", 
+                filename, recorded_sample.audio_data.len(), file_path.display());
+            
+            println!("✅ GUI: {}", success_message);
+            Ok(success_message)
+        }
+        Err(e) => {
+            println!("❌ GUI: Core Audio Engine reported error: {}", e);
+            Err(format!("Core Audio Engine error: {}", e))
+        }
     }
+}
+
+#[tauri::command]
+fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, output_directory: Option<String>, sample_name: Option<String>) -> Result<String, String> {
+    println!("🎹 GUI: Recording range sampling (notes: {}-{}, velocity: {}, duration: {}ms)", start_note, end_note, velocity, duration);
     
-    // Small delay before triggering MIDI to ensure recording is ready
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Step 1: Get MIDI connection (GUI responsibility)
+    let mut connection = {
+        let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
+        match connection_guard.take() {
+            Some(conn) => conn,
+            None => return Err("No MIDI connection established. Please select a MIDI device first.".to_string()),
+        }
+    };
     
-    println!("🎹 Triggering MIDI note...");
+    // Step 2: Range sampling in dedicated thread (follows architecture pattern)
+    println!("📡 GUI: Delegating to Core Audio Engine for range sampling...");
     
-    // Send the MIDI note
-    let midi_result = MidiManager::send_test_note(
-        &mut connection, 
-        0,
-        note, 
-        velocity, 
-        Duration::from_millis(duration as u64)
-    )
-    .await
-    .map_err(|e| e.to_string());
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        println!("🧵 Range sampling thread started");
+        
+        // Configure Core Audio Engine
+        println!("🔧 Configuring sampling engine for range...");
+        let sampling_config = SamplingConfig {
+            note_duration_ms: duration as u64,
+            release_time_ms: 500,  // Professional standard: 500ms release capture
+            pre_delay_ms: 100,     // Professional standard: 100ms pre-roll  
+            post_delay_ms: 100,    // Clean buffer flush
+            midi_channel: 0,       // Channel 1 (0-indexed)
+            velocity,
+        };
+        
+        println!("🎛️ Creating SamplingEngine for range sampling...");
+        let sampling_engine = match SamplingEngine::new(sampling_config) {
+            Ok(engine) => {
+                println!("✅ SamplingEngine created successfully");
+                engine
+            },
+            Err(e) => {
+                println!("❌ Failed to create SamplingEngine: {}", e);
+                let _ = tx.send((Err(e), connection));
+                return;
+            }
+        };
+        
+        // Use blocking range method from Core Audio Engine
+        println!("🎵 Starting range recording for notes {}-{}", start_note, end_note);
+        let result = sampling_engine.sample_note_range_blocking(&mut connection, start_note, end_note);
+        
+        match &result {
+            Ok(samples) => println!("✅ Range recording completed: {} samples", samples.len()),
+            Err(e) => println!("❌ Range recording failed: {}", e),
+        }
+        
+        // Send result back via channel
+        println!("📡 Sending range result back to main thread");
+        let _ = tx.send((result, connection));
+    });
+    
+    // Step 3: Block until range operation completes
+    let (recording_result, returned_connection) = rx.recv()
+        .map_err(|e| format!("Range sampling thread communication failed: {}", e))?;
+    
+    // Put the connection back
+    *MIDI_CONNECTION.lock().unwrap() = Some(returned_connection);
+    
+    match recording_result {
+        Ok(samples) => {
+            println!("✅ GUI: Core Audio Engine completed range recording successfully");
+            println!("📊 GUI: Received {} samples from Core Engine", samples.len());
+            
+            // Step 4: Handle export for all samples
+            let output_dir = if let Some(dir) = output_directory {
+                if dir.trim().is_empty() {
+                    dirs::desktop_dir()
+                        .map(|desktop| desktop.join("Batcherbird Samples"))
+                        .unwrap_or_else(|| std::path::PathBuf::from("samples"))
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    dir
+                }
+            } else {
+                dirs::desktop_dir()
+                    .map(|desktop| desktop.join("Batcherbird Samples"))
+                    .unwrap_or_else(|| std::path::PathBuf::from("samples"))
+                    .to_string_lossy()
+                    .to_string()
+            };
+            
+            let mut output_path = std::path::PathBuf::from(&output_dir);
+            
+            // Create subfolder if sample name is provided (SampleRobot-style organization)
+            if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
+                output_path = output_path.join(name.trim());
+                println!("📁 GUI: Creating subfolder for range samples: {}", name.trim());
+            }
+            
+            // Ensure output directory exists (including subfolder)
+            if let Err(e) = std::fs::create_dir_all(&output_path) {
+                println!("❌ GUI: Failed to create output directory: {}", e);
+                return Err(format!("Failed to create output directory '{}': {}", output_path.display(), e));
+            }
+            
+            println!("📁 GUI: Using output directory: {}", output_path.display());
+            
+            // Export all samples with validation and safety delays
+            let mut exported_files = Vec::new();
+            for (index, sample) in samples.iter().enumerate() {
+                println!("💾 GUI: Exporting sample {} of {} (note {}, {} audio samples)", 
+                    index + 1, samples.len(), sample.note, sample.audio_data.len());
+                
+                // Validate sample before export
+                if sample.audio_data.is_empty() {
+                    println!("⚠️ GUI: Warning - Sample {} (note {}) has no audio data, skipping", index + 1, sample.note);
+                    continue;
+                }
+                
+                // Build naming pattern with optional sample name prefix (consistent with single sample recording)
+                let naming_pattern = if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
+                    format!("{}_{{note_name}}_{{note}}_{{velocity}}.wav", name.trim())
+                } else {
+                    "{note_name}_{note}_{velocity}.wav".to_string()
+                };
+                
+                let export_config = ExportConfig {
+                    output_directory: output_path.clone(),
+                    naming_pattern,
+                    sample_format: AudioFormat::Wav32BitFloat,
+                    normalize: false,
+                    fade_in_ms: 0.0,
+                    fade_out_ms: 10.0,
+                    apply_detection: true, // Enable detection by default
+                    detection_config: Default::default(),
+                };
+                
+                let exporter = SampleExporter::new(export_config).map_err(|e| {
+                    println!("❌ GUI: Failed to create exporter for note {}: {}", sample.note, e);
+                    format!("Failed to create sample exporter for note {}: {}", sample.note, e)
+                })?;
+                
+                let file_path = exporter.export_sample(&sample).map_err(|e| {
+                    println!("❌ GUI: Export failed for note {}: {}", sample.note, e);
+                    format!("Failed to export sample for note {}: {}", sample.note, e)
+                })?;
+                
+                let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
+                println!("✅ GUI: Successfully exported: {}", filename);
+                exported_files.push(filename);
+                
+                // Add longer delay between file exports to ensure proper file system sync
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            
+            let success_message = format!("Range recording complete! {} samples saved to:\n{}", 
+                exported_files.len(), output_path.display());
+            
+            println!("✅ GUI: {}", success_message);
+            Ok(success_message)
+        }
+        Err(e) => {
+            println!("❌ GUI: Core Audio Engine reported range recording error: {}", e);
+            Err(format!("Range recording failed: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn send_midi_panic() -> Result<String, String> {
+    println!("🚨 MIDI Panic command called from UI");
+    
+    // Extract the connection from the mutex and drop the guard
+    let mut connection = {
+        let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
+        match connection_guard.take() {
+            Some(conn) => conn,
+            None => return Err("No MIDI connection established. Please select a MIDI device first.".to_string()),
+        }
+    };
+    
+    // Send panic
+    let result = MidiManager::send_midi_panic(&mut connection)
+        .map_err(|e| e.to_string());
     
     // Put the connection back
     *MIDI_CONNECTION.lock().unwrap() = Some(connection);
     
-    // Wait for the MIDI note to complete
-    tokio::time::sleep(Duration::from_millis((duration + 500) as u64)).await;
-    println!("🎤 Test audio generation completed ({}Hz sine wave)", frequency);
+    match result {
+        Ok(_) => Ok("MIDI Panic sent successfully - all notes stopped".to_string()),
+        Err(e) => Err(format!("MIDI Panic failed: {}", e)),
+    }
+}
+
+#[tauri::command]
+fn show_samples_in_finder() -> Result<String, String> {
+    println!("📁 Opening samples folder in Finder...");
     
-    let audio_data_len = audio_data.len();
-    println!("✅ Sample recorded successfully! {} samples captured", audio_data_len);
+    // Get the default samples directory
+    let samples_dir = dirs::desktop_dir()
+        .map(|desktop| desktop.join("Batcherbird Samples"))
+        .unwrap_or_else(|| std::path::PathBuf::from("samples"));
     
-    // Create a Sample struct for export
-    let sample = Sample {
-        note,
-        velocity,
-        audio_data,
-        sample_rate: 48000,  // Standard sample rate
-        channels: 2,         // Stereo
-        recorded_at: std::time::SystemTime::now(),
-        midi_timing: Duration::from_millis(duration as u64),
-        audio_timing: Duration::from_millis((duration + 500) as u64),
-    };
+    // Create the directory if it doesn't exist
+    if let Err(e) = std::fs::create_dir_all(&samples_dir) {
+        return Err(format!("Failed to create samples directory: {}", e));
+    }
     
-    // Set up export configuration
-    let export_config = ExportConfig {
-        output_directory: std::path::PathBuf::from("./samples"),
-        naming_pattern: "batcherbird_{note_name}_{note}_{velocity}.wav".to_string(),
-        sample_format: AudioFormat::Wav24Bit,
-        normalize: true,
-        fade_in_ms: 0.0,
-        fade_out_ms: 10.0,
-    };
-    
-    // Export the sample to WAV file
-    let exporter = SampleExporter::new(export_config).map_err(|e| e.to_string())?;
-    let file_path = exporter.export_sample(&sample).map_err(|e| e.to_string())?;
-    
-    println!("💾 Sample saved to: {}", file_path.display());
-    
-    let sample_count = sample.audio_data.len();
-    match midi_result {
-        Ok(_) => Ok(format!("Sample recorded and saved: {} ({} samples)", file_path.file_name().unwrap().to_string_lossy(), sample_count)),
-        Err(e) => Err(format!("MIDI failed but audio recorded: {}", e)),
+    // Open in Finder on macOS
+    match Command::new("open")
+        .arg(&samples_dir)
+        .status() {
+        Ok(_) => {
+            println!("✅ Opened {} in Finder", samples_dir.display());
+            Ok(format!("Opened samples folder: {}", samples_dir.display()))
+        },
+        Err(e) => {
+            println!("❌ Failed to open Finder: {}", e);
+            Err(format!("Failed to open Finder: {}", e))
+        }
     }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    .plugin(tauri_plugin_dialog::init())
     .invoke_handler(tauri::generate_handler![
       list_midi_devices, 
       list_audio_input_devices,
@@ -286,7 +591,11 @@ pub fn run() {
       connect_midi_device,
       test_midi_connection,
       preview_note,
-      record_sample
+      record_sample,
+      record_range,
+      select_output_directory,
+      show_samples_in_finder,
+      send_midi_panic
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

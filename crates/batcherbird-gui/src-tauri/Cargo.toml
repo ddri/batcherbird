@@ -25,6 +25,8 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.6.2", features = [] }
 tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
 batcherbird-core = { path = "../../batcherbird-core" }
 midir = "0.10"
 tokio = { version = "1.35", features = ["time"] }
+dirs = "5.0"
