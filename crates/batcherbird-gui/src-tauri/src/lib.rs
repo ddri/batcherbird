@@ -363,7 +363,7 @@ async fn select_output_directory(app: tauri::AppHandle) -> Result<String, String
 /// GUI Layer: Blocking orchestration following TAURI_AUDIO_ARCHITECTURE.md
 /// Uses dedicated thread + channels pattern for thread safety
 #[tauri::command]  // BLOCKING command (no async) - this is correct for audio
-fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option<String>, sample_name: Option<String>) -> Result<String, String> {
+fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option<String>, sample_name: Option<String>, export_format: Option<String>, creator_name: Option<String>, instrument_description: Option<String>) -> Result<String, String> {
     println!("🎛️ GUI: Recording sample (note: {}, velocity: {}, duration: {}ms)", note, velocity, duration);
     
     // Step 1: Get MIDI connection (GUI responsibility)
@@ -476,15 +476,26 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
                 "{note_name}_{note}_{velocity}.wav".to_string()
             };
             
+            // Determine sample format based on frontend selection
+            let sample_format = match export_format.as_deref() {
+                Some("decentsampler") => AudioFormat::DecentSampler,
+                Some("sfz") => AudioFormat::SFZ,
+                Some("kontakt") => AudioFormat::Wav24Bit, // For future Kontakt export
+                Some("all") => AudioFormat::Wav24Bit, // Default for "all formats" 
+                _ => AudioFormat::Wav32BitFloat, // Default: high-quality WAV
+            };
+            
             let export_config = ExportConfig {
                 output_directory: output_path,
                 naming_pattern,
-                sample_format: AudioFormat::Wav32BitFloat, // Professional 32-bit float
+                sample_format,
                 normalize: false, // Preserve original dynamics from core
                 fade_in_ms: 0.0,
                 fade_out_ms: 10.0,
                 apply_detection: true, // Enable detection by default
                 detection_config: Default::default(),
+                creator_name,
+                instrument_description,
             };
             
             println!("🔧 GUI: Creating sample exporter...");
@@ -520,7 +531,7 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
 }
 
 #[tauri::command]
-fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, output_directory: Option<String>, sample_name: Option<String>) -> Result<String, String> {
+fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, output_directory: Option<String>, sample_name: Option<String>, export_format: Option<String>, creator_name: Option<String>, instrument_description: Option<String>) -> Result<String, String> {
     println!("🎹 GUI: Recording range sampling (notes: {}-{}, velocity: {}, duration: {}ms)", start_note, end_note, velocity, duration);
     
     // Step 1: Get MIDI connection (GUI responsibility)
@@ -643,15 +654,26 @@ fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, outpu
                     "{note_name}_{note}_{velocity}.wav".to_string()
                 };
                 
+                // Determine sample format based on frontend selection
+                let sample_format = match export_format.as_deref() {
+                    Some("decentsampler") => AudioFormat::DecentSampler,
+                    Some("sfz") => AudioFormat::SFZ,
+                    Some("kontakt") => AudioFormat::Wav24Bit, // For future Kontakt export
+                    Some("all") => AudioFormat::Wav24Bit, // Default for "all formats" 
+                    _ => AudioFormat::Wav32BitFloat, // Default: high-quality WAV
+                };
+                
                 let export_config = ExportConfig {
                     output_directory: output_path.clone(),
                     naming_pattern,
-                    sample_format: AudioFormat::Wav32BitFloat,
+                    sample_format,
                     normalize: false,
                     fade_in_ms: 0.0,
                     fade_out_ms: 10.0,
                     apply_detection: true, // Enable detection by default
                     detection_config: Default::default(),
+                    creator_name: creator_name.clone(),
+                    instrument_description: instrument_description.clone(),
                 };
                 
                 let exporter = SampleExporter::new(export_config).map_err(|e| {

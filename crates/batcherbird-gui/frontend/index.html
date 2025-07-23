@@ -913,10 +913,21 @@
                         <span class="control-label">Export Format</span>
                         <select id="export-format" style="width: 100%;">
                             <option value="wav" selected>WAV Files Only</option>
+                            <option value="sfz">SFZ (.sfz)</option>
+                            <option value="decentsampler">Decent Sampler (.dspreset)</option>
                             <option value="kontakt">Sampler Ready</option>
-                            <option value="decentsampler">XML Sampler</option>
                             <option value="all">All Formats</option>
                         </select>
+                    </div>
+                    
+                    <div id="decent-sampler-options" class="control-group" style="display: none;">
+                        <span class="control-label">Creator Name</span>
+                        <input type="text" id="creator-name" placeholder="Your name" style="width: 100%;">
+                    </div>
+                    
+                    <div id="decent-sampler-description" class="control-group" style="display: none;">
+                        <span class="control-label">Instrument Description</span>
+                        <input type="text" id="instrument-description" placeholder="e.g. Warm vintage analog synth" style="width: 100%;">
                     </div>
                 </div>
                 

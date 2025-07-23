@@ -652,7 +652,14 @@ async function recordSample() {
         const sampleName = sampleNameInput ? sampleNameInput.value.trim() : '';
         
         // Call the actual recording function
-        console.log('📡 Calling backend record_sample with params:', { note, velocity, duration, outputDirectory, sampleName });
+        // Get export format from settings
+        const exportFormat = document.getElementById('export-format')?.value || 'wav';
+        
+        // Get Decent Sampler metadata if relevant
+        const creatorName = document.getElementById('creator-name')?.value?.trim() || '';
+        const instrumentDescription = document.getElementById('instrument-description')?.value?.trim() || '';
+        
+        console.log('📡 Calling backend record_sample with params:', { note, velocity, duration, outputDirectory, sampleName, exportFormat, creatorName, instrumentDescription });
         
         try {
             const result = await invoke('record_sample', { 
@@ -660,7 +667,10 @@ async function recordSample() {
                 velocity: velocity, 
                 duration: duration,
                 outputDirectory: outputDirectory,
-                sampleName: sampleName || null
+                sampleName: sampleName || null,
+                exportFormat: exportFormat,
+                creatorName: creatorName || null,
+                instrumentDescription: instrumentDescription || null
             });
             console.log('✅ Backend returned result:', result);
             
@@ -1056,6 +1066,7 @@ document.addEventListener('DOMContentLoaded', () => {
         exportFormatSelect.addEventListener('change', () => {
             savePreferences();
             updateFilenameExample();
+            toggleDecentSamplerOptions();
         });
     }
     
@@ -1064,6 +1075,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Setup velocity layer controls
     setupVelocityLayerControls();
+    
+    // Initialize Decent Sampler options visibility
+    toggleDecentSamplerOptions();
     
     // Setup device selection listeners
     setupDeviceSelectionListeners();
@@ -1118,6 +1132,24 @@ function setupRangeInputs() {
         detectionThresholdInput.addEventListener('input', () => {
             detectionThresholdDisplay.textContent = detectionThresholdInput.value;
         });
+    }
+}
+
+// Toggle metadata options for formats that support it
+function toggleDecentSamplerOptions() {
+    const exportFormat = document.getElementById('export-format')?.value;
+    const decentSamplerOptions = document.getElementById('decent-sampler-options');
+    const decentSamplerDescription = document.getElementById('decent-sampler-description');
+    
+    if (decentSamplerOptions && decentSamplerDescription) {
+        // Show metadata options for SFZ and Decent Sampler formats
+        if (exportFormat === 'decentsampler' || exportFormat === 'sfz') {
+            decentSamplerOptions.style.display = 'block';
+            decentSamplerDescription.style.display = 'block';
+        } else {
+            decentSamplerOptions.style.display = 'none';
+            decentSamplerDescription.style.display = 'none';
+        }
     }
 }
 
@@ -1237,6 +1269,9 @@ function updateFilenameExample() {
         
         if (sampleName) {
             switch (exportFormat) {
+                case 'sfz':
+                    exampleText = `Example: ${sampleName}/${sampleName}_C4_60_vel127.wav + .sfz`;
+                    break;
                 case 'kontakt':
                     exampleText = `Example: ${sampleName}/${sampleName}_C4_60_vel127.wav + .nki`;
                     break;
@@ -1244,7 +1279,7 @@ function updateFilenameExample() {
                     exampleText = `Example: ${sampleName}/${sampleName}_C4_60_vel127.wav + .dspreset`;
                     break;
                 case 'all':
-                    exampleText = `Example: ${sampleName}/ + WAV/NKI/DSPRESET files`;
+                    exampleText = `Example: ${sampleName}/ + WAV/SFZ/NKI/DSPRESET files`;
                     break;
                 default:
                     exampleText = `Example: ${sampleName}/${sampleName}_C4_60_vel127.wav`;
@@ -1296,13 +1331,23 @@ async function recordNotesWithVelocityLayersResponsiveUI(startNote, endNote, vel
             console.log(`🎵 Recording sample ${sampleCount + 1}/${totalSamples}: ${noteName} (${currentNote}) vel ${velocity}`);
             
             try {
+                // Get export format from settings
+                const exportFormat = document.getElementById('export-format')?.value || 'wav';
+                
+                // Get Decent Sampler metadata if relevant
+                const creatorName = document.getElementById('creator-name')?.value?.trim() || '';
+                const instrumentDescription = document.getElementById('instrument-description')?.value?.trim() || '';
+                
                 // Record individual sample with specific velocity
                 const result = await invoke('record_sample', { 
                     note: currentNote, 
                     velocity: velocity, 
                     duration: duration,
                     outputDirectory: outputDirectory,
-                    sampleName: sampleName || null
+                    sampleName: sampleName || null,
+                    exportFormat: exportFormat,
+                    creatorName: creatorName || null,
+                    instrumentDescription: instrumentDescription || null
                 });
                 
                 console.log(`✅ Sample ${noteName} vel ${velocity} recorded successfully: ${result}`);
