@@ -2178,6 +2178,120 @@ window.startInputMonitoring = startInputMonitoring;
 window.stopInputMonitoring = stopInputMonitoring;
 window.updateLevelMeterDisplay = updateLevelMeterDisplay;
 
+// ============================================================================
+// PROJECT TEMPLATES SYSTEM
+// ============================================================================
+
+let templatesVisible = false;
+
+// Toggle templates panel visibility
+function toggleTemplatesPanel() {
+    const templatesContent = document.getElementById('templates-content');
+    const toggleBtn = document.getElementById('templates-toggle-btn');
+    
+    if (templatesVisible) {
+        templatesContent.style.display = 'none';
+        toggleBtn.textContent = 'Show Templates';
+        templatesVisible = false;
+    } else {
+        populateTemplatesGrid(); // Populate on first show
+        templatesContent.style.display = 'block';
+        toggleBtn.textContent = 'Hide Templates';
+        templatesVisible = true;
+    }
+}
+
+// Populate the templates grid with available templates
+function populateTemplatesGrid() {
+    const templatesGrid = document.getElementById('templates-grid');
+    if (!templatesGrid) return;
+    
+    // Clear existing content
+    templatesGrid.innerHTML = '';
+    
+    // Get all templates
+    const templates = getAllTemplates();
+    
+    templates.forEach(template => {
+        const templateCard = createTemplateCard(template);
+        templatesGrid.appendChild(templateCard);
+    });
+}
+
+// Create a template card element
+function createTemplateCard(template) {
+    const card = document.createElement('div');
+    card.className = 'template-card';
+    card.setAttribute('data-template-id', template.id);
+    
+    card.innerHTML = `
+        <div class="template-header">
+            <div class="template-icon">${template.icon}</div>
+            <h4 class="template-name">${template.name}</h4>
+        </div>
+        <div class="template-description">${template.description}</div>
+        <div class="template-stats">
+            <span class="template-samples">${template.estimatedSamples} samples</span>
+            <span class="template-time">${template.estimatedTime}</span>
+        </div>
+        <button class="template-apply-btn" onclick="applyTemplateById('${template.id}')">Apply</button>
+    `;
+    
+    // Add click handler for the whole card
+    card.addEventListener('click', (e) => {
+        // Don't trigger card click if apply button was clicked
+        if (e.target.classList.contains('template-apply-btn')) return;
+        
+        // Show template details or apply directly
+        applyTemplateById(template.id);
+    });
+    
+    return card;
+}
+
+// Apply a template by ID
+function applyTemplateById(templateId) {
+    console.log('🎯 Applying template:', templateId);
+    
+    const success = applyTemplate(templateId);
+    
+    if (success) {
+        // Update visual feedback
+        updateTemplateSelection(templateId);
+        
+        // Optionally hide templates panel after selection
+        // toggleTemplatesPanel();
+    }
+}
+
+// Update visual selection state
+function updateTemplateSelection(selectedTemplateId) {
+    const templateCards = document.querySelectorAll('.template-card');
+    
+    templateCards.forEach(card => {
+        const templateId = card.getAttribute('data-template-id');
+        if (templateId === selectedTemplateId) {
+            card.classList.add('selected');
+        } else {
+            card.classList.remove('selected');
+        }
+    });
+}
+
+// Initialize templates on page load
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('🎯 Initializing project templates system');
+    
+    // Templates will be populated when panel is first shown
+    // This avoids DOM manipulation during initial page load
+});
+
+// Export template functions to global scope
+window.toggleTemplatesPanel = toggleTemplatesPanel;
+window.populateTemplatesGrid = populateTemplatesGrid;
+window.applyTemplateById = applyTemplateById;
+window.updateTemplateSelection = updateTemplateSelection;
+
 
 // Debug: Verify functions are available
 console.log('🔧 Functions exported to window:', {
