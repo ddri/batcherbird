@@ -127,7 +127,17 @@ Create the most professional, user-friendly hardware sampling tool available, co
   - Guided workflow for beginners with expert tips
   - Automatic time and storage estimation
 
-- [ ] **Advanced Audio Processing** *(Priority 6)*
+- [ ] **Post-Recording Export Customization Suite** *(Priority 6)*
+  - Interactive sample assignment editor (reorder, exclude, combine samples)
+  - Velocity curve editor for remapping recorded velocities to target ranges
+  - Round-robin group configuration for natural variations
+  - Custom envelope settings per sampler format (Attack, Release, etc.)
+  - Preview generated instrument before final export
+  - Batch export to multiple formats simultaneously
+  - Format-specific metadata editor (creator info, descriptions, categories)
+  - Sample loop point adjustment and crossfade editor
+
+- [ ] **Advanced Audio Processing** *(Priority 7)*
   - Automatic sample trimming with intelligent silence detection
   - Professional noise gate with adjustable threshold
   - Smart normalization preserving dynamics

@@ -894,12 +894,60 @@ async function recordRange() {
         
         let successfulRecordings = 0;
         
-        // Record notes using async scheduler to keep UI responsive (Ableton-style)
-        await recordNotesWithVelocityLayersResponsiveUI(startNote, endNote, velocities, duration, outputDirectory, sampleName,
-            successfulRecordings, totalSamples, rangeProgressFill, rangeRecordingText, rangeCurrentNote, rangeVelocityInfo, noteToName);
+        // Record each note individually for real progress AND working stop functionality
+        console.log('📡 Starting individual note recording loop with real stop capability...');
         
-        // Update successfulRecordings from the recording process
-        successfulRecordings = window.rangeRecordingResults ? window.rangeRecordingResults.successfulRecordings : 0;
+        for (let i = 0; i < velocities.length; i++) {
+            const velocity = velocities[i];
+            
+            if (rangeRecordingAbortController.signal.aborted) {
+                console.log('⚠️ Range recording aborted by user');
+                break;
+            }
+            
+            for (let currentNote = startNote; currentNote <= endNote; currentNote++) {
+                if (rangeRecordingAbortController.signal.aborted) {
+                    console.log('⚠️ Range recording aborted by user');
+                    break;
+                }
+                
+                const currentNoteName = noteToName(currentNote);
+                const sampleIndex = (i * totalNotes) + (currentNote - startNote) + 1;
+                
+                // Update UI
+                rangeCurrentNote.textContent = `${currentNoteName} (${sampleIndex}/${totalSamples})`;
+                rangeVelocityInfo.textContent = velocities.length > 1 
+                    ? `Velocity ${velocity} (${i + 1}/${velocities.length})`
+                    : `Velocity ${velocity}`;
+                
+                const progress = ((sampleIndex - 1) / totalSamples) * 100;
+                rangeProgressFill.style.width = `${progress}%`;
+                
+                try {
+                    console.log(`📡 Recording note ${currentNote} (${currentNoteName}) at velocity ${velocity}...`);
+                    
+                    // Record individual sample (WAV only now)
+                    const result = await invoke('record_sample', { 
+                        note: currentNote, 
+                        velocity: velocity, 
+                        duration: duration,
+                        outputDirectory: outputDirectory,
+                        sampleName: sampleName || null,
+                        exportFormat: 'wav24bit', // Always WAV for individual samples
+                        creatorName: '',  // No metadata for individual WAV files
+                        instrumentDescription: ''  // No metadata for individual WAV files
+                    });
+                    
+                    console.log(`✅ Note ${currentNoteName} recorded successfully`);
+                    successfulRecordings++;
+                    
+                } catch (error) {
+                    console.error(`❌ Failed to record note ${currentNoteName}:`, error);
+                    showStatus(`Error recording ${currentNoteName}: ${error}`, 'error');
+                    // Continue with other notes
+                }
+            }
+        }
         
         // Final UI update
         if (isRangeRecording) {
@@ -908,6 +956,93 @@ async function recordRange() {
                 rangeRecordingText.textContent = 'Range recording complete!';
                 rangeCurrentNote.textContent = `✅ Completed ${successfulRecordings} of ${totalSamples} samples successfully`;
                 showStatus(`Range recording complete! ${successfulRecordings} samples saved.`, 'success');
+                
+                // Generate instrument files (.dspreset/.sfz) from the recorded samples
+                const exportFormat = document.getElementById('export-format')?.value;
+                if (exportFormat && exportFormat !== 'wav') {
+                    try {
+                        console.log(`🎼 Generating ${exportFormat} instrument file from recorded samples...`);
+                        rangeRecordingText.textContent = 'Generating instrument files...';
+                        rangeCurrentNote.textContent = `Creating ${exportFormat} file...`;
+                        
+                        // Get creator info from metadata fields if they exist
+                        const creatorNameInput = document.getElementById('creator-name');
+                        const instrumentDescriptionInput = document.getElementById('instrument-description');
+                        const creatorName = creatorNameInput ? creatorNameInput.value.trim() : '';
+                        const instrumentDescription = instrumentDescriptionInput ? instrumentDescriptionInput.value.trim() : '';
+                        
+                        // Handle different export format cases
+                        if (exportFormat === 'all') {
+                            // Generate both SFZ and Decent Sampler files
+                            let baseDirectory = outputDirectory;
+                            if (!baseDirectory) {
+                                baseDirectory = sampleName ? 
+                                    `/Users/dryan/Desktop/Batcherbird Samples/${sampleName}` : 
+                                    '/Users/dryan/Desktop/Batcherbird Samples';
+                            }
+                            
+                            // Generate SFZ file
+                            rangeCurrentNote.textContent = `Creating SFZ file...`;
+                            const sfzResult = await invoke('generate_instrument_files', {
+                                directory: baseDirectory,
+                                exportFormat: 'sfz',
+                                sampleName: sampleName || null,
+                                creatorName: creatorName || null,
+                                instrumentDescription: instrumentDescription || null
+                            });
+                            console.log(`✅ SFZ file generated: ${sfzResult}`);
+                            
+                            // Generate Decent Sampler file
+                            rangeCurrentNote.textContent = `Creating Decent Sampler file...`;
+                            const dsResult = await invoke('generate_instrument_files', {
+                                directory: baseDirectory,
+                                exportFormat: 'decentsampler',
+                                sampleName: sampleName || null,
+                                creatorName: creatorName || null,
+                                instrumentDescription: instrumentDescription || null
+                            });
+                            console.log(`✅ Decent Sampler file generated: ${dsResult}`);
+                            
+                            rangeRecordingText.textContent = 'Range recording complete!';
+                            rangeCurrentNote.textContent = `✅ Generated SFZ + Decent Sampler files with ${successfulRecordings} samples`;
+                            showStatus(`Range recording complete! ${successfulRecordings} samples + SFZ + Decent Sampler files saved.`, 'success');
+                            
+                        } else {
+                            // Single format generation
+                            let backendFormat = exportFormat;
+                            if (exportFormat === 'kontakt') {
+                                backendFormat = 'sfz'; // Use SFZ as stepping stone to Kontakt
+                            }
+                            
+                            // Build the correct directory path that matches where samples were actually saved
+                            let targetDirectory = outputDirectory;
+                            if (!targetDirectory) {
+                                targetDirectory = sampleName ? 
+                                    `/Users/dryan/Desktop/Batcherbird Samples/${sampleName}` : 
+                                    '/Users/dryan/Desktop/Batcherbird Samples';
+                            }
+                            
+                            const instrumentResult = await invoke('generate_instrument_files', {
+                                directory: targetDirectory,
+                                exportFormat: backendFormat,
+                                sampleName: sampleName || null,
+                                creatorName: creatorName || null,
+                                instrumentDescription: instrumentDescription || null
+                            });
+                            
+                            console.log(`✅ Instrument file generated: ${instrumentResult}`);
+                            rangeRecordingText.textContent = 'Range recording complete!';
+                            rangeCurrentNote.textContent = `✅ Generated ${exportFormat} file with ${successfulRecordings} samples`;
+                            showStatus(`Range recording complete! ${successfulRecordings} samples + ${exportFormat} file saved.`, 'success');
+                        }
+                        
+                    } catch (error) {
+                        console.error(`❌ Failed to generate ${exportFormat} file:`, error);
+                        rangeRecordingText.textContent = 'Range recording complete (instrument file failed)';
+                        rangeCurrentNote.textContent = `⚠️ WAV files saved, but ${exportFormat} generation failed`;
+                        showStatus(`Range recording complete! ${successfulRecordings} samples saved, but ${exportFormat} generation failed.`, 'warning');
+                    }
+                }
             } else {
                 rangeRecordingText.textContent = 'Range recording finished with errors';
                 rangeCurrentNote.textContent = `⚠️ Completed ${successfulRecordings} of ${totalSamples} samples`;

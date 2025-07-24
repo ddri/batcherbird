@@ -110,6 +110,181 @@ async fn start_input_monitoring() -> Result<String, String> {
 }
 
 
+/// Generate instrument files from existing WAV samples in a directory
+#[tauri::command]
+fn generate_instrument_files(directory: String, export_format: String, sample_name: Option<String>, creator_name: Option<String>, instrument_description: Option<String>) -> Result<String, String> {
+    println!("🎹 GUI: Generating instrument files from directory: {}", directory);
+    println!("   Format: {}, Sample name: {:?}", export_format, sample_name);
+    
+    use std::path::PathBuf;
+    use std::collections::HashMap;
+    use batcherbird_core::sampler::Sample;
+    use batcherbird_core::export::{SampleExporter, ExportConfig, AudioFormat};
+    use batcherbird_core::detection::DetectionConfig;
+    
+    let dir_path = PathBuf::from(&directory);
+    if !dir_path.exists() || !dir_path.is_dir() {
+        return Err(format!("Directory does not exist: {}", directory));
+    }
+    
+    // Scan directory for WAV files
+    let wav_files: Vec<PathBuf> = match std::fs::read_dir(&dir_path) {
+        Ok(entries) => {
+            entries.filter_map(|entry| {
+                let entry = entry.ok()?;
+                let path = entry.path();
+                if path.extension()?.to_str()? == "wav" {
+                    Some(path)
+                } else {
+                    None
+                }
+            }).collect()
+        },
+        Err(e) => return Err(format!("Failed to read directory: {}", e))
+    };
+    
+    if wav_files.is_empty() {
+        return Err("No WAV files found in directory".to_string());
+    }
+    
+    println!("   📁 Found {} WAV files", wav_files.len());
+    
+    // Parse WAV filenames to extract note and velocity information
+    // Expected format: {prefix}_{note_name}_{note_number}_{velocity}.wav
+    let mut samples = Vec::new();
+    
+    for wav_file in &wav_files {
+        let filename = wav_file.file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("");
+        
+        // Parse filename: look for patterns like "Roland-EM1014_C4_60_vel127" or "Batcherbird_F4_v127_rk65"
+        let note_number;
+        let velocity;
+        
+        // Try pattern 1: "Roland-EM1014_C4_60_vel127" or "Roland-EM1017_B4_71_vel127"
+        if let Some(captures) = regex::Regex::new(r".*_([A-G][#b]?\d+)_(\d+)_vel(\d+)$")
+            .unwrap()
+            .captures(filename) {
+            
+            let note_str = &captures[2];
+            let velocity_str = &captures[3];
+            
+            if let (Ok(note), Ok(vel)) = (note_str.parse::<u8>(), velocity_str.parse::<u8>()) {
+                note_number = note;
+                velocity = vel;
+            } else {
+                println!("   ⚠️ Could not parse note/velocity from: {}", filename);
+                continue;
+            }
+        }
+        // Try pattern 2: "Batcherbird_F4_v127_rk65"  
+        else if let Some(captures) = regex::Regex::new(r".*_([A-G][#b]?\d+)_v(\d+)_rk(\d+)$")
+            .unwrap()
+            .captures(filename) {
+            
+            let velocity_str = &captures[2];
+            let note_str = &captures[3];
+            
+            if let (Ok(note), Ok(vel)) = (note_str.parse::<u8>(), velocity_str.parse::<u8>()) {
+                note_number = note;
+                velocity = vel;
+            } else {
+                println!("   ⚠️ Could not parse note/velocity from: {}", filename);
+                continue;
+            }
+        }
+        else {
+            println!("   ⚠️ Filename format not recognized: {}", filename);
+            continue;
+        }
+        
+        // Create a minimal sample struct (we only need note/velocity for instrument file generation)
+        let sample = Sample {
+            note: note_number,
+            velocity,
+            audio_data: vec![0.0], // Dummy data - not used for instrument file generation
+            sample_rate: 44100,   // Dummy data
+            channels: 1,          // Dummy data
+            recorded_at: std::time::SystemTime::now(),
+            midi_timing: std::time::Duration::from_millis(100),
+            audio_timing: std::time::Duration::from_millis(2000),
+        };
+        
+        samples.push(sample);
+        println!("   📄 Parsed: {} -> Note {}, Velocity {}", filename, note_number, velocity);
+    }
+    
+    if samples.is_empty() {
+        return Err("No valid samples found (could not parse filenames)".to_string());
+    }
+    
+    // Determine export format
+    let sample_format = match export_format.as_str() {
+        "decentsampler" => AudioFormat::DecentSampler,
+        "sfz" => AudioFormat::SFZ,
+        _ => return Err(format!("Unsupported export format: {}", export_format))
+    };
+    
+    // Build naming pattern 
+    let naming_pattern = if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
+        format!("{}_{{note_name}}_{{note}}_{{velocity}}.wav", name.trim())
+    } else {
+        "{note_name}_{note}_{velocity}.wav".to_string()
+    };
+    
+    // Create export config
+    let export_config = ExportConfig {
+        output_directory: dir_path.clone(),
+        naming_pattern,
+        sample_format: sample_format.clone(), // Clone to avoid move
+        normalize: false,
+        fade_in_ms: 0.0,
+        fade_out_ms: 10.0,
+        apply_detection: false, // Don't re-process existing samples
+        detection_config: DetectionConfig::default(),
+        creator_name: creator_name.clone(),
+        instrument_description: instrument_description.clone(),
+    };
+    
+    // Create exporter and generate instrument files
+    let exporter = SampleExporter::new(export_config).map_err(|e| {
+        format!("Failed to create exporter: {}", e)
+    })?;
+    
+    // Generate instrument files using existing sample generation logic
+    println!("🎼 Generating {} instrument file...", export_format);
+    
+    match sample_format {
+        AudioFormat::DecentSampler => {
+            // Group samples by velocity
+            let mut velocity_groups = HashMap::new();
+            for (i, sample) in samples.iter().enumerate() {
+                if i < wav_files.len() {
+                    velocity_groups.entry(sample.velocity)
+                        .or_insert_with(Vec::new)
+                        .push((sample, &wav_files[i]));
+                }
+            }
+            
+            let _preset_name = sample_name.unwrap_or_else(|| "Batcherbird_Instrument".to_string());
+            let dspreset_path = exporter.generate_dspreset_file(&samples, &wav_files)
+                .map_err(|e| format!("Failed to generate Decent Sampler file: {}", e))?;
+            
+            println!("   ✅ Generated: {}", dspreset_path.display());
+            Ok(format!("Generated Decent Sampler file: {}", dspreset_path.display()))
+        },
+        AudioFormat::SFZ => {
+            let sfz_path = exporter.generate_sfz_file(&samples, &wav_files)
+                .map_err(|e| format!("Failed to generate SFZ file: {}", e))?;
+            
+            println!("   ✅ Generated: {}", sfz_path.display());
+            Ok(format!("Generated SFZ file: {}", sfz_path.display()))
+        },
+        _ => Err("Invalid format for instrument file generation".to_string())
+    }
+}
+
 /// Stop audio input monitoring
 #[tauri::command]
 async fn stop_input_monitoring() -> Result<String, String> {
@@ -363,7 +538,7 @@ async fn select_output_directory(app: tauri::AppHandle) -> Result<String, String
 /// GUI Layer: Blocking orchestration following TAURI_AUDIO_ARCHITECTURE.md
 /// Uses dedicated thread + channels pattern for thread safety
 #[tauri::command]  // BLOCKING command (no async) - this is correct for audio
-fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option<String>, sample_name: Option<String>, export_format: Option<String>, creator_name: Option<String>, instrument_description: Option<String>) -> Result<String, String> {
+fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option<String>, sample_name: Option<String>, _export_format: Option<String>, _creator_name: Option<String>, _instrument_description: Option<String>) -> Result<String, String> {
     println!("🎛️ GUI: Recording sample (note: {}, velocity: {}, duration: {}ms)", note, velocity, duration);
     
     // Step 1: Get MIDI connection (GUI responsibility)
@@ -476,14 +651,8 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
                 "{note_name}_{note}_{velocity}.wav".to_string()
             };
             
-            // Determine sample format based on frontend selection
-            let sample_format = match export_format.as_deref() {
-                Some("decentsampler") => AudioFormat::DecentSampler,
-                Some("sfz") => AudioFormat::SFZ,
-                Some("kontakt") => AudioFormat::Wav24Bit, // For future Kontakt export
-                Some("all") => AudioFormat::Wav24Bit, // Default for "all formats" 
-                _ => AudioFormat::Wav32BitFloat, // Default: high-quality WAV
-            };
+            // Single sample recording always exports WAV only - sampler files generated later
+            let sample_format = AudioFormat::Wav24Bit; // Always WAV for individual samples
             
             let export_config = ExportConfig {
                 output_directory: output_path,
@@ -494,8 +663,8 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
                 fade_out_ms: 10.0,
                 apply_detection: true, // Enable detection by default
                 detection_config: Default::default(),
-                creator_name,
-                instrument_description,
+                creator_name: None, // No metadata needed for individual WAV files
+                instrument_description: None, // No metadata needed for individual WAV files
             };
             
             println!("🔧 GUI: Creating sample exporter...");
@@ -504,13 +673,13 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
                 format!("Failed to create sample exporter: {}", e)
             })?;
             
-            println!("💾 GUI: Exporting sample...");
+            println!("💾 GUI: Exporting sample (WAV only)...");
             let file_path = exporter.export_sample(&recorded_sample).map_err(|e| {
                 println!("❌ GUI: Export failed: {}", e);
                 format!("Failed to export sample: {}", e)
             })?;
             
-            println!("💾 GUI: Sample exported to: {}", file_path.display());
+            println!("💾 GUI: Sample exported: {}", file_path.display());
             
             // Step 5: Return success to UI
             let filename = file_path.file_name()
@@ -635,66 +804,76 @@ fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, outpu
             
             println!("📁 GUI: Using output directory: {}", output_path.display());
             
-            // Export all samples with validation and safety delays
-            let mut exported_files = Vec::new();
-            for (index, sample) in samples.iter().enumerate() {
-                println!("💾 GUI: Exporting sample {} of {} (note {}, {} audio samples)", 
-                    index + 1, samples.len(), sample.note, sample.audio_data.len());
-                
-                // Validate sample before export
-                if sample.audio_data.is_empty() {
-                    println!("⚠️ GUI: Warning - Sample {} (note {}) has no audio data, skipping", index + 1, sample.note);
-                    continue;
-                }
-                
-                // Build naming pattern with optional sample name prefix (consistent with single sample recording)
-                let naming_pattern = if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
-                    format!("{}_{{note_name}}_{{note}}_{{velocity}}.wav", name.trim())
-                } else {
-                    "{note_name}_{note}_{velocity}.wav".to_string()
-                };
-                
-                // Determine sample format based on frontend selection
-                let sample_format = match export_format.as_deref() {
-                    Some("decentsampler") => AudioFormat::DecentSampler,
-                    Some("sfz") => AudioFormat::SFZ,
-                    Some("kontakt") => AudioFormat::Wav24Bit, // For future Kontakt export
-                    Some("all") => AudioFormat::Wav24Bit, // Default for "all formats" 
-                    _ => AudioFormat::Wav32BitFloat, // Default: high-quality WAV
-                };
-                
-                let export_config = ExportConfig {
-                    output_directory: output_path.clone(),
-                    naming_pattern,
-                    sample_format,
-                    normalize: false,
-                    fade_in_ms: 0.0,
-                    fade_out_ms: 10.0,
-                    apply_detection: true, // Enable detection by default
-                    detection_config: Default::default(),
-                    creator_name: creator_name.clone(),
-                    instrument_description: instrument_description.clone(),
-                };
-                
-                let exporter = SampleExporter::new(export_config).map_err(|e| {
-                    println!("❌ GUI: Failed to create exporter for note {}: {}", sample.note, e);
-                    format!("Failed to create sample exporter for note {}: {}", sample.note, e)
-                })?;
-                
-                let file_path = exporter.export_sample(&sample).map_err(|e| {
-                    println!("❌ GUI: Export failed for note {}: {}", sample.note, e);
-                    format!("Failed to export sample for note {}: {}", sample.note, e)
-                })?;
-                
-                let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
-                println!("✅ GUI: Successfully exported: {}", filename);
-                exported_files.push(filename);
-                
-                // Add longer delay between file exports to ensure proper file system sync
-                std::thread::sleep(std::time::Duration::from_millis(200));
+            // Filter out empty samples
+            let valid_samples: Vec<_> = samples.into_iter()
+                .filter(|sample| {
+                    if sample.audio_data.is_empty() {
+                        println!("⚠️ GUI: Warning - Sample (note {}) has no audio data, skipping", sample.note);
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .collect();
+            
+            if valid_samples.is_empty() {
+                return Err("No valid samples to export".to_string());
             }
             
-            let success_message = format!("Range recording complete! {} samples saved to:\n{}", 
+            // Build naming pattern with optional sample name prefix (consistent with single sample recording)
+            let naming_pattern = if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
+                format!("{}_{{note_name}}_{{note}}_{{velocity}}.wav", name.trim())
+            } else {
+                "{note_name}_{note}_{velocity}.wav".to_string()
+            };
+            
+            // Determine sample format based on frontend selection
+            let sample_format = match export_format.as_deref() {
+                Some("decentsampler") => AudioFormat::DecentSampler,
+                Some("sfz") => AudioFormat::SFZ,
+                Some("kontakt") => AudioFormat::Wav24Bit, // For future Kontakt export
+                Some("all") => AudioFormat::Wav24Bit, // Default for "all formats" 
+                _ => AudioFormat::Wav32BitFloat, // Default: high-quality WAV
+            };
+            
+            // Create single exporter for all samples - this enables .dspreset/.sfz generation
+            let export_config = ExportConfig {
+                output_directory: output_path.clone(),
+                naming_pattern,
+                sample_format,
+                normalize: false,
+                fade_in_ms: 0.0,
+                fade_out_ms: 10.0,
+                apply_detection: true, // Enable detection by default
+                detection_config: Default::default(),
+                creator_name: creator_name.clone(),
+                instrument_description: instrument_description.clone(),
+            };
+            
+            println!("🔧 GUI: Creating batch exporter for {} samples...", valid_samples.len());
+            let exporter = SampleExporter::new(export_config).map_err(|e| {
+                println!("❌ GUI: Failed to create batch exporter: {}", e);
+                format!("Failed to create sample exporter: {}", e)
+            })?;
+            
+            // Export all samples as a batch - this will create .dspreset/.sfz files automatically
+            println!("💾 GUI: Batch exporting {} samples...", valid_samples.len());
+            let exported_file_paths = exporter.export_samples(&valid_samples).map_err(|e| {
+                println!("❌ GUI: Batch export failed: {}", e);
+                format!("Failed to export samples: {}", e)
+            })?;
+            
+            // Convert paths to filenames for display
+            let exported_files: Vec<String> = exported_file_paths.iter()
+                .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+                .collect();
+            
+            println!("✅ GUI: Successfully batch exported {} files:", exported_files.len());
+            for filename in &exported_files {
+                println!("   📄 {}", filename);
+            }
+            
+            let success_message = format!("Range recording complete! {} files saved to:\n{}", 
                 exported_files.len(), output_path.display());
             
             println!("✅ GUI: {}", success_message);
@@ -776,6 +955,7 @@ pub fn run() {
       preview_note,
       record_sample,
       record_range,
+      generate_instrument_files,
       select_output_directory,
       show_samples_in_finder,
       send_midi_panic,

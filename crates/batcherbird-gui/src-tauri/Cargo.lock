@@ -121,6 +121,7 @@ dependencies = [
  "dirs 5.0.1",
  "log",
  "midir",
+ "regex",
  "serde",
  "serde_json",
  "tauri",
