@@ -3,6 +3,7 @@ use batcherbird_core::{
     audio::AudioManager,
     sampler::{SamplingEngine, SamplingConfig, AudioLevels},
     export::{SampleExporter, ExportConfig, AudioFormat},
+    loop_detection::LoopDetectionConfig,
 };
 use midir::MidiOutputConnection;
 use std::sync::{Mutex, Arc};
@@ -886,6 +887,131 @@ fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, outpu
     }
 }
 
+/// Apply loop detection to a sample file
+#[tauri::command]
+fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_length: Option<f32>, correlation_threshold: Option<f32>) -> Result<String, String> {
+    println!("🔄 GUI: Detecting loop points for: {}", file_path);
+    
+    use std::path::Path;
+    use batcherbird_core::sampler::Sample;
+    
+    // Load the audio file
+    let path = Path::new(&file_path);
+    if !path.exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+    
+    // Read the WAV file
+    match hound::WavReader::open(&path) {
+        Ok(mut reader) => {
+            let spec = reader.spec();
+            println!("   📊 Audio specs: {}Hz, {} channels, {} bits", 
+                    spec.sample_rate, spec.channels, spec.bits_per_sample);
+            
+            // Read samples based on bit depth
+            let samples: Result<Vec<f32>, _> = match spec.sample_format {
+                hound::SampleFormat::Float => {
+                    reader.samples::<f32>().collect()
+                },
+                hound::SampleFormat::Int => {
+                    match spec.bits_per_sample {
+                        16 => {
+                            reader.samples::<i16>()
+                                .map(|s| s.map(|sample| sample as f32 / i16::MAX as f32))
+                                .collect()
+                        },
+                        24 => {
+                            reader.samples::<i32>()
+                                .map(|s| s.map(|sample| sample as f32 / 8_388_607.0)) // 24-bit max
+                                .collect()
+                        },
+                        32 => {
+                            reader.samples::<i32>()
+                                .map(|s| s.map(|sample| sample as f32 / i32::MAX as f32))
+                                .collect()
+                        },
+                        _ => return Err(format!("Unsupported bit depth: {}", spec.bits_per_sample))
+                    }
+                }
+            };
+            
+            let audio_data = samples.map_err(|e| format!("Failed to read audio data: {}", e))?;
+            
+            if audio_data.is_empty() {
+                return Err("No audio data found in file".to_string());
+            }
+            
+            println!("   📄 Loaded {} samples ({:.2}s)", 
+                    audio_data.len(), 
+                    audio_data.len() as f32 / spec.sample_rate as f32);
+            
+            // Create a temporary sample for loop detection
+            let mut sample = Sample {
+                note: 60, // Middle C - not used for loop detection
+                velocity: 127,
+                audio_data,
+                sample_rate: spec.sample_rate,
+                channels: spec.channels,
+                recorded_at: std::time::SystemTime::now(),
+                midi_timing: std::time::Duration::from_millis(100),
+                audio_timing: std::time::Duration::from_millis(2000),
+            };
+            
+            // Configure loop detection
+            let mut config = LoopDetectionConfig::default();
+            if let Some(min_len) = min_loop_length {
+                config.min_loop_length_sec = min_len;
+            }
+            if let Some(max_len) = max_loop_length {
+                config.max_loop_length_sec = max_len;
+            }
+            if let Some(threshold) = correlation_threshold {
+                config.correlation_threshold = threshold;
+            }
+            
+            println!("   🔧 Loop detection config: {:.1}s-{:.1}s, threshold: {:.2}", 
+                    config.min_loop_length_sec, config.max_loop_length_sec, config.correlation_threshold);
+            
+            // Apply loop detection
+            match sample.apply_loop_detection(config) {
+                Ok(result) => {
+                    if result.success {
+                        if let Some(candidate) = result.best_candidate {
+                            let loop_info = format!(
+                                "Loop detected successfully!\nStart: {:.3}s\nEnd: {:.3}s\nLength: {:.3}s\nQuality: {:.3}\nCorrelation: {:.3}",
+                                candidate.start_sample as f32 / sample.sample_rate as f32,
+                                candidate.end_sample as f32 / sample.sample_rate as f32,
+                                candidate.length_samples as f32 / sample.sample_rate as f32,
+                                candidate.quality_score,
+                                candidate.correlation
+                            );
+                            println!("   ✅ {}", loop_info.replace('\n', " | "));
+                            Ok(loop_info)
+                        } else {
+                            Err("Loop detection succeeded but no candidate found".to_string())
+                        }
+                    } else {
+                        let error_msg = format!("Loop detection failed: {}", 
+                                result.failure_reason.unwrap_or_else(|| "Unknown reason".to_string()));
+                        println!("   ❌ {}", error_msg);
+                        Err(error_msg)
+                    }
+                },
+                Err(e) => {
+                    let error_msg = format!("Loop detection error: {}", e);
+                    println!("   ❌ {}", error_msg);
+                    Err(error_msg)
+                }
+            }
+        },
+        Err(e) => {
+            let error_msg = format!("Failed to open WAV file: {}", e);
+            println!("   ❌ {}", error_msg);
+            Err(error_msg)
+        }
+    }
+}
+
 #[tauri::command]
 async fn send_midi_panic() -> Result<String, String> {
     println!("🚨 MIDI Panic command called from UI");
@@ -942,6 +1068,78 @@ fn show_samples_in_finder() -> Result<String, String> {
     }
 }
 
+/// Get the path of the most recently recorded sample file
+#[tauri::command]
+fn get_last_recorded_sample_path(output_directory: Option<String>, sample_name: Option<String>) -> Result<String, String> {
+    println!("🔍 GUI: Finding last recorded sample path");
+    
+    use std::path::PathBuf;
+    use std::fs;
+    use std::time::SystemTime;
+    
+    // Determine search directory
+    let search_dir = if let Some(dir) = output_directory {
+        if dir.trim().is_empty() {
+            // Use Desktop/Batcherbird Samples when field is empty
+            dirs::desktop_dir()
+                .map(|desktop| desktop.join("Batcherbird Samples"))
+                .unwrap_or_else(|| PathBuf::from("samples"))
+        } else {
+            PathBuf::from(dir)
+        }
+    } else {
+        // Default to Desktop/Batcherbird Samples
+        dirs::desktop_dir()
+            .map(|desktop| desktop.join("Batcherbird Samples"))
+            .unwrap_or_else(|| PathBuf::from("samples"))
+    };
+    
+    // Add subdirectory if sample name is provided
+    let mut search_path = search_dir;
+    if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
+        search_path = search_path.join(name.trim());
+    }
+    
+    println!("   📁 Searching in: {}", search_path.display());
+    
+    if !search_path.exists() {
+        return Err(format!("Directory does not exist: {}", search_path.display()));
+    }
+    
+    // Find all WAV files in the directory
+    let entries = fs::read_dir(&search_path)
+        .map_err(|e| format!("Failed to read directory: {}", e))?;
+    
+    let mut wav_files: Vec<(PathBuf, SystemTime)> = Vec::new();
+    
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+        let path = entry.path();
+        
+        // Check if it's a WAV file
+        if path.extension().and_then(|ext| ext.to_str()) == Some("wav") {
+            // Get modification time
+            if let Ok(metadata) = fs::metadata(&path) {
+                if let Ok(modified) = metadata.modified() {
+                    wav_files.push((path, modified));
+                }
+            }
+        }
+    }
+    
+    if wav_files.is_empty() {
+        return Err("No WAV files found in directory".to_string());
+    }
+    
+    // Sort by modification time (most recent first)
+    wav_files.sort_by(|a, b| b.1.cmp(&a.1));
+    
+    let latest_file = &wav_files[0].0;
+    println!("   ✅ Found latest sample: {}", latest_file.display());
+    
+    Ok(latest_file.to_string_lossy().to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -961,7 +1159,9 @@ pub fn run() {
       send_midi_panic,
       start_input_monitoring,
       stop_input_monitoring,
-      get_audio_levels
+      get_audio_levels,
+      detect_loop_points,
+      get_last_recorded_sample_path
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

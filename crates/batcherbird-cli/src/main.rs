@@ -80,15 +80,15 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::SampleNote { note } => {
             info!("Sampling single note: {}", note);
-            sample_single_note(note).await?;
+            sample_single_note(note)?;
         }
         Commands::SampleRange { start, end } => {
             info!("Sampling note range: {} to {}", start, end);
-            sample_note_range(start, end).await?;
+            sample_note_range(start, end)?;
         }
         Commands::SampleExport { note, output } => {
             info!("Sampling and exporting note: {} to {}", note, output);
-            sample_and_export(note, output).await?;
+            sample_and_export(note, output)?;
         }
     }
 
@@ -274,7 +274,7 @@ async fn test_audio() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn sample_single_note(note: u8) -> anyhow::Result<()> {
+fn sample_single_note(note: u8) -> anyhow::Result<()> {
     use batcherbird_core::{midi::MidiManager, sampler::{SamplingEngine, SamplingConfig}};
 
     if note > 127 {
@@ -308,7 +308,7 @@ async fn sample_single_note(note: u8) -> anyhow::Result<()> {
     println!("   Note: Connect synthesizer output to audio input");
     
     // Sample the note
-    let sample = engine.sample_single_note(&mut midi_conn, note).await?;
+    let sample = engine.sample_single_note_blocking(&mut midi_conn, note)?;
     
     // Analyze the sample
     let (rms, rms_db, peak_db) = batcherbird_core::audio::AudioManager::analyze_audio_samples(&sample.audio_data);
@@ -333,7 +333,7 @@ async fn sample_single_note(note: u8) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn sample_note_range(start: u8, end: u8) -> anyhow::Result<()> {
+fn sample_note_range(start: u8, end: u8) -> anyhow::Result<()> {
     use batcherbird_core::{midi::MidiManager, sampler::{SamplingEngine, SamplingConfig}};
 
     if start > 127 || end > 127 || start > end {
@@ -370,7 +370,7 @@ async fn sample_note_range(start: u8, end: u8) -> anyhow::Result<()> {
     );
     
     // Sample all notes
-    let samples = engine.sample_note_range(&mut midi_conn, start, end).await?;
+    let samples = engine.sample_note_range_blocking(&mut midi_conn, start, end)?;
     
     // Analyze results
     println!("\n📊 Batch Sampling Results:");
@@ -401,7 +401,7 @@ async fn sample_note_range(start: u8, end: u8) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn sample_and_export(note: u8, output_dir: String) -> anyhow::Result<()> {
+fn sample_and_export(note: u8, output_dir: String) -> anyhow::Result<()> {
     use batcherbird_core::{
         midi::MidiManager, 
         sampler::{SamplingEngine, SamplingConfig},
@@ -444,6 +444,10 @@ async fn sample_and_export(note: u8, output_dir: String) -> anyhow::Result<()> {
         normalize: true,
         fade_in_ms: 0.0,
         fade_out_ms: 10.0,
+        apply_detection: true,
+        detection_config: Default::default(),
+        creator_name: None,
+        instrument_description: None,
     };
     
     let exporter = SampleExporter::new(export_config)?;
@@ -452,7 +456,7 @@ async fn sample_and_export(note: u8, output_dir: String) -> anyhow::Result<()> {
     println!("{}", exporter.get_export_info());
     
     // Sample the note
-    let sample = engine.sample_single_note(&mut midi_conn, note).await?;
+    let sample = engine.sample_single_note_blocking(&mut midi_conn, note)?;
     
     // Analyze the sample
     let (_, rms_db, peak_db) = batcherbird_core::audio::AudioManager::analyze_audio_samples(&sample.audio_data);

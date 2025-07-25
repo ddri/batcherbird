@@ -119,6 +119,7 @@ dependencies = [
  "batcherbird-core",
  "cpal",
  "dirs 5.0.1",
+ "hound",
  "log",
  "midir",
  "regex",

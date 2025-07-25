@@ -32,3 +32,4 @@ tokio = { version = "1.35", features = ["time"] }
 dirs = "5.0"
 cpal = "0.15"
 regex = "1.0"
+hound = "3.5"

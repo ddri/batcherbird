@@ -2,6 +2,7 @@ use crate::{Result, BatcherbirdError};
 use crate::midi::MidiManager;
 use crate::audio::AudioManager;
 use crate::detection::{SampleDetector, DetectionConfig, DetectionResult};
+use crate::loop_detection::{LoopDetector, LoopDetectionConfig, LoopDetectionResult};
 use midir::MidiOutputConnection;
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
@@ -795,6 +796,37 @@ impl Sample {
         }
         
         Ok(detection_result)
+    }
+    
+    /// Apply loop detection to find optimal loop points in the sample
+    pub fn apply_loop_detection(&mut self, config: LoopDetectionConfig) -> Result<LoopDetectionResult> {
+        println!("🔄 Applying loop detection to {} sample ({})", 
+            Self::note_to_name(self.note), self.note);
+        
+        let detector = LoopDetector::new(config);
+        let loop_result = detector.detect_loop_points(&self.audio_data, self.sample_rate);
+        
+        if loop_result.success {
+            if let Some(ref candidate) = loop_result.best_candidate {
+                println!("   ✅ Loop detected: {:.2}s length, quality {:.3}", 
+                    candidate.length_samples as f32 / self.sample_rate as f32,
+                    candidate.quality_score);
+                
+                // Optionally apply the loop with crossfading
+                if let Err(e) = detector.apply_loop_with_crossfade(
+                    &mut self.audio_data, 
+                    candidate, 
+                    self.sample_rate
+                ) {
+                    println!("   ⚠️ Failed to apply crossfade: {}", e);
+                }
+            }
+        } else {
+            println!("   ⚠️ Loop detection failed: {}", 
+                loop_result.failure_reason.as_deref().unwrap_or("Unknown reason"));
+        }
+        
+        Ok(loop_result)
     }
     
     /// Helper method to convert note number to name

@@ -1814,6 +1814,7 @@ window.previewRange = previewRange;
 window.selectOutputDirectory = selectOutputDirectory;
 window.testButtonsWork = testButtonsWork;
 window.showSamplesInFinder = showSamplesInFinder;
+window.testLoopDetection = testLoopDetection;
 window.sendMidiPanic = sendMidiPanic;
 window.openSetupModal = openSetupModal;
 window.closeSetupModal = closeSetupModal;
@@ -2436,3 +2437,213 @@ console.log('🔧 Functions exported to window:', {
     recordSample: typeof window.recordSample,
     showWaveform: typeof window.showWaveform
 });
+
+// ============================================================================
+// LOOP DETECTION SYSTEM
+// ============================================================================
+
+// Test loop detection on the last recorded sample
+async function testLoopDetection() {
+    console.log('🔄 Testing loop detection on last recorded sample...');
+    
+    const statusElement = document.getElementById('loop-detection-status');
+    const resultsElement = document.getElementById('loop-detection-results');
+    
+    if (statusElement) {
+        statusElement.textContent = 'Running loop detection...';
+    }
+    
+    try {
+        // Get the last recorded sample file from the system
+        const lastSamplePath = await getLastRecordedSamplePath();
+        
+        if (!lastSamplePath) {
+            throw new Error('No recorded sample found. Please record a sample first.');
+        }
+        
+        console.log('🎵 Testing loop detection on:', lastSamplePath);
+        
+        // Get loop detection parameters from UI
+        const params = getLoopDetectionParams();
+        console.log('🔧 Loop detection parameters:', params);
+        
+        // Call backend loop detection
+        const result = await invoke('detect_loop_points', {
+            filePath: lastSamplePath,
+            minLoopLength: params.minLoopLength,
+            maxLoopLength: params.maxLoopLength,
+            correlationThreshold: params.correlationThreshold
+        });
+        
+        console.log('✅ Loop detection result:', result);
+        
+        // Display results
+        displayLoopDetectionResults(result, statusElement, resultsElement);
+        
+    } catch (error) {
+        console.error('❌ Loop detection failed:', error);
+        
+        if (statusElement) {
+            statusElement.textContent = `Loop detection failed: ${error}`;
+            statusElement.style.color = '#dc2626';
+        }
+        
+        if (resultsElement) {
+            resultsElement.innerHTML = `<div style="color: #dc2626; padding: 10px;">Error: ${error}</div>`;
+        }
+        
+        showStatus(`Loop detection failed: ${error}`, 'error');
+    }
+}
+
+// Get loop detection parameters from UI sliders
+function getLoopDetectionParams() {
+    const minLoopSlider = document.getElementById('min-loop-length');
+    const maxLoopSlider = document.getElementById('max-loop-length');
+    const correlationSlider = document.getElementById('correlation-threshold');
+    
+    return {
+        minLoopLength: minLoopSlider ? parseFloat(minLoopSlider.value) : 0.1,
+        maxLoopLength: maxLoopSlider ? parseFloat(maxLoopSlider.value) : 5.0,
+        correlationThreshold: correlationSlider ? parseFloat(correlationSlider.value) : 0.8
+    };
+}
+
+// Get the path of the last recorded sample
+async function getLastRecordedSamplePath() {
+    try {
+        // Try to get from the most recent recording
+        const outputDir = document.getElementById('output-directory')?.value;
+        const sampleName = document.getElementById('sample-name')?.value?.trim();
+        
+        // Use backend to find the last recorded file
+        const result = await invoke('get_last_recorded_sample_path', {
+            outputDirectory: outputDir || null,
+            sampleName: sampleName || null
+        });
+        
+        return result;
+        
+    } catch (error) {
+        console.error('❌ Failed to get last sample path:', error);
+        return null;
+    }
+}
+
+// Display loop detection results in the UI
+function displayLoopDetectionResults(result, statusElement, resultsElement) {
+    try {
+        const loopResult = JSON.parse(result);
+        
+        if (statusElement) {
+            if (loopResult.success) {
+                statusElement.textContent = 'Loop detection completed successfully!';
+                statusElement.style.color = '#16a34a';
+            } else {
+                statusElement.textContent = `Loop detection failed: ${loopResult.failure_reason || 'Unknown error'}`;
+                statusElement.style.color = '#dc2626';
+            }
+        }
+        
+        if (resultsElement) {
+            if (loopResult.success && loopResult.candidates && loopResult.candidates.length > 0) {
+                let html = '<div class="loop-results-success">';
+                html += `<h4>Found ${loopResult.candidates.length} loop candidate(s):</h4>`;
+                
+                loopResult.candidates.forEach((candidate, index) => {
+                    const startSec = (candidate.start_sample / 44100).toFixed(3); // Assume 44.1kHz
+                    const endSec = (candidate.end_sample / 44100).toFixed(3);
+                    const lengthSec = (candidate.length_samples / 44100).toFixed(3);
+                    
+                    html += `
+                        <div class="loop-candidate" style="margin: 10px 0; padding: 10px; border: 1px solid #374151; border-radius: 4px;">
+                            <div><strong>Candidate ${index + 1}:</strong></div>
+                            <div>Start: ${startSec}s (sample ${candidate.start_sample})</div>
+                            <div>End: ${endSec}s (sample ${candidate.end_sample})</div>
+                            <div>Length: ${lengthSec}s (${candidate.length_samples} samples)</div>
+                            <div>Quality Score: ${candidate.quality_score.toFixed(3)}</div>
+                            <div>Correlation: ${candidate.correlation.toFixed(3)}</div>
+                            <div>Zero-crossing aligned: ${candidate.zero_crossing_aligned ? 'Yes' : 'No'}</div>
+                        </div>
+                    `;
+                });
+                
+                if (loopResult.best_candidate) {
+                    html += `<div style="margin-top: 15px; padding: 10px; background: rgba(34, 197, 94, 0.1); border-radius: 4px;">`;
+                    html += `<strong>Best candidate:</strong> ${(loopResult.best_candidate.length_samples / 44100).toFixed(3)}s loop with quality ${loopResult.best_candidate.quality_score.toFixed(3)}`;
+                    html += `</div>`;
+                }
+                
+                html += '</div>';
+                resultsElement.innerHTML = html;
+                
+            } else {
+                resultsElement.innerHTML = `
+                    <div style="color: #dc2626; padding: 10px;">
+                        No suitable loop points found. Try adjusting the parameters or using a different sample.
+                    </div>
+                `;
+            }
+        }
+        
+        // Show success status
+        if (loopResult.success) {
+            showStatus(`Loop detection completed! Found ${loopResult.candidates.length} candidates.`, 'success');
+        } else {
+            showStatus(`Loop detection failed: ${loopResult.failure_reason || 'Unknown error'}`, 'error');
+        }
+        
+    } catch (parseError) {
+        console.error('❌ Failed to parse loop detection result:', parseError);
+        
+        if (statusElement) {
+            statusElement.textContent = 'Failed to parse loop detection result';
+            statusElement.style.color = '#dc2626';
+        }
+        
+        if (resultsElement) {
+            resultsElement.innerHTML = `<div style="color: #dc2626; padding: 10px;">Parse error: ${parseError}</div>`;
+        }
+    }
+}
+
+// Setup loop detection slider displays
+function setupLoopDetectionSliders() {
+    // Min loop length slider
+    const minLoopSlider = document.getElementById('min-loop-length');
+    const minLoopDisplay = document.getElementById('min-loop-display');
+    if (minLoopSlider && minLoopDisplay) {
+        minLoopSlider.addEventListener('input', () => {
+            minLoopDisplay.textContent = `${minLoopSlider.value}s`;
+        });
+    }
+    
+    // Max loop length slider
+    const maxLoopSlider = document.getElementById('max-loop-length');
+    const maxLoopDisplay = document.getElementById('max-loop-display');
+    if (maxLoopSlider && maxLoopDisplay) {
+        maxLoopSlider.addEventListener('input', () => {
+            maxLoopDisplay.textContent = `${maxLoopSlider.value}s`;
+        });
+    }
+    
+    // Correlation threshold slider
+    const correlationSlider = document.getElementById('correlation-threshold');
+    const correlationDisplay = document.getElementById('correlation-display');
+    if (correlationSlider && correlationDisplay) {
+        correlationSlider.addEventListener('input', () => {
+            correlationDisplay.textContent = (parseFloat(correlationSlider.value) * 100).toFixed(0) + '%';
+        });
+    }
+}
+
+// Initialize loop detection when page loads
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('🔄 Initializing loop detection system');
+    setupLoopDetectionSliders();
+});
+
+// Export loop detection functions to global scope
+window.testLoopDetection = testLoopDetection;
+window.getLoopDetectionParams = getLoopDetectionParams;
+window.displayLoopDetectionResults = displayLoopDetectionResults;

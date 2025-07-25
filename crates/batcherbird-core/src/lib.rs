@@ -11,6 +11,7 @@ pub mod config;
 pub mod sampler;
 pub mod export;
 pub mod detection;
+pub mod loop_detection;
 
 pub use error::{BatcherbirdError, Result};
 pub use sampler::{AudioLevels, LevelMeterState};

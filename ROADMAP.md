@@ -1,10 +1,10 @@
 # Batcherbird Roadmap
 
-*Open-source hardware sampling tool to rival expensive commercial solutions*
+*Open-source hardware sampling tool*
 
 ## 🎯 Vision Statement
 
-Create the most professional, user-friendly hardware sampling tool available, combining the power of commercial samplers with the accessibility of open-source software.
+Create a user-friendly hardware sampling tool for everyone, combining the power of commercial samplers with the accessibility of open-source software.
 
 ---
 
@@ -252,11 +252,6 @@ Create the most professional, user-friendly hardware sampling tool available, co
 - < 1% sample detection false positives
 - Professional-quality exports comparable to commercial tools
 
-### User Adoption
-- GitHub stars and community engagement
-- Professional musician testimonials
-- Integration with popular DAWs and samplers
-
 ### Community Impact
 - Open-source contributions and pull requests
 - Educational content and documentation
@@ -284,30 +279,7 @@ Batcherbird welcomes contributions in all areas:
 
 ---
 
-## 📞 **Contact & Community**
-
-- **GitHub Issues**: Feature requests and bug reports
-- **Documentation**: Technical architecture and API reference
-- **Blog**: Development updates and technical deep-dives
-
----
-
 *Batcherbird is committed to providing professional-quality sampling tools that are accessible, open-source, and community-driven. Our goal is to democratize music production by offering the same time-saving automation and professional results as expensive commercial tools, free for all musicians.*
 
-## 🎯 **Competitive Advantages**
-
-### What Sets Batcherbird Apart
-- **Hardware Specialization**: Optimized workflows for vintage synthesizer sampling
-- **Open Source Philosophy**: Community-driven development with transparent roadmap
-- **Modern Architecture**: Rust performance with responsive Tauri UI framework
-- **Universal Accessibility**: Cross-platform support without licensing restrictions
-- **Real-time Feedback**: Live level meters, visual progress, and professional monitoring
-- **Automation Focus**: Reducing 12+ hour manual processes to one-click workflows
-
-### Time-Saving Philosophy
-Professional sampling tools succeed by **eliminating tedious manual work**. Our research shows users value automation above all other features:
-- Manual velocity layer sampling: 12+ hours → Automated: 30 minutes
-- Manual loop point finding: Hours per sample → Auto-detection: Seconds
-- Format conversion: Manual export to each sampler → Multi-format pipeline: One click
 
 **Next milestone: Intelligent Auto-Loop Detection & One-Click Sampling** 🤖

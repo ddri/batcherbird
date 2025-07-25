@@ -1089,6 +1089,43 @@
                         </div>
                     </div>
                 </div>
+                
+                <div class="settings-section">
+                    <h3>🔄 Loop Detection</h3>
+                    <div class="control-group">
+                        <div class="checkbox-control">
+                            <input type="checkbox" id="loop-detection-enabled">
+                            <span>Enable auto-loop detection</span>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <span class="control-label">Min Loop Length (s)</span>
+                        <div class="control-row">
+                            <input type="range" id="loop-min-length" min="0.1" max="2.0" value="0.5" step="0.1">
+                            <span class="value-display" id="loop-min-length-display">0.5</span>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <span class="control-label">Max Loop Length (s)</span>
+                        <div class="control-row">
+                            <input type="range" id="loop-max-length" min="1.0" max="8.0" value="4.0" step="0.5">
+                            <span class="value-display" id="loop-max-length-display">4.0</span>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <span class="control-label">Quality Threshold</span>
+                        <div class="control-row">
+                            <input type="range" id="loop-correlation-threshold" min="0.5" max="0.95" value="0.8" step="0.05">
+                            <span class="value-display" id="loop-correlation-threshold-display">0.80</span>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <button class="primary-btn" id="test-loop-detection" onclick="testLoopDetection()" style="width: 100%;">
+                            🔍 Test Loop Detection
+                        </button>
+                    </div>
+                    <div id="loop-detection-result" style="display: none; margin-top: 12px; padding: 12px; background: #2a2a2a; border-radius: 6px; font-size: 12px; line-height: 1.4;"></div>
+                </div>
             </div>
         </div>
     </div>
