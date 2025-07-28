@@ -4,797 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Batcherbird</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a1a;
-            color: #ffffff;
-            height: 100vh;
-            overflow: hidden;
-        }
-        
-        .app-layout {
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
-        
-        /* Top Status Bar */
-        .status-bar {
-            background: #2a2a2a;
-            border-bottom: 1px solid #3a3a3a;
-            padding: 8px 16px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            min-height: 48px;
-        }
-        
-        .connection-status {
-            display: flex;
-            align-items: center;
-            gap: 24px;
-        }
-        
-        .device-status {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-            font-weight: 500;
-        }
-        
-        .status-indicator {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            display: inline-block;
-        }
-        
-        .status-connected { background: #48bb78; }
-        .status-disconnected { background: #6b7280; }
-        .status-recording { background: #dc2626; animation: pulse 1s infinite; }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        
-        .panic-btn {
-            background: #dc2626;
-            color: white;
-            border: none;
-            padding: 6px 12px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            font-weight: 600;
-        }
-        
-        /* Main Content Area */
-        .main-content {
-            display: flex;
-            flex: 1;
-            overflow: hidden;
-        }
-        
-        /* Recording Panel - Primary */
-        .recording-panel {
-            flex: 1;
-            background: #1e1e1e;
-            padding: 24px;
-            overflow-y: auto;
-        }
-        
-        .recording-header {
-            margin-bottom: 32px;
-        }
-        
-        .recording-mode {
-            display: flex;
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-        
-        .mode-tab {
-            background: #3a3a3a;
-            border: none;
-            color: #e0e0e0;
-            padding: 12px 24px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 600;
-            transition: all 0.2s;
-        }
-        
-        .mode-tab.active {
-            background: #4682B4;
-            color: white;
-        }
-        
-        .mode-tab:hover:not(.active) {
-            background: #4a4a4a;
-        }
-        
-        /* Recording Controls */
-        .recording-controls {
-            background: #2a2a2a;
-            border-radius: 8px;
-            padding: 24px;
-            border: 1px solid #3a3a3a;
-        }
-        
-        .control-group {
-            margin-bottom: 20px;
-        }
-        
-        .control-group:last-child {
-            margin-bottom: 0;
-        }
-        
-        .control-label {
-            display: block;
-            font-size: 13px;
-            font-weight: 600;
-            color: #e0e0e0;
-            margin-bottom: 8px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .control-row {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            flex-wrap: wrap;
-        }
-        
-        .record-actions {
-            display: flex;
-            gap: 12px;
-            margin-top: 24px;
-        }
-        
-        .record-btn-primary {
-            background: #dc2626;
-            color: white;
-            border: none;
-            padding: 16px 32px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 16px;
-            font-weight: 700;
-            transition: background-color 0.2s;
-            min-width: 160px;
-        }
-        
-        .record-btn-primary:hover {
-            background: #b91c1c;
-        }
-        
-        .record-btn-secondary {
-            background: #4682B4;
-            color: white;
-            border: none;
-            padding: 16px 24px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 600;
-            transition: background-color 0.2s;
-        }
-        
-        .record-btn-secondary:hover {
-            background: #5a96d4;
-        }
-        
-        /* Settings Sidebar */
-        .settings-sidebar {
-            width: 320px;
-            background: #2a2a2a;
-            border-left: 1px solid #3a3a3a;
-            padding: 20px;
-            overflow-y: auto;
-        }
-        
-        .settings-section {
-            margin-bottom: 24px;
-        }
-        
-        .settings-section h3 {
-            color: #e0e0e0;
-            font-size: 14px;
-            font-weight: 600;
-            margin-bottom: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        /* Form Controls */
-        select, input[type="text"] {
-            background: #3a3a3a;
-            border: 1px solid #4a4a4a;
-            border-radius: 4px;
-            color: #ffffff;
-            padding: 8px 12px;
-            font-size: 13px;
-            cursor: pointer;
-        }
-        
-        select:focus, input[type="text"]:focus {
-            outline: none;
-            border-color: #4682B4;
-            box-shadow: 0 0 0 2px rgba(70, 130, 180, 0.2);
-        }
-        
-        input[type="range"] {
-            width: 120px;
-            height: 6px;
-            background: #3a3a3a;
-            border-radius: 3px;
-            outline: none;
-        }
-        
-        input[type="range"]::-webkit-slider-thumb {
-            appearance: none;
-            width: 16px;
-            height: 16px;
-            background: #4682B4;
-            border-radius: 50%;
-            cursor: pointer;
-        }
-        
-        .value-display {
-            min-width: 45px;
-            font-weight: 600;
-            color: #4682B4;
-            font-size: 13px;
-            text-align: center;
-            background: #1e1e1e;
-            padding: 4px 8px;
-            border-radius: 3px;
-        }
-        
-        .checkbox-control {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        input[type="checkbox"] {
-            width: 16px;
-            height: 16px;
-            accent-color: #4682B4;
-        }
-        
-        .small-btn {
-            background: #4682B4;
-            color: white;
-            border: none;
-            padding: 6px 12px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            font-weight: 600;
-            transition: background-color 0.2s;
-        }
-        
-        .small-btn:hover {
-            background: #5a96d4;
-        }
-        
-        .small-btn.danger {
-            background: #dc2626;
-        }
-        
-        .small-btn.danger:hover {
-            background: #b91c1c;
-        }
-        
-        .small-btn.success {
-            background: #48bb78;
-        }
-        
-        .small-btn.success:hover {
-            background: #38a169;
-        }
-        
-        /* Recording Status */
-        .recording-status {
-            background: rgba(220, 38, 38, 0.1);
-            border: 1px solid #dc2626;
-            border-radius: 8px;
-            padding: 20px;
-            margin-top: 24px;
-            text-align: center;
-        }
-        
-        .status-text {
-            font-size: 14px;
-            font-weight: 600;
-            color: #dc2626;
-            margin-bottom: 12px;
-        }
-        
-        .current-note {
-            font-size: 18px;
-            font-weight: 700;
-            color: #ffffff;
-            margin-bottom: 8px;
-        }
-        
-        .velocity-info {
-            font-size: 13px;
-            color: #9ca3af;
-        }
-        
-        .progress-bar {
-            width: 100%;
-            height: 16px;
-            background: #3a3a3a;
-            border-radius: 8px;
-            overflow: hidden;
-            margin-bottom: 12px;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
-        }
-        
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #dc2626, #ef4444);
-            width: 0%;
-            transition: width 0.3s ease;
-            border-radius: 8px;
-            box-shadow: 0 0 12px rgba(220, 38, 38, 0.4);
-        }
-        
-        .progress-bar:has(.progress-fill[style*="100%"]) .progress-fill {
-            background: linear-gradient(90deg, #059669, #10b981);
-            box-shadow: 0 0 12px rgba(5, 150, 105, 0.4);
-        }
-        
-        /* Setup Modal */
-        .setup-modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.8);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-        }
-        
-        .setup-content {
-            background: #2a2a2a;
-            border-radius: 8px;
-            padding: 24px;
-            max-width: 600px;
-            width: 90%;
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-        
-        .setup-header {
-            font-size: 18px;
-            font-weight: 700;
-            margin-bottom: 20px;
-            color: #ffffff;
-        }
-        
-        .device-setup-row {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 16px;
-            padding: 12px;
-            background: #1e1e1e;
-            border-radius: 6px;
-        }
-        
-        .device-setup-row select {
-            flex: 1;
-        }
-        
-        /* Hidden elements for old layout */
-        .old-layout {
-            display: none;
-        }
-        
-        /* Waveform Display Styles */
-        .waveform-container {
-            background: #2a2a2a;
-            border-radius: 8px;
-            padding: 16px;
-            margin-top: 16px;
-            border: 1px solid #3a3a3a;
-        }
-        
-        .waveform-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
-        }
-        
-        .waveform-title {
-            font-size: 14px;
-            font-weight: 600;
-            color: #e0e0e0;
-        }
-        
-        .waveform-controls {
-            display: flex;
-            gap: 8px;
-        }
-        
-        .waveform-display {
-            height: 128px;
-            background: #1e1e1e;
-            border-radius: 6px;
-            margin-bottom: 12px;
-            border: 1px solid #3a3a3a;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .waveform-info {
-            display: flex;
-            gap: 24px;
-            font-size: 12px;
-            color: #9ca3af;
-        }
-        
-        .waveform-info span {
-            font-weight: 500;
-        }
-        
-        /* Waveform visualization canvas styling */
-        .waveform-display canvas {
-            width: 100%;
-            height: 100%;
-            border-radius: 6px;
-        }
-        
-        /* Sample boundary markers */
-        .waveform-marker {
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            width: 2px;
-            background: #4682B4;
-            cursor: col-resize;
-            z-index: 10;
-        }
-        
-        .waveform-marker.start {
-            background: #48bb78;
-        }
-        
-        .waveform-marker.end {
-            background: #dc2626;
-        }
-        
-        .waveform-marker:hover {
-            width: 4px;
-            opacity: 0.8;
-        }
-        
-        /* Loading state for waveforms */
-        .waveform-loading {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 128px;
-            color: #9ca3af;
-            font-size: 14px;
-        }
-        
-        .waveform-loading::before {
-            content: "⏳";
-            margin-right: 8px;
-        }
-        
-        /* Professional Level Meters */
-        .level-meters-panel {
-            background: #2a2a2a;
-            border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 24px;
-            border: 1px solid #3a3a3a;
-        }
-        
-        .level-meters-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
-        }
-        
-        .level-meters-title {
-            font-size: 13px;
-            font-weight: 600;
-            color: #e0e0e0;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .monitor-input-btn {
-            background: #3a3a3a;
-            color: #e0e0e0;
-            border: 1px solid #4a4a4a;
-            padding: 6px 12px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 11px;
-            font-weight: 600;
-            transition: all 0.2s;
-        }
-        
-        .monitor-input-btn:hover {
-            background: #4a4a4a;
-            border-color: #4682B4;
-        }
-        
-        .monitor-input-btn.active {
-            background: #dc2626;
-            color: white;
-            border-color: #dc2626;
-            animation: pulse-monitoring 2s infinite;
-        }
-        
-        @keyframes pulse-monitoring {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.8; }
-        }
-        
-        .level-meters-container {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-        
-        .meter-group {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            flex: 1;
-        }
-        
-        .meter-label {
-            font-size: 12px;
-            font-weight: 600;
-            color: #9ca3af;
-            min-width: 45px;
-            text-align: center;
-        }
-        
-        .meter-bar {
-            height: 20px;
-            width: 150px;
-            background: #1a1a1a;
-            border: 1px solid #404040;
-            border-radius: 3px;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .meter-fill {
-            height: 100%;
-            width: 0%;
-            background: linear-gradient(90deg, 
-                #48bb78 0%,      /* Green: -∞ to -20dB (0-67%) */
-                #48bb78 67%,     /* Green zone */
-                #f6e05e 85%,     /* Yellow: -20 to -9dB (67-85%) */
-                #dc2626 100%     /* Red: -9dB to 0dB (85-100%) */
-            );
-            transition: width 0.016s ease-out; /* 60 FPS updates */
-            border-radius: 2px;
-        }
-        
-        .meter-peak-hold {
-            position: absolute;
-            top: 0;
-            width: 2px;
-            height: 100%;
-            background: #ffffff;
-            box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
-            opacity: 0.9;
-            left: 0%;
-            transition: left 0.1s ease-out;
-            border-radius: 1px;
-        }
-        
-        .meter-scale {
-            display: flex;
-            justify-content: space-between;
-            font-size: 10px;
-            color: #666;
-            margin-top: 4px;
-            padding: 0 1px;
-        }
-        
-        .meter-readout {
-            font-size: 11px;
-            font-weight: 600;
-            color: #4682B4;
-            min-width: 50px;
-            text-align: center;
-            background: #1e1e1e;
-            padding: 4px 8px;
-            border-radius: 3px;
-            border: 1px solid #404040;
-            font-family: 'Monaco', 'Consolas', monospace;
-        }
-        
-        .clipping-warning {
-            color: #dc2626;
-            font-weight: bold;
-            font-size: 12px;
-            animation: pulse-warning 0.5s infinite;
-            min-width: 80px;
-            text-align: center;
-        }
-        
-        @keyframes pulse-warning {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        
-        .meters-offline {
-            opacity: 0.5;
-        }
-        
-        .meters-offline .meter-fill {
-            background: #333 !important;
-        }
-        
-        /* Recording state for level meters */
-        .recording-active {
-            border-color: #dc2626 !important;
-            animation: pulse-recording 1s infinite;
-        }
-        
-        @keyframes pulse-recording {
-            0%, 100% { border-color: #dc2626; }
-            50% { border-color: #ef4444; }
-        }
-        
-        .recording-active .level-meters-title::after {
-            content: " • REC";
-            color: #dc2626;
-            font-weight: bold;
-            animation: pulse-warning 0.5s infinite;
-        }
-        
-        /* Project Templates Panel */
-        .project-templates-panel {
-            background: #2a2a2a;
-            border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 16px;
-            border: 1px solid #3a3a3a;
-        }
-        
-        .templates-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
-        }
-        
-        .templates-title {
-            font-size: 13px;
-            font-weight: 600;
-            color: #e0e0e0;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .templates-content {
-            margin-top: 12px;
-        }
-        
-        .templates-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 12px;
-        }
-        
-        .template-card {
-            background: #1e1e1e;
-            border: 1px solid #3a3a3a;
-            border-radius: 6px;
-            padding: 16px;
-            cursor: pointer;
-            transition: all 0.2s;
-            position: relative;
-        }
-        
-        .template-card:hover {
-            border-color: #4682B4;
-            background: #242424;
-        }
-        
-        .template-card.selected {
-            border-color: #4682B4;
-            background: #1a2332;
-        }
-        
-        .template-header {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 8px;
-        }
-        
-        .template-icon {
-            font-size: 24px;
-            min-width: 32px;
-            text-align: center;
-        }
-        
-        .template-name {
-            font-size: 14px;
-            font-weight: 600;
-            color: #ffffff;
-            margin: 0;
-        }
-        
-        .template-description {
-            font-size: 12px;
-            color: #9ca3af;
-            margin-bottom: 12px;
-            line-height: 1.4;
-        }
-        
-        .template-stats {
-            display: flex;
-            justify-content: space-between;
-            font-size: 11px;
-            color: #6b7280;
-        }
-        
-        .template-samples {
-            font-weight: 500;
-        }
-        
-        .template-time {
-            font-style: italic;
-        }
-        
-        .template-apply-btn {
-            position: absolute;
-            top: 12px;
-            right: 12px;
-            background: #4682B4;
-            color: white;
-            border: none;
-            padding: 4px 8px;
-            border-radius: 3px;
-            font-size: 10px;
-            font-weight: 600;
-            cursor: pointer;
-            opacity: 0;
-            transition: opacity 0.2s;
-        }
-        
-        .template-card:hover .template-apply-btn {
-            opacity: 1;
-        }
-        
-        .template-apply-btn:hover {
-            background: #5a96d4;
-        }
-    </style>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="app-layout">
@@ -814,9 +24,13 @@
                     <span id="audio-out-device-name">No Audio Output</span>
                 </div>
             </div>
-            <div>
-                <button class="small-btn" onclick="openSetupModal()">⚙️ Setup</button>
-                <button class="panic-btn" onclick="sendMidiPanic()">🚨 MIDI Panic</button>
+            <div class="status-bar-actions">
+                <button class="monitor-toggle-btn" id="monitor-toggle-btn" onclick="toggleInputMonitoring()" title="Toggle Input Monitoring">
+                    <span class="monitor-icon">📈</span>
+                    <span class="monitor-text">Monitor</span>
+                </button>
+                <button class="btn btn-sm" onclick="openSetupModal()">Setup</button>
+                <button class="panic-btn" onclick="sendMidiPanic()">MIDI Panic</button>
             </div>
         </div>
         
@@ -824,203 +38,170 @@
         <div class="main-content">
             <!-- Recording Panel -->
             <div class="recording-panel">
-                <div class="recording-header">
-                    <div class="recording-mode">
-                        <button class="mode-tab active" id="single-mode-tab" onclick="switchRecordingMode('single')">🎵 Single Note</button>
-                        <button class="mode-tab" id="range-mode-tab" onclick="switchRecordingMode('range')">🎹 Range Recording</button>
-                    </div>
+                
+                <!-- Compact Template Selector -->
+                <div class="compact-template-selector">
+                    <label for="template-dropdown">Template:</label>
+                    <select id="template-dropdown" onchange="applySelectedTemplate()">
+                        <option value="">Custom Settings</option>
+                        <!-- Templates will be populated by JavaScript -->
+                    </select>
                 </div>
                 
-                <!-- Project Templates -->
-                <div class="project-templates-panel">
-                    <div class="templates-header">
-                        <div class="templates-title">⚡ Quick Setup</div>
-                        <button class="small-btn" id="templates-toggle-btn" onclick="toggleTemplatesPanel()">Show Templates</button>
+                <!-- Compact Level Meter -->
+                <div class="compact-level-meter" id="compact-level-meter" style="display: none;">
+                    <div class="level-meter">
+                        <div class="level-meter-fill" id="input-meter-fill" style="width: 0%"></div>
+                        <div class="level-peak-hold" id="input-peak-hold" style="left: 0%"></div>
                     </div>
-                    <div class="templates-content" id="templates-content" style="display: none;">
-                        <div class="templates-grid" id="templates-grid">
-                            <!-- Templates will be populated by JavaScript -->
-                        </div>
-                    </div>
+                    <div class="level-readout" id="input-level-readout">-∞ dB</div>
+                    <div class="clipping-warning" id="clipping-warning" style="display: none;">CLIP!</div>
                 </div>
                 
-                <!-- Professional Level Meters -->
-                <div class="level-meters-panel" id="level-meters-panel">
-                    <div class="level-meters-header">
-                        <div class="level-meters-title">📊 Audio Levels</div>
-                        <button class="monitor-input-btn" id="monitor-input-btn" onclick="toggleInputMonitoring()">
-                            🎛️ Monitor Input
-                        </button>
-                    </div>
-                    <div class="level-meters-container">
-                        <div class="meter-group">
-                            <span class="meter-label">Input</span>
-                            <div class="meter-bar">
-                                <div class="meter-fill" id="input-meter-fill"></div>
-                                <div class="meter-peak-hold" id="input-peak-hold"></div>
-                            </div>
-                            <div class="meter-scale">
-                                <span>-60</span>
-                                <span>-20</span>
-                                <span>-9</span>
-                            </div>
-                            <span class="meter-readout" id="input-level-readout">-∞ dB</span>
-                        </div>
-                        <div id="clipping-warning" class="clipping-warning" style="display: none;">⚠️ CLIPPING</div>
-                    </div>
-                </div>
-                
-                <!-- Single Note Recording -->
-                <div id="single-recording" class="recording-controls">
-                    <div class="control-group">
-                        <span class="control-label">Note</span>
-                        <div class="control-row">
-                            <select id="note-select" style="width: 200px;">
-                                <option value="60">C4 (Middle C)</option>
-                                <option value="48">C3</option>
-                                <option value="72">C5</option>
-                                <option value="36">C2</option>
-                                <option value="84">C6</option>
-                            </select>
-                        </div>
-                    </div>
-                    
-                    <div class="control-group">
-                        <span class="control-label">Velocity</span>
-                        <div class="control-row">
-                            <input type="range" id="velocity-input" min="1" max="127" value="127">
-                            <span class="value-display" id="velocity-display">127</span>
-                        </div>
-                    </div>
-                    
-                    <div class="control-group">
-                        <span class="control-label">Duration (ms)</span>
-                        <div class="control-row">
-                            <input type="range" id="duration-input" min="500" max="5000" value="2000" step="100">
-                            <span class="value-display" id="duration-display">2000</span>
-                        </div>
-                    </div>
-                    
-                    <div class="record-actions">
-                        <button class="record-btn-primary" id="record-btn" onclick="recordSample()">🔴 Record Sample</button>
-                        <button class="record-btn-secondary" id="preview-btn" onclick="previewNote()" disabled>🎵 Preview</button>
-                    </div>
-                    
-                    <div id="recording-status" class="recording-status" style="display: none;">
-                        <div class="progress-bar">
-                            <div id="progress-fill" class="progress-fill"></div>
-                        </div>
-                        <div class="status-text" id="recording-text">Recording...</div>
-                    </div>
-                    
-                    <!-- Waveform Display -->
-                    <div id="waveform-container" class="waveform-container" style="display: none;">
-                        <div class="waveform-header">
-                            <span class="waveform-title">📊 Sample Waveform</span>
-                            <div class="waveform-controls">
-                                <button class="small-btn" id="waveform-zoom-in" onclick="zoomWaveform(1.5)">🔍+</button>
-                                <button class="small-btn" id="waveform-zoom-out" onclick="zoomWaveform(0.75)">🔍-</button>
-                                <button class="small-btn" id="waveform-play" onclick="playWaveform()">▶️</button>
-                                <button class="small-btn" id="waveform-reset" onclick="resetWaveformView()">🔄</button>
-                            </div>
-                        </div>
-                        <div id="waveform-display" class="waveform-display"></div>
+                <!-- MAIN WAVEFORM DISPLAY - 80% of Screen Space -->
+                <div class="main-waveform-panel">
+                    <div class="waveform-toolbar">
                         <div class="waveform-info">
-                            <span id="waveform-duration">Duration: 0.00s</span>
-                            <span id="waveform-boundaries">Auto-detected: Start 0.00s, End 0.00s</span>
+                            <span id="main-waveform-file">Ready to record</span>
+                            <span id="main-waveform-duration">No sample loaded</span>
+                        </div>
+                        <div class="waveform-controls">
+                            <button class="btn btn-xs" onclick="playMainWaveform()" id="main-waveform-play" disabled>Play</button>
+                            <button class="btn btn-xs" onclick="zoomMainWaveform(2)" id="main-waveform-zoom-in" disabled>+</button>
+                            <button class="btn btn-xs" onclick="zoomMainWaveform(0.5)" id="main-waveform-zoom-out" disabled>-</button>
+                            <button class="btn btn-xs" onclick="resetMainWaveformView()" id="main-waveform-reset" disabled>Fit</button>
+                        </div>
+                    </div>
+                    <div class="waveform-display" id="main-waveform-display">
+                        <div class="waveform-placeholder">
+                            <div class="placeholder-content">
+                                <div class="placeholder-icon">🎵</div>
+                                <div class="placeholder-text">Record a sample to see waveform</div>
+                                <div class="placeholder-subtext">Loop markers will appear here</div>
+                            </div>
                         </div>
                     </div>
                 </div>
                 
-                <!-- Range Recording -->
-                <div id="range-recording" class="recording-controls" style="display: none;">
-                    <div class="control-group">
-                        <span class="control-label">Note Range</span>
-                        <div class="control-row">
-                            <select id="start-note-select" style="width: 140px;">
-                                <option value="36">C2</option>
-                                <option value="48">C3</option>
-                                <option value="60" selected>C4</option>
-                                <option value="72">C5</option>
-                            </select>
-                            <span style="color: #9ca3af;">to</span>
-                            <select id="end-note-select" style="width: 140px;">
-                                <option value="60">C4</option>
-                                <option value="72">C5</option>
-                                <option value="84" selected>C6</option>
-                                <option value="96">C7</option>
-                            </select>
+                <!-- Compact Recording Controls -->
+                <div class="compact-recording-controls">
+                    <div class="recording-mode-tabs">
+                        <button class="mode-tab active" id="single-mode-tab" onclick="switchRecordingMode('single')">Single</button>
+                        <button class="mode-tab" id="range-mode-tab" onclick="switchRecordingMode('range')">Range</button>
+                    </div>
+                    
+                    <!-- Single Recording Controls -->
+                    <div id="single-recording" class="recording-controls-row">
+                        <select id="note-select">
+                            <option value="60">C4</option>
+                            <option value="61">C#4</option>
+                            <option value="62">D4</option>
+                            <option value="63">D#4</option>
+                            <option value="64">E4</option>
+                            <option value="65">F4</option>
+                            <option value="66">F#4</option>
+                            <option value="67">G4</option>
+                            <option value="68">G#4</option>
+                            <option value="69">A4</option>
+                            <option value="70">A#4</option>
+                            <option value="71">B4</option>
+                            <option value="72">C5</option>
+                        </select>
+                        
+                        <div class="compact-slider">
+                            <label>Vel:</label>
+                            <input type="range" id="velocity-input" min="1" max="127" value="100">
+                            <span class="value-display" id="velocity-display">100</span>
                         </div>
-                    </div>
-                    
-                    <div class="control-group">
-                        <span class="control-label">Velocity Layers</span>
-                        <div class="control-row">
-                            <div class="checkbox-control">
-                                <input type="checkbox" id="velocity-layers-enabled">
-                                <span>Enable Multi-Velocity</span>
-                            </div>
-                            <select id="velocity-layers-preset" style="width: 120px;" disabled>
-                                <option value="2" selected>2 Layers</option>
-                                <option value="3">3 Layers</option>
-                                <option value="4">4 Layers</option>
-                                <option value="custom">Custom</option>
-                            </select>
+                        
+                        <div class="compact-slider">
+                            <label>Dur:</label>
+                            <input type="range" id="duration-input" min="500" max="10000" step="100" value="2000">
+                            <span class="value-display" id="duration-display">2000</span>ms
                         </div>
+                        
+                        <button class="btn btn-secondary btn-sm" id="preview-btn" onclick="previewNote()" disabled>Preview</button>
+                        <button class="btn btn-danger" id="record-btn" onclick="recordSample()" disabled>Record</button>
                     </div>
                     
-                    <div id="single-velocity-controls" class="control-group">
-                        <span class="control-label">Velocity</span>
-                        <div class="control-row">
-                            <input type="range" id="range-velocity-input" min="1" max="127" value="127">
-                            <span class="value-display" id="range-velocity-display">127</span>
+                    <!-- Range Recording Controls -->
+                    <div id="range-recording" class="recording-controls-row" style="display: none;">
+                        <select id="start-note-select">
+                            <option value="36">C2</option>
+                            <option value="48" selected>C3</option>
+                            <option value="60">C4</option>
+                            <option value="72">C5</option>
+                        </select>
+                        <span>to</span>
+                        <select id="end-note-select">
+                            <option value="60">C4</option>
+                            <option value="72">C5</option>
+                            <option value="84" selected>C6</option>
+                            <option value="96">C7</option>
+                        </select>
+                        
+                        <div class="compact-slider">
+                            <label>Vel:</label>
+                            <input type="range" id="range-velocity-input" min="1" max="127" value="100">
+                            <span class="value-display" id="range-velocity-display">100</span>
                         </div>
-                    </div>
-                    
-                    <div id="custom-velocity-controls" class="control-group" style="display: none;">
-                        <span class="control-label">Custom Velocities</span>
-                        <div class="control-row">
-                            <input type="text" id="velocity-layers-custom" placeholder="e.g., 64,100,127" style="width: 200px;" disabled>
+                        
+                        <div class="compact-slider">
+                            <label>Dur:</label>
+                            <input type="range" id="range-duration-input" min="500" max="10000" step="100" value="2000">
+                            <span class="value-display" id="range-duration-display">2000</span>ms
                         </div>
+                        
+                        <button class="btn btn-secondary btn-sm" id="range-preview-btn" onclick="previewRange()" disabled>Preview</button>
+                        <button class="btn btn-danger" id="range-record-btn" onclick="recordRange()" disabled>Record Range</button>
+                        <button class="btn btn-sm" id="range-stop-btn" onclick="stopRangeRecording()" style="display: none;">Stop</button>
                     </div>
                     
-                    <div class="control-group">
-                        <span class="control-label">Duration (ms)</span>
-                        <div class="control-row">
-                            <input type="range" id="range-duration-input" min="500" max="5000" value="2000" step="100">
-                            <span class="value-display" id="range-duration-display">2000</span>
-                        </div>
-                    </div>
-                    
-                    <div class="record-actions">
-                        <button class="record-btn-primary" id="range-record-btn" onclick="recordRange()">🎹 Record Range</button>
-                        <button class="record-btn-primary" id="range-stop-btn" onclick="stopRangeRecording()" style="background: #6b7280; display: none;">⏹️ Stop</button>
-                        <button class="record-btn-secondary" id="range-preview-btn" onclick="previewRange()" disabled>🎵 Preview</button>
-                    </div>
-                    
-                    <div id="range-recording-status" class="recording-status" style="display: none;">
+                    <!-- Recording Progress Bar -->
+                    <div class="compact-progress" id="recording-status" style="display: none;">
                         <div class="progress-bar">
-                            <div id="range-progress-fill" class="progress-fill"></div>
+                            <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
                         </div>
-                        <div class="status-text" id="range-recording-text">Recording range...</div>
-                        <div class="current-note" id="range-current-note"></div>
-                        <div class="velocity-info" id="range-velocity-info"></div>
+                        <div class="recording-text" id="recording-text">Recording...</div>
                     </div>
-                    
-                    <!-- Range Waveform Display -->
-                    <div id="range-waveform-container" class="waveform-container" style="display: none;">
-                        <div class="waveform-header">
-                            <span class="waveform-title">📊 Current Sample</span>
-                            <div class="waveform-controls">
-                                <button class="small-btn" id="range-waveform-play" onclick="playRangeWaveform()">▶️</button>
-                                <button class="small-btn" onclick="showBatchThumbnails()">🖼️ All Samples</button>
+                </div>
+                
+                
+                <!-- Loop Detection Section -->
+                <div class="loop-detection-panel">
+                    <div class="loop-detection-header">
+                        <div class="loop-detection-title">Auto Loop Detection</div>
+                        <button class="btn btn-sm" id="test-loop-detection-btn" onclick="testLoopDetection()">Test Loop Detection</button>
+                    </div>
+                    <div class="collapsible-header keyboard-nav" tabindex="0" onclick="toggleAdvancedSettings('loop-parameters')" onkeydown="handleKeyboardToggle(event, 'loop-parameters')">
+                        <div class="control-label">Loop Parameters</div>
+                        <span class="collapse-indicator" id="loop-parameters-indicator">▼</span>
+                    </div>
+                    <div class="loop-detection-controls collapsible-content collapsed" id="loop-parameters-content">
+                        <div class="control-group">
+                            <div class="control-row">
+                                <label>Min Length:</label>
+                                <input type="range" id="min-loop-length" min="0.1" max="2.0" step="0.1" value="0.3">
+                                <span class="value-display" id="min-loop-display">0.3s</span>
+                                
+                                <label>Max Length:</label>
+                                <input type="range" id="max-loop-length" min="1.0" max="10.0" step="0.1" value="3.0">
+                                <span class="value-display" id="max-loop-display">3.0s</span>
+                            </div>
+                            <div class="control-row">
+                                <label>Quality Threshold:</label>
+                                <input type="range" id="correlation-threshold" min="0.3" max="1.0" step="0.01" value="0.35">
+                                <span class="value-display" id="correlation-display">35%</span>
+                            </div>
+                            <div style="font-size: 11px; color: #6b7280; margin-top: 4px;">
+                                Lower = more permissive, Higher = more selective
                             </div>
                         </div>
-                        <div id="range-waveform-display" class="waveform-display"></div>
-                        <div class="waveform-info">
-                            <span id="range-waveform-note">Note: --</span>
-                            <span id="range-waveform-velocity">Velocity: --</span>
-                            <span id="range-samples-count">Samples: 0/0</span>
+                    </div>
+                    <div class="loop-detection-results">
+                        <div class="loop-detection-status" id="loop-detection-status">Click "Test Loop Detection" to analyze your last recorded sample</div>
+                        <div class="loop-detection-results-content" id="loop-detection-results">
+                            <!-- Results will appear here -->
                         </div>
                     </div>
                 </div>
@@ -1028,149 +209,152 @@
             
             <!-- Settings Sidebar -->
             <div class="settings-sidebar">
+                <!-- Output Settings -->
                 <div class="settings-section">
-                    <h3>Output</h3>
+                    <h3>Output Settings</h3>
+                    
                     <div class="control-group">
-                        <span class="control-label">Sample Name</span>
-                        <input type="text" id="sample-name" placeholder="e.g., DW6000, Prophet5..." style="width: 100%;">
-                    </div>
-                    <div class="control-group">
-                        <span class="control-label">Save Location</span>
-                        <input type="text" id="output-directory" placeholder="Desktop/Batcherbird Samples..." style="width: 100%; margin-bottom: 8px;">
-                        <div style="display: flex; gap: 8px;">
-                            <button class="small-btn" onclick="selectOutputDirectory()">Browse</button>
-                            <button class="small-btn success" onclick="showSamplesInFinder()">Show in Finder</button>
+                        <label class="control-label">Sample Name</label>
+                        <input type="text" id="sample-name" placeholder="e.g., Roland-JP8000">
+                        <div style="font-size: 11px; color: #6b7280; margin-top: 4px;">
+                            <span>Example: Roland-JP8000_C4_60_vel127.wav</span>
                         </div>
                     </div>
+                    
                     <div class="control-group">
-                        <span class="control-label">Export Format</span>
-                        <select id="export-format" style="width: 100%;">
-                            <option value="wav" selected>WAV Files Only</option>
-                            <option value="sfz">SFZ (.sfz)</option>
+                        <label class="control-label">Output Directory</label>
+                        <div class="control-row">
+                            <input type="text" id="output-directory" placeholder="Choose directory..." readonly>
+                            <button class="btn btn-sm" onclick="selectOutputDirectory()">Browse</button>
+                        </div>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label class="control-label">Export Format</label>
+                        <select id="export-format">
+                            <option value="wav">WAV (24-bit)</option>
                             <option value="decentsampler">Decent Sampler (.dspreset)</option>
-                            <option value="kontakt">Sampler Ready</option>
+                            <option value="sfz">SFZ (.sfz)</option>
                             <option value="all">All Formats</option>
                         </select>
                     </div>
                     
-                    <div id="decent-sampler-options" class="control-group" style="display: none;">
-                        <span class="control-label">Creator Name</span>
-                        <input type="text" id="creator-name" placeholder="Your name" style="width: 100%;">
+                    <!-- Decent Sampler Options -->
+                    <div id="decent-sampler-options" style="display: none;">
+                        <div class="control-group">
+                            <label class="control-label">Creator Name</label>
+                            <input type="text" id="creator-name" placeholder="Your name">
+                        </div>
+                        
+                        <div class="control-group">
+                            <label class="control-label">Instrument Description</label>
+                            <input type="text" id="instrument-description" placeholder="Brief description">
+                        </div>
                     </div>
                     
-                    <div id="decent-sampler-description" class="control-group" style="display: none;">
-                        <span class="control-label">Instrument Description</span>
-                        <input type="text" id="instrument-description" placeholder="e.g. Warm vintage analog synth" style="width: 100%;">
-                    </div>
-                </div>
-                
-                <div class="settings-section">
-                    <h3>Sample Detection</h3>
-                    <div class="control-group">
-                        <div class="checkbox-control">
-                            <input type="checkbox" id="detection-enabled" checked>
-                            <span>Auto-trim samples</span>
-                        </div>
-                    </div>
-                    <div class="control-group">
-                        <span class="control-label">Preset</span>
-                        <select id="detection-preset" style="width: 100%;">
-                            <option value="default">Default</option>
-                            <option value="vintage_synth" selected>Vintage Synth</option>
-                            <option value="percussive">Percussive</option>
-                            <option value="sustained">Sustained/Pads</option>
-                        </select>
-                    </div>
-                    <div class="control-group">
-                        <span class="control-label">Threshold (dB)</span>
-                        <div class="control-row">
-                            <input type="range" id="detection-threshold" min="-60" max="-10" value="-35" step="1">
-                            <span class="value-display" id="detection-threshold-display">-35</span>
+                    <div id="decent-sampler-description" style="display: none;">
+                        <div style="font-size: 11px; color: #6b7280; margin-top: 8px; line-height: 1.4;">
+                            Metadata will be embedded in the generated instrument file for proper attribution and organization.
                         </div>
                     </div>
                 </div>
                 
+                <!-- Sample Detection -->
                 <div class="settings-section">
-                    <h3>🔄 Loop Detection</h3>
-                    <div class="control-group">
-                        <div class="checkbox-control">
-                            <input type="checkbox" id="loop-detection-enabled">
-                            <span>Enable auto-loop detection</span>
+                    <div class="collapsible-header keyboard-nav" tabindex="0" onclick="toggleAdvancedSettings('sample-detection')" onkeydown="handleKeyboardToggle(event, 'sample-detection')">
+                        <h3>Sample Detection</h3>
+                        <span class="collapse-indicator" id="sample-detection-indicator">▼</span>
+                    </div>
+                    
+                    <div class="collapsible-content" id="sample-detection-content">
+                        <div class="control-group">
+                            <div class="checkbox-control">
+                                <input type="checkbox" id="enable-detection" checked>
+                                <label for="enable-detection">Enable Auto-Detection</label>
+                            </div>
+                        </div>
+                        
+                        <div class="control-group">
+                            <label class="control-label">Detection Threshold</label>
+                            <div class="control-row">
+                                <input type="range" id="detection-threshold" min="0.001" max="0.1" step="0.001" value="0.01">
+                                <span class="value-display" id="detection-threshold-display">0.01</span>
+                            </div>
+                            <div style="font-size: 11px; color: #6b7280; margin-top: 4px;">
+                                Lower values detect quieter sounds
+                            </div>
                         </div>
                     </div>
-                    <div class="control-group">
-                        <span class="control-label">Min Loop Length (s)</span>
-                        <div class="control-row">
-                            <input type="range" id="loop-min-length" min="0.1" max="2.0" value="0.5" step="0.1">
-                            <span class="value-display" id="loop-min-length-display">0.5</span>
-                        </div>
-                    </div>
-                    <div class="control-group">
-                        <span class="control-label">Max Loop Length (s)</span>
-                        <div class="control-row">
-                            <input type="range" id="loop-max-length" min="1.0" max="8.0" value="4.0" step="0.5">
-                            <span class="value-display" id="loop-max-length-display">4.0</span>
-                        </div>
-                    </div>
-                    <div class="control-group">
-                        <span class="control-label">Quality Threshold</span>
-                        <div class="control-row">
-                            <input type="range" id="loop-correlation-threshold" min="0.5" max="0.95" value="0.8" step="0.05">
-                            <span class="value-display" id="loop-correlation-threshold-display">0.80</span>
-                        </div>
-                    </div>
-                    <div class="control-group">
-                        <button class="primary-btn" id="test-loop-detection" onclick="testLoopDetection()" style="width: 100%;">
-                            🔍 Test Loop Detection
-                        </button>
-                    </div>
-                    <div id="loop-detection-result" style="display: none; margin-top: 12px; padding: 12px; background: #2a2a2a; border-radius: 6px; font-size: 12px; line-height: 1.4;"></div>
+                </div>
+                
+                <!-- Actions -->
+                <div class="settings-section">
+                    <h3>Actions</h3>
+                    <button class="btn btn-secondary" onclick="showSamplesInFinder()" style="width: 100%; margin-bottom: 8px;">
+                        Open Samples Folder
+                    </button>
                 </div>
             </div>
         </div>
     </div>
     
     <!-- Device Setup Modal -->
-    <div class="setup-modal" id="setup-modal">
-        <div class="setup-content">
-            <div class="setup-header">Device Setup</div>
-            
-            <div class="device-setup-row">
-                <span style="width: 120px; font-weight: 600;">MIDI Output:</span>
-                <select id="midi-select">
-                    <option value="">Loading MIDI devices...</option>
-                </select>
-                <button class="small-btn" onclick="loadMidiDevices()">Refresh</button>
-                <button class="small-btn" onclick="testMidiConnection()">Test</button>
+    <div id="setup-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Device Setup</h2>
+                <button class="btn btn-sm" onclick="closeSetupModal()">Close</button>
             </div>
             
-            <div class="device-setup-row">
-                <span style="width: 120px; font-weight: 600;">Audio Input:</span>
-                <select id="audio-input-select">
-                    <option value="">Loading audio input devices...</option>
-                </select>
-                <button class="small-btn" onclick="loadAudioInputDevices()">Refresh</button>
-            </div>
-            
-            <div class="device-setup-row">
-                <span style="width: 120px; font-weight: 600;">Audio Output:</span>
-                <select id="audio-output-select">
-                    <option value="">Loading audio output devices...</option>
-                </select>
-                <button class="small-btn" onclick="loadAudioOutputDevices()">Refresh</button>
-            </div>
-            
-            <div style="margin-top: 20px; text-align: right;">
-                <button class="small-btn" onclick="closeSetupModal()">Done</button>
+            <div class="modal-body">
+                <div class="settings-section">
+                    <h3>MIDI Device</h3>
+                    <div class="control-group">
+                        <select id="midi-select">
+                            <option value="">Loading MIDI devices...</option>
+                        </select>
+                        <button class="btn btn-sm" onclick="loadMidiDevices()">Refresh</button>
+                        <button class="btn btn-sm" onclick="testMidiConnection()">Test</button>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>Audio Input</h3>
+                    <div class="control-group">
+                        <select id="audio-input-select">
+                            <option value="">Loading audio devices...</option>
+                        </select>
+                        <button class="btn btn-sm" onclick="loadAudioInputDevices()">Refresh</button>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>Audio Output</h3>
+                    <div class="control-group">
+                        <select id="audio-output-select">
+                            <option value="">Loading audio devices...</option>
+                        </select>
+                        <button class="btn btn-sm" onclick="loadAudioOutputDevices()">Refresh</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
     
-    <!-- Hidden status div for compatibility -->
-    <div id="status" class="status" style="display: none;"></div>
-
-    <script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.esm.js" type="module"></script>
-    <script src="./templates.js"></script>
-    <script type="module" src="./main.js"></script>
+    <!-- Include JavaScript -->
+    <script type="module">
+        import { invoke } from '@tauri-apps/api/tauri'
+        import { convertFileSrc } from '@tauri-apps/api/tauri'
+        
+        // Make functions globally available
+        window.invoke = invoke
+        window.convertFileSrc = convertFileSrc
+    </script>
+    <script src="preferences.js"></script>
+    <script src="templates.js"></script>
+    <script src="main.js"></script>
+    
+    <!-- Status message display -->
+    <div id="status-messages" style="position: fixed; top: 20px; right: 20px; z-index: 1000; max-width: 300px;"></div>
 </body>
 </html>

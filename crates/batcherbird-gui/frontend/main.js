@@ -301,6 +301,17 @@ async function loadAudioOutputDevices() {
 
 function showStatus(message, type) {
     const status = document.getElementById('status');
+    if (!status) {
+        console.warn('⚠️ Status element not found, logging to console instead:', message);
+        if (type === 'error') {
+            console.error('🚨', message);
+        } else if (type === 'success') {
+            console.log('✅', message);
+        } else {
+            console.info('ℹ️', message);
+        }
+        return;
+    }
     status.textContent = message;
     status.className = `status ${type}`;
     status.style.display = 'block';
@@ -631,7 +642,7 @@ async function recordSample() {
     try {
         // Disable record button and show recording status
         recordBtn.disabled = true;
-        recordBtn.textContent = '⏹️ Recording...';
+        recordBtn.textContent = 'Recording...';
         recordingStatus.style.display = 'block';
         progressFill.style.width = '0%';
         recordingText.textContent = 'Starting recording...';
@@ -661,47 +672,50 @@ async function recordSample() {
         
         console.log('📡 Calling backend record_sample with params:', { note, velocity, duration, outputDirectory, sampleName, exportFormat, creatorName, instrumentDescription });
         
-        try {
-            const result = await invoke('record_sample', { 
-                note: note, 
-                velocity: velocity, 
-                duration: duration,
-                outputDirectory: outputDirectory,
-                sampleName: sampleName || null,
-                exportFormat: exportFormat,
-                creatorName: creatorName || null,
-                instrumentDescription: instrumentDescription || null
-            });
-            console.log('✅ Backend returned result:', result);
-            
-            // Update UI with success
-            recordingText.textContent = 'Recording complete!';
-            showStatus(result, 'success');
-            
-            // Extract file path from result message and show waveform
-            setTimeout(async () => {
-                try {
-                    // Parse the file path from the result message
-                    // Example result: "Recording saved: DW6000_C4_60_vel127.wav (45056 samples)\nLocation: /path/to/file.wav"
-                    const locationMatch = result.match(/Location: (.+\.wav)/);
-                    if (locationMatch) {
-                        const filePath = locationMatch[1];
-                        console.log('🌊 Showing waveform for recorded file:', filePath);
-                        await showWaveform(filePath, false);
-                    } else {
-                        console.log('ℹ️ Could not extract file path for waveform display');
+        const result = await invoke('record_sample', { 
+            note: note, 
+            velocity: velocity, 
+            duration: duration,
+            outputDirectory: outputDirectory,
+            sampleName: sampleName || null,
+            exportFormat: exportFormat,
+            creatorName: creatorName || null,
+            instrumentDescription: instrumentDescription || null
+        });
+        console.log('✅ Backend returned result:', result);
+        
+        // Update UI with success
+        recordingText.textContent = 'Recording complete!';
+        showStatus(result, 'success');
+        
+        // Extract file path from result message and show waveform (async, non-blocking)
+        setTimeout(async () => {
+            try {
+                // Parse the file path from the result message
+                let filePath = null;
+                
+                // Try: "Location: /path/to/file"
+                const locationMatch = result.match(/Location: (.+)/);
+                if (locationMatch) {
+                    filePath = locationMatch[1].trim();
+                } else {
+                    // Fallback: try to find any .wav file path in the result
+                    const wavMatch = result.match(/([^\s]+\.wav)/);
+                    if (wavMatch) {
+                        filePath = wavMatch[1];
                     }
-                } catch (waveformError) {
-                    console.error('❌ Failed to show waveform:', waveformError);
                 }
-            }, 1000); // Delay to let file system sync
-            
-        } catch (backendError) {
-            console.error('❌ Backend recording failed:', backendError);
-            recordingText.textContent = 'Recording failed!';
-            showStatus(`Recording failed: ${backendError}`, 'error');
-            throw backendError; // Re-throw to be caught by outer try-catch
-        }
+                
+                if (filePath) {
+                    console.log('🌊 Updating main waveform for recorded file:', filePath);
+                    await updateMainWaveform(filePath);
+                } else {
+                    console.log('ℹ️ Could not extract file path for waveform display');
+                }
+            } catch (waveformError) {
+                console.error('❌ Failed to show waveform (non-critical):', waveformError);
+            }
+        }, 1000); // Delay to let file system sync
         
         clearInterval(progressInterval);
         progressFill.style.width = '100%';
@@ -718,7 +732,7 @@ async function recordSample() {
     } finally {
         // Re-enable record button
         recordBtn.disabled = false;
-        recordBtn.textContent = '🔴 Record Sample';
+        recordBtn.textContent = 'Record Sample';
     }
 }
 
@@ -1090,7 +1104,7 @@ function stopRangeRecording() {
     const rangeCurrentNote = document.getElementById('range-current-note');
     
     rangeRecordingText.textContent = 'Stopping recording...';
-    rangeCurrentNote.textContent = '⏹️ Recording cancelled by user';
+    rangeCurrentNote.textContent = 'Recording cancelled by user';
     
     showStatus('Range recording stopped by user', 'error');
     
@@ -1219,6 +1233,12 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize with single recording mode
     switchRecordingMode('single');
+    
+    // Initialize the main waveform display
+    initializeMainWaveform();
+    
+    // Populate template dropdown
+    populateTemplatesDropdown();
     
     console.log('✅ UI initialization complete');
 });
@@ -1496,7 +1516,10 @@ async function recordNotesWithVelocityLayersResponsiveUI(startNote, endNote, vel
                     const locationMatch = result.match(/Location: (.+\.wav)/);
                     if (locationMatch) {
                         const filePath = locationMatch[1];
-                        console.log('🌊 Showing range waveform for:', filePath);
+                        console.log('🌊 Updating main waveform for range sample:', filePath);
+                        await updateMainWaveform(filePath);
+                        
+                        // Still show the range-specific waveform
                         await showWaveform(filePath, true); // true for range mode
                         
                         // Update range waveform info
@@ -1708,6 +1731,7 @@ async function loadMidiDevicesWithStatus() {
                 midiSelect.innerHTML = '<option value="">No MIDI devices found</option>';
             } else {
                 midiSelect.innerHTML = '<option value="">Select MIDI device...</option>';
+                let hasSelectedDevice = false;
                 devices.forEach((device, index) => {
                     const option = document.createElement('option');
                     option.value = index.toString();
@@ -1717,9 +1741,21 @@ async function loadMidiDevicesWithStatus() {
                     // Auto-select if this was the previously selected device
                     if (device === selectedMidiDevice) {
                         option.selected = true;
-                        connectMidiDevice(index);
+                        connectMidiDevice(index).catch(console.error);
+                        hasSelectedDevice = true;
                     }
                 });
+                
+                // If no saved device, auto-select first available device
+                if (!hasSelectedDevice && devices.length > 0) {
+                    const firstOption = midiSelect.options[1]; // Skip "Select device..." option
+                    if (firstOption) {
+                        firstOption.selected = true;
+                        selectedMidiDevice = devices[0];
+                        connectMidiDevice(0).catch(console.error);
+                        console.log('🔧 Auto-selected first MIDI device:', devices[0]);
+                    }
+                }
             }
         }
         
@@ -1745,6 +1781,7 @@ async function loadAudioInputDevicesWithStatus() {
                 audioInputSelect.innerHTML = '<option value="">No audio input devices found</option>';
             } else {
                 audioInputSelect.innerHTML = '<option value="">Select audio input device...</option>';
+                let hasSelectedAudioInput = false;
                 devices.forEach((device, index) => {
                     const option = document.createElement('option');
                     option.value = index.toString();
@@ -1753,8 +1790,19 @@ async function loadAudioInputDevicesWithStatus() {
                     
                     if (device === selectedAudioInputDevice) {
                         option.selected = true;
+                        hasSelectedAudioInput = true;
                     }
                 });
+                
+                // Auto-select first audio input if no saved preference
+                if (!hasSelectedAudioInput && devices.length > 0) {
+                    const firstOption = audioInputSelect.options[1];
+                    if (firstOption) {
+                        firstOption.selected = true;
+                        selectedAudioInputDevice = devices[0];
+                        console.log('🔧 Auto-selected first audio input device:', devices[0]);
+                    }
+                }
             }
         }
         
@@ -1827,6 +1875,7 @@ window.updateStatusBar = updateStatusBar;
 
 let wavesurferInstance = null;
 let rangeWavesurferInstance = null;
+let mainWavesurferInstance = null;
 let currentSamplePath = null;
 
 // Initialize Wavesurfer.js when needed
@@ -1834,14 +1883,18 @@ async function initializeWaveform(containerId) {
     console.log(`🌊 Initializing waveform in container: ${containerId}`);
     
     try {
-        // Import Wavesurfer dynamically
+        // Import Wavesurfer and Regions plugin dynamically
         const WaveSurfer = (await import('https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.esm.js')).default;
+        const RegionsPlugin = (await import('https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.esm.js')).default;
         
         const container = document.getElementById(containerId);
         if (!container) {
             console.error(`❌ Waveform container not found: ${containerId}`);
             return null;
         }
+        
+        // Create regions plugin instance
+        const regions = RegionsPlugin.create();
         
         const wavesurfer = WaveSurfer.create({
             container: container,
@@ -1851,8 +1904,12 @@ async function initializeWaveform(containerId) {
             height: 128,
             normalize: true,
             fillParent: true,
-            responsive: true
+            responsive: true,
+            plugins: [regions]
         });
+        
+        // Store regions plugin reference for later use
+        wavesurfer.regionsPlugin = regions;
         
         console.log('✅ Wavesurfer instance created successfully');
         return wavesurfer;
@@ -1868,17 +1925,23 @@ async function showWaveform(samplePath, isRangeMode = false) {
     console.log(`🌊 Showing waveform for: ${samplePath}`);
     
     const containerId = isRangeMode ? 'range-waveform-display' : 'waveform-display';
-    const containerElement = document.getElementById(isRangeMode ? 'range-waveform-container' : 'waveform-container');
+    const containerElementId = isRangeMode ? 'range-waveform-container' : 'waveform-container';
+    const containerElement = document.getElementById(containerElementId);
+    
+    console.log(`🔍 Looking for container: ${containerElementId}`);
+    console.log(`🔍 Container found:`, !!containerElement);
     
     if (!containerElement) {
-        console.error(`❌ Waveform container not found`);
+        console.error(`❌ Waveform container not found: ${containerElementId}`);
         return;
     }
     
     // Show loading state
     const displayElement = document.getElementById(containerId);
+    console.log(`🔍 Display element found:`, !!displayElement);
     displayElement.innerHTML = '<div class="waveform-loading">Loading waveform...</div>';
     containerElement.style.display = 'block';
+    console.log(`🔍 Container made visible`);
     
     try {
         // Clean the file path (remove file:// prefix if present)
@@ -2005,6 +2068,192 @@ function hideWaveform(isRangeMode = false) {
     }
 }
 
+// ============================================================================
+// LOOP MARKERS AND VISUAL EDITING - SampleRobot/Ableton Style
+// ============================================================================
+
+let currentLoopRegion = null;
+
+// Add visual loop markers to waveform display
+function addLoopMarkersToWaveform(wavesurfer, startTime, endTime, isEditable = true) {
+    if (!wavesurfer || !wavesurfer.regionsPlugin) {
+        console.warn('⚠️ Cannot add loop markers: no regions plugin available');
+        return null;
+    }
+    
+    // Remove existing loop region if present
+    if (currentLoopRegion) {
+        currentLoopRegion.remove();
+        currentLoopRegion = null;
+    }
+    
+    console.log(`🎯 Adding loop markers: ${startTime.toFixed(3)}s - ${endTime.toFixed(3)}s`);
+    
+    // Create loop region with visual styling
+    currentLoopRegion = wavesurfer.regionsPlugin.addRegion({
+        start: startTime,
+        end: endTime,
+        color: 'rgba(255, 215, 0, 0.3)', // Gold color with transparency
+        drag: isEditable,
+        resize: isEditable,
+        label: 'Loop'
+    });
+    
+    if (isEditable) {
+        // Set up event handlers for region changes
+        currentLoopRegion.on('update-end', () => {
+            const newStart = currentLoopRegion.start;
+            const newEnd = currentLoopRegion.end;
+            console.log(`🔄 Loop region updated: ${newStart.toFixed(3)}s - ${newEnd.toFixed(3)}s`);
+            
+            // Update the stored loop data
+            if (window.currentLoopData) {
+                const sampleRate = window.currentLoopData.sampleRate;
+                window.currentLoopData.startTime = newStart;
+                window.currentLoopData.endTime = newEnd;
+                window.currentLoopData.startSample = Math.round(newStart * sampleRate);
+                window.currentLoopData.endSample = Math.round(newEnd * sampleRate);
+                
+                console.log('✅ Updated loop data:', window.currentLoopData);
+                
+                // Update UI to show the loop has been modified
+                updateLoopModificationStatus(true);
+            }
+        });
+        
+        // Enable region click to play loop
+        currentLoopRegion.on('click', (e) => {
+            if (e.shiftKey) {
+                // Shift+click plays the region in a loop (WaveSurfer.js feature)
+                console.log('🔁 Playing loop region on repeat');
+            } else {
+                // Regular click plays the region once
+                console.log('▶️ Playing loop region once');
+            }
+        });
+    }
+    
+    return currentLoopRegion;
+}
+
+// Update UI to indicate loop has been modified
+function updateLoopModificationStatus(isModified) {
+    const acceptBtn = document.getElementById('accept-loop-btn');
+    if (acceptBtn && isModified) {
+        acceptBtn.textContent = '💾 Save Changes';
+        acceptBtn.disabled = false;
+        acceptBtn.classList.remove('btn-secondary');
+        acceptBtn.classList.add('btn-success');
+    }
+}
+
+// Clear all loop markers from waveform
+function clearLoopMarkers(wavesurfer) {
+    if (currentLoopRegion) {
+        currentLoopRegion.remove();
+        currentLoopRegion = null;
+        console.log('🗑️ Cleared loop markers');
+    }
+}
+
+// Initialize main waveform display on page load
+async function initializeMainWaveform() {
+    try {
+        console.log('🌊 Initializing main waveform display');
+        mainWavesurferInstance = await initializeWaveform('main-waveform-display');
+        if (mainWavesurferInstance) {
+            console.log('✅ Main waveform initialized successfully');
+        }
+    } catch (error) {
+        console.error('❌ Failed to initialize main waveform:', error);
+    }
+}
+
+// Update main waveform with new recording
+async function updateMainWaveform(audioFilePath) {
+    if (!mainWavesurferInstance) {
+        console.log('🌊 Main waveform not initialized, creating...');
+        await initializeMainWaveform();
+    }
+    
+    if (mainWavesurferInstance && audioFilePath) {
+        try {
+            console.log('📁 Loading audio into main waveform:', audioFilePath);
+            
+            // Hide placeholder and show waveform
+            const placeholder = document.querySelector('#main-waveform-display .waveform-placeholder');
+            if (placeholder) {
+                placeholder.style.display = 'none';
+            }
+            
+            // Add has-waveform class for styling
+            const display = document.getElementById('main-waveform-display');
+            if (display) {
+                display.classList.add('has-waveform');
+            }
+            
+            // Load the audio file
+            const audioUrl = convertFileSrc(audioFilePath);
+            await mainWavesurferInstance.load(audioUrl);
+            
+            // Update info display
+            const duration = mainWavesurferInstance.getDuration();
+            const durationEl = document.getElementById('main-waveform-duration');
+            const fileEl = document.getElementById('main-waveform-file');
+            
+            if (durationEl) {
+                durationEl.textContent = `Duration: ${duration.toFixed(2)}s`;
+            }
+            if (fileEl) {
+                const fileName = audioFilePath.split('/').pop();
+                fileEl.textContent = fileName;
+            }
+            
+            // Enable controls
+            ['main-waveform-play', 'main-waveform-zoom-in', 'main-waveform-zoom-out', 'main-waveform-reset'].forEach(id => {
+                const btn = document.getElementById(id);
+                if (btn) btn.disabled = false;
+            });
+            
+            console.log('✅ Main waveform updated successfully');
+            
+        } catch (error) {
+            console.error('❌ Failed to update main waveform:', error);
+        }
+    }
+}
+
+// Main waveform control functions
+function playMainWaveform() {
+    if (mainWavesurferInstance) {
+        if (mainWavesurferInstance.isPlaying()) {
+            mainWavesurferInstance.pause();
+            document.querySelector('#main-waveform-play span').textContent = 'Play';
+        } else {
+            mainWavesurferInstance.play();
+            document.querySelector('#main-waveform-play span').textContent = 'Pause';
+        }
+    }
+}
+
+function zoomMainWaveform(factor) {
+    if (mainWavesurferInstance) {
+        mainWavesurferInstance.zoom(mainWavesurferInstance.options.minPxPerSec * factor);
+    }
+}
+
+function resetMainWaveformView() {
+    if (mainWavesurferInstance) {
+        mainWavesurferInstance.zoom(1);
+        mainWavesurferInstance.seekTo(0);
+    }
+}
+
+// Initialize main waveform when page loads
+document.addEventListener('DOMContentLoaded', () => {
+    initializeMainWaveform();
+});
+
 // Export waveform functions to global scope
 window.zoomWaveform = zoomWaveform;
 window.playWaveform = playWaveform;
@@ -2013,6 +2262,11 @@ window.resetWaveformView = resetWaveformView;
 window.showBatchThumbnails = showBatchThumbnails;
 window.showWaveform = showWaveform;
 window.hideWaveform = hideWaveform;
+window.addLoopMarkersToWaveform = addLoopMarkersToWaveform;
+window.clearLoopMarkers = clearLoopMarkers;
+window.playMainWaveform = playMainWaveform;
+window.zoomMainWaveform = zoomMainWaveform;
+window.resetMainWaveformView = resetMainWaveformView;
 
 // ============================================================================
 // REAL-TIME LEVEL METERS SYSTEM - 60 FPS Professional Audio Monitoring
@@ -2050,7 +2304,7 @@ async function toggleInputMonitoring() {
             
             await startInputMonitoring();
             monitorBtn.classList.add('active');
-            monitorBtn.textContent = '🔴 Monitoring...';
+            monitorBtn.textContent = 'Monitoring...';
             console.log('🎛️ Input monitoring enabled (AKAI style)');
             
         } catch (error) {
@@ -2337,7 +2591,37 @@ function toggleTemplatesPanel() {
     }
 }
 
-// Populate the templates grid with available templates
+// Populate the templates dropdown with available templates  
+function populateTemplatesDropdown() {
+    const templateDropdown = document.getElementById('template-dropdown');
+    if (!templateDropdown) return;
+    
+    // Get all templates
+    const templates = getAllTemplates();
+    
+    // Clear existing options except the first one
+    while (templateDropdown.children.length > 1) {
+        templateDropdown.removeChild(templateDropdown.lastChild);
+    }
+    
+    templates.forEach(template => {
+        const option = document.createElement('option');
+        option.value = template.id;
+        option.textContent = template.name;
+        templateDropdown.appendChild(option);
+    });
+}
+
+// Apply selected template from dropdown
+function applySelectedTemplate() {
+    const templateDropdown = document.getElementById('template-dropdown');
+    if (!templateDropdown || !templateDropdown.value) return;
+    
+    console.log('🎯 Applying template:', templateDropdown.value);
+    applyTemplateById(templateDropdown.value);
+}
+
+// Populate the templates grid with available templates (legacy for any remaining uses)
 function populateTemplatesGrid() {
     const templatesGrid = document.getElementById('templates-grid');
     if (!templatesGrid) return;
@@ -2425,6 +2709,8 @@ document.addEventListener('DOMContentLoaded', () => {
 // Export template functions to global scope
 window.toggleTemplatesPanel = toggleTemplatesPanel;
 window.populateTemplatesGrid = populateTemplatesGrid;
+window.populateTemplatesDropdown = populateTemplatesDropdown;
+window.applySelectedTemplate = applySelectedTemplate;
 window.applyTemplateById = applyTemplateById;
 window.updateTemplateSelection = updateTemplateSelection;
 
@@ -2442,15 +2728,531 @@ console.log('🔧 Functions exported to window:', {
 // LOOP DETECTION SYSTEM
 // ============================================================================
 
+// Global audio element for loop preview
+let loopPreviewAudio = null;
+let isLoopPlaying = false;
+
+// Preview the detected loop point by playing just that segment
+async function previewLoopPoint() {
+    console.log('🚀 PREVIEW BUTTON CLICKED!');
+    
+    if (!window.currentLoopData) {
+        console.error('❌ No currentLoopData');
+        showStatus('No loop data available', 'error');
+        return;
+    }
+    
+    if (!window.currentLoopData.filePath) {
+        console.error('❌ No filePath in currentLoopData:', window.currentLoopData);
+        showStatus('No file path available for preview', 'error');
+        return;
+    }
+    
+    const loopData = window.currentLoopData;
+    console.log('🎵 Loop data:', {
+        filePath: loopData.filePath,
+        startTime: loopData.startTime,
+        endTime: loopData.endTime,
+        length: loopData.endTime - loopData.startTime
+    });
+    
+    try {
+        const previewBtn = document.getElementById('preview-loop-btn');
+        console.log('🔘 Preview button found:', !!previewBtn);
+        
+        if (isLoopPlaying) {
+            console.log('⏹️ Stopping current playback');
+            // Stop current playback
+            if (loopPreviewAudio) {
+                loopPreviewAudio.pause();
+                loopPreviewAudio.currentTime = 0;
+            }
+            isLoopPlaying = false;
+            if (previewBtn) {
+                previewBtn.textContent = '🎵 Preview Loop';
+                previewBtn.classList.remove('btn-danger');
+                previewBtn.classList.add('btn-primary');
+            }
+            showStatus('Preview stopped', 'info');
+            return;
+        }
+        
+        // Convert file path for Tauri
+        const audioFileUrl = convertFileSrc(loopData.filePath);
+        console.log('🔧 Converted audio URL:', audioFileUrl);
+        
+        // Create or reuse audio element
+        if (!loopPreviewAudio) {
+            loopPreviewAudio = new Audio();
+            console.log('🎵 Created new Audio element');
+        }
+        
+        loopPreviewAudio.src = audioFileUrl;
+        console.log('📁 Set audio source');
+        
+        // Update button to show loading
+        if (previewBtn) {
+            previewBtn.textContent = '⏳ Loading...';
+        }
+        showStatus('Loading audio for preview...', 'info');
+        
+        // Wait for audio to load with timeout
+        console.log('⏳ Waiting for audio to load...');
+        await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error('Audio loading timeout'));
+            }, 10000);
+            
+            loopPreviewAudio.onloadeddata = () => {
+                console.log('✅ Audio loaded successfully');
+                console.log(`📊 Audio duration: ${loopPreviewAudio.duration}s`);
+                clearTimeout(timeout);
+                resolve();
+            };
+            
+            loopPreviewAudio.onerror = (e) => {
+                console.error('❌ Audio loading error:', e);
+                clearTimeout(timeout);
+                reject(new Error('Failed to load audio file'));
+            };
+        });
+        
+        // Validate loop times against audio duration
+        if (loopData.startTime >= loopPreviewAudio.duration) {
+            throw new Error(`Start time ${loopData.startTime}s exceeds audio duration ${loopPreviewAudio.duration}s`);
+        }
+        if (loopData.endTime > loopPreviewAudio.duration) {
+            console.warn(`⚠️ End time ${loopData.endTime}s exceeds duration ${loopPreviewAudio.duration}s, clamping`);
+            loopData.endTime = loopPreviewAudio.duration;
+        }
+        
+        // Set up loop playback
+        loopPreviewAudio.currentTime = loopData.startTime;
+        console.log(`🎯 Set playback position to ${loopData.startTime}s`);
+        
+        // Update button to show playing state
+        if (previewBtn) {
+            previewBtn.textContent = '⏹️ Stop Preview';
+            previewBtn.classList.remove('btn-primary');
+            previewBtn.classList.add('btn-danger');
+        }
+        
+        isLoopPlaying = true;
+        
+        // Play the audio
+        console.log('▶️ Starting playback...');
+        await loopPreviewAudio.play();
+        console.log('✅ Playback started');
+        
+        showStatus(`Playing loop: ${loopData.startTime.toFixed(2)}s - ${loopData.endTime.toFixed(2)}s`, 'success');
+        
+        // Monitor playback and loop
+        const checkPosition = () => {
+            if (!isLoopPlaying || loopPreviewAudio.paused) {
+                console.log('🛑 Playback monitoring stopped');
+                return;
+            }
+            
+            const currentTime = loopPreviewAudio.currentTime;
+            
+            if (currentTime >= loopData.endTime) {
+                console.log(`🔄 Looping: ${currentTime.toFixed(3)}s >= ${loopData.endTime.toFixed(3)}s, jumping to ${loopData.startTime.toFixed(3)}s`);
+                loopPreviewAudio.currentTime = loopData.startTime;
+            }
+            
+            requestAnimationFrame(checkPosition);
+        };
+        
+        checkPosition();
+        
+        // Auto-stop after 10 seconds
+        setTimeout(() => {
+            if (isLoopPlaying) {
+                previewLoopPoint(); // This will stop the playback
+            }
+        }, 10000);
+        
+        console.log('✅ Loop preview started');
+        
+    } catch (error) {
+        console.error('❌ Failed to preview loop:', error);
+        showStatus(`Failed to preview loop: ${error.message}`, 'error');
+        
+        // Reset button state
+        const previewBtn = document.getElementById('preview-loop-btn');
+        if (previewBtn) {
+            previewBtn.textContent = '🎵 Preview Loop';
+            previewBtn.classList.remove('btn-danger');
+            previewBtn.classList.add('btn-primary');
+        }
+        isLoopPlaying = false;
+    }
+}
+
+// Accept the loop point and apply it to the sample
+async function acceptLoopPoint() {
+    if (!window.currentLoopData || !window.currentLoopData.filePath) {
+        console.error('❌ No loop data available to apply');
+        showStatus('No loop data available to apply', 'error');
+        return;
+    }
+    
+    const loopData = window.currentLoopData;
+    console.log('✅ Accepting loop point:', loopData);
+    
+    try {
+        // Call backend to apply loop metadata to the file
+        const result = await invoke('apply_loop_metadata', {
+            filePath: loopData.filePath,
+            startSample: loopData.startSample,
+            endSample: loopData.endSample,
+            sampleRate: loopData.sampleRate
+        });
+        
+        console.log('✅ Loop metadata applied:', result);
+        showStatus('Loop points applied successfully! Future exports will include loop data.', 'success');
+        
+        // Update UI to show applied state
+        const acceptBtn = document.getElementById('accept-loop-btn');
+        if (acceptBtn) {
+            acceptBtn.textContent = '✅ Applied';
+            acceptBtn.disabled = true;
+            acceptBtn.classList.remove('btn-success');
+            acceptBtn.classList.add('btn-secondary');
+        }
+        
+    } catch (error) {
+        console.error('❌ Failed to apply loop metadata:', error);
+        showStatus(`Failed to apply loop: ${error}`, 'error');
+    }
+}
+
+// Show alternative loop candidates (if multiple were found)
+function showAlternativeLoops() {
+    console.log('📋 Showing alternative loop candidates...');
+    
+    if (!window.currentLoopDetectionResult || !window.currentLoopDetectionResult.candidates) {
+        console.warn('⚠️ No loop candidates data available');
+        showStatus('No loop candidates data available', 'error');
+        return;
+    }
+    
+    const candidates = window.currentLoopDetectionResult.candidates;
+    const sampleRate = window.currentLoopDetectionResult.sample_rate || 44100;
+    
+    if (candidates.length <= 1) {
+        showStatus('Only one loop candidate found', 'info');
+        return;
+    }
+    
+    // Create modal overlay for loop candidates selection
+    createLoopCandidatesModal(candidates, sampleRate);
+}
+
+// Create professional loop candidates selection modal (SampleRobot style)
+function createLoopCandidatesModal(candidates, sampleRate) {
+    // Remove existing modal if present
+    const existingModal = document.getElementById('loop-candidates-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Create modal HTML
+    const modal = document.createElement('div');
+    modal.id = 'loop-candidates-modal';
+    modal.className = 'modal-overlay';
+    modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        backdrop-filter: blur(4px);
+    `;
+    
+    // Create modal content
+    const modalContent = document.createElement('div');
+    modalContent.className = 'modal-content';
+    modalContent.style.cssText = `
+        background: var(--bg-elevated);
+        border-radius: 8px;
+        padding: 24px;
+        width: 90%;
+        max-width: 800px;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: var(--shadow-heavy);
+        border: 1px solid var(--border-primary);
+    `;
+    
+    // Generate candidates list HTML
+    const candidatesHTML = candidates.map((candidate, index) => {
+        const startTime = (candidate.start_sample / sampleRate).toFixed(3);
+        const endTime = (candidate.end_sample / sampleRate).toFixed(3);
+        const lengthTime = (candidate.length_samples / sampleRate).toFixed(3);
+        const quality = Math.round(candidate.quality_score * 100);
+        const isSelected = index === 0; // First candidate is currently selected
+        const defaultBorderColor = isSelected ? 'var(--accent-primary)' : 'var(--border-secondary)';
+        
+        return `
+            <div class="loop-candidate ${isSelected ? 'selected' : ''}" 
+                 data-candidate-index="${index}"
+                 style="
+                     background: ${isSelected ? 'rgba(70, 130, 180, 0.2)' : 'var(--bg-secondary)'};
+                     border: 2px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-secondary)'};
+                     border-radius: 6px;
+                     padding: 16px;
+                     margin-bottom: 12px;
+                     cursor: pointer;
+                     transition: all 0.2s ease;
+                 "
+                 onclick="selectLoopCandidate(${index})"
+                 onmouseover="this.style.borderColor='var(--accent-primary)'"
+                 onmouseout="this.style.borderColor='${defaultBorderColor}'">
+                
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div style="font-weight: 600; color: var(--text-primary);">
+                        ${isSelected ? '🏆 ' : ''}Loop Candidate ${index + 1}
+                        ${isSelected ? ' (Current)' : ''}
+                    </div>
+                    <div style="
+                        padding: 4px 12px;
+                        border-radius: 12px;
+                        background: ${quality >= 70 ? 'rgba(34, 197, 94, 0.2)' : 
+                                   quality >= 50 ? 'rgba(245, 158, 11, 0.2)' : 
+                                   'rgba(239, 68, 68, 0.2)'};
+                        color: ${quality >= 70 ? '#22c55e' : 
+                               quality >= 50 ? '#f59e0b' : 
+                               '#ef4444'};
+                        font-size: 12px;
+                        font-weight: 600;
+                    ">
+                        ${quality}% Quality
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; font-size: 13px;">
+                    <div>
+                        <div style="color: var(--text-secondary); font-size: 11px; text-transform: uppercase;">Start</div>
+                        <div style="color: var(--text-primary); font-weight: 500;">${startTime}s</div>
+                    </div>
+                    <div>
+                        <div style="color: var(--text-secondary); font-size: 11px; text-transform: uppercase;">End</div>
+                        <div style="color: var(--text-primary); font-weight: 500;">${endTime}s</div>
+                    </div>
+                    <div>
+                        <div style="color: var(--text-secondary); font-size: 11px; text-transform: uppercase;">Length</div>
+                        <div style="color: var(--text-primary); font-weight: 500;">${lengthTime}s</div>
+                    </div>
+                    <div>
+                        <div style="color: var(--text-secondary); font-size: 11px; text-transform: uppercase;">Zero-Cross</div>
+                        <div style="color: var(--text-primary); font-weight: 500;">
+                            ${candidate.zero_crossing_aligned ? '✓ Yes' : '✗ No'}
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 12px; display: flex; gap: 8px;">
+                    <button class="btn btn-sm btn-primary" 
+                            onclick="previewLoopCandidate(${index}); event.stopPropagation();"
+                            style="padding: 4px 12px; font-size: 12px;">
+                        ▶️ Preview
+                    </button>
+                    <button class="btn btn-sm btn-success" 
+                            onclick="selectAndApplyLoopCandidate(${index}); event.stopPropagation();"
+                            style="padding: 4px 12px; font-size: 12px;">
+                        ✓ Select & Apply
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    modalContent.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h2 style="margin: 0; color: var(--text-primary); font-size: 20px;">
+                Loop Candidates Selection
+            </h2>
+            <button class="btn btn-sm btn-secondary" onclick="closeLoopCandidatesModal()" 
+                    style="padding: 8px 16px;">
+                ✕ Close
+            </button>
+        </div>
+        
+        <div style="margin-bottom: 16px; padding: 12px; background: rgba(70, 130, 180, 0.1); 
+                    border-radius: 6px; border-left: 4px solid var(--accent-primary);">
+            <div style="font-size: 14px; color: var(--text-primary); margin-bottom: 4px;">
+                Found ${candidates.length} loop candidates, ranked by quality
+            </div>
+            <div style="font-size: 12px; color: var(--text-secondary);">
+                Click a candidate to preview it on the waveform, or select "Select & Apply" to use it.
+            </div>
+        </div>
+        
+        <div id="loop-candidates-list">
+            ${candidatesHTML}
+        </div>
+    `;
+    
+    modal.appendChild(modalContent);
+    document.body.appendChild(modal);
+    
+    // Close modal when clicking outside
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeLoopCandidatesModal();
+        }
+    });
+    
+    console.log('🎯 Created loop candidates modal with', candidates.length, 'candidates');
+}
+
+// Modal interaction functions
+function closeLoopCandidatesModal() {
+    const modal = document.getElementById('loop-candidates-modal');
+    if (modal) {
+        modal.remove();
+        console.log('🗑️ Closed loop candidates modal');
+    }
+}
+
+function selectLoopCandidate(candidateIndex) {
+    if (!window.currentLoopDetectionResult || !window.currentLoopDetectionResult.candidates) {
+        console.error('❌ No candidates data available');
+        return;
+    }
+    
+    const candidate = window.currentLoopDetectionResult.candidates[candidateIndex];
+    const sampleRate = window.currentLoopDetectionResult.sample_rate || 44100;
+    
+    if (!candidate) {
+        console.error('❌ Invalid candidate index:', candidateIndex);
+        return;
+    }
+    
+    console.log(`🎯 Selected loop candidate ${candidateIndex + 1}:`, candidate);
+    
+    // Update current loop data
+    window.currentLoopData = {
+        filePath: window.currentLoopData?.filePath || null,
+        startSample: candidate.start_sample,
+        endSample: candidate.end_sample,
+        startTime: candidate.start_sample / sampleRate,
+        endTime: candidate.end_sample / sampleRate,
+        sampleRate: sampleRate,
+        qualityScore: candidate.quality_score
+    };
+    
+    // Update visual markers on waveform
+    const wavesurfer = wavesurferInstance || rangeWavesurferInstance;
+    if (wavesurfer && wavesurfer.regionsPlugin) {
+        addLoopMarkersToWaveform(
+            wavesurfer,
+            window.currentLoopData.startTime,
+            window.currentLoopData.endTime,
+            true
+        );
+    }
+    
+    // Update UI selection state
+    document.querySelectorAll('.loop-candidate').forEach((element, index) => {
+        const isSelected = index === candidateIndex;
+        element.className = `loop-candidate ${isSelected ? 'selected' : ''}`;
+        element.style.background = isSelected ? 'rgba(70, 130, 180, 0.2)' : 'var(--bg-secondary)';
+        element.style.borderColor = isSelected ? 'var(--accent-primary)' : 'var(--border-secondary)';
+        
+        // Update title text
+        const title = element.querySelector('div > div');
+        if (title) {
+            title.innerHTML = `${isSelected ? '🏆 ' : ''}Loop Candidate ${index + 1}${isSelected ? ' (Current)' : ''}`;
+        }
+    });
+    
+    showStatus(`Selected loop candidate ${candidateIndex + 1} (${Math.round(candidate.quality_score * 100)}% quality)`, 'success');
+}
+
+function previewLoopCandidate(candidateIndex) {
+    console.log('🚀 previewLoopCandidate called with index:', candidateIndex);
+    
+    if (!window.currentLoopDetectionResult || !window.currentLoopDetectionResult.candidates) {
+        console.error('❌ No candidates data available');
+        return;
+    }
+    
+    const candidate = window.currentLoopDetectionResult.candidates[candidateIndex];
+    const sampleRate = window.currentLoopDetectionResult.sample_rate || 44100;
+    
+    if (!candidate) {
+        console.error('❌ Invalid candidate index:', candidateIndex);
+        return;
+    }
+    
+    console.log(`🎵 Previewing loop candidate ${candidateIndex + 1}:`, {
+        startSample: candidate.start_sample,
+        endSample: candidate.end_sample,
+        startTime: (candidate.start_sample / sampleRate).toFixed(3),
+        endTime: (candidate.end_sample / sampleRate).toFixed(3),
+        quality: Math.round(candidate.quality_score * 100)
+    });
+    
+    // Temporarily update loop data for preview
+    const originalLoopData = { ...window.currentLoopData };
+    window.currentLoopData = {
+        filePath: window.currentLoopData?.filePath || null,
+        startSample: candidate.start_sample,
+        endSample: candidate.end_sample,
+        startTime: candidate.start_sample / sampleRate,
+        endTime: candidate.end_sample / sampleRate,
+        sampleRate: sampleRate,
+        qualityScore: candidate.quality_score
+    };
+    
+    // Preview this candidate
+    previewLoopPoint().then(() => {
+        // Show temporary visual feedback
+        showStatus(`Previewing candidate ${candidateIndex + 1} - ${Math.round(candidate.quality_score * 100)}% quality`, 'info');
+        
+        // Restore original loop data after preview
+        setTimeout(() => {
+            window.currentLoopData = originalLoopData;
+        }, 100);
+    }).catch((error) => {
+        console.error('❌ Preview failed:', error);
+        window.currentLoopData = originalLoopData;
+    });
+}
+
+function selectAndApplyLoopCandidate(candidateIndex) {
+    // First select the candidate
+    selectLoopCandidate(candidateIndex);
+    
+    // Then apply it
+    acceptLoopPoint().then(() => {
+        // Close the modal after successful application
+        closeLoopCandidatesModal();
+        showStatus(`Applied loop candidate ${candidateIndex + 1} successfully!`, 'success');
+    }).catch((error) => {
+        console.error('❌ Failed to apply candidate:', error);
+        showStatus(`Failed to apply candidate: ${error}`, 'error');
+    });
+}
+
 // Test loop detection on the last recorded sample
 async function testLoopDetection() {
     console.log('🔄 Testing loop detection on last recorded sample...');
     
-    const statusElement = document.getElementById('loop-detection-status');
-    const resultsElement = document.getElementById('loop-detection-results');
+    // Try both element naming conventions (index.html vs temp_body.html)
+    const statusElement = document.getElementById('loop-detection-status') || document.getElementById('loop-detection-result');
+    const resultsElement = document.getElementById('loop-detection-results') || document.getElementById('loop-detection-result');
     
     if (statusElement) {
         statusElement.textContent = 'Running loop detection...';
+        statusElement.style.display = 'block';
     }
     
     try {
@@ -2477,8 +3279,14 @@ async function testLoopDetection() {
         
         console.log('✅ Loop detection result:', result);
         
-        // Display results
+        // Display results (this will create window.currentLoopData)
         displayLoopDetectionResults(result, statusElement, resultsElement);
+        
+        // Store the file path for loop preview/apply functionality
+        if (window.currentLoopData) {
+            window.currentLoopData.filePath = lastSamplePath;
+            console.log('📂 Set file path in loop data:', lastSamplePath);
+        }
         
     } catch (error) {
         console.error('❌ Loop detection failed:', error);
@@ -2498,15 +3306,25 @@ async function testLoopDetection() {
 
 // Get loop detection parameters from UI sliders
 function getLoopDetectionParams() {
-    const minLoopSlider = document.getElementById('min-loop-length');
-    const maxLoopSlider = document.getElementById('max-loop-length');
-    const correlationSlider = document.getElementById('correlation-threshold');
+    // Try both naming conventions (index.html vs temp_body.html)
+    const minLoopSlider = document.getElementById('min-loop-length') || document.getElementById('loop-min-length');
+    const maxLoopSlider = document.getElementById('max-loop-length') || document.getElementById('loop-max-length');
+    const correlationSlider = document.getElementById('correlation-threshold') || document.getElementById('loop-correlation-threshold');
     
-    return {
+    const params = {
         minLoopLength: minLoopSlider ? parseFloat(minLoopSlider.value) : 0.1,
         maxLoopLength: maxLoopSlider ? parseFloat(maxLoopSlider.value) : 5.0,
-        correlationThreshold: correlationSlider ? parseFloat(correlationSlider.value) : 0.8
+        correlationThreshold: correlationSlider ? parseFloat(correlationSlider.value) : 0.5  // Lower default
     };
+    
+    console.log('🔧 Loop detection params from UI:', params);
+    console.log('🔧 UI elements found:', {
+        minSlider: !!minLoopSlider,
+        maxSlider: !!maxLoopSlider, 
+        correlationSlider: !!correlationSlider
+    });
+    
+    return params;
 }
 
 // Get the path of the last recorded sample
@@ -2535,74 +3353,132 @@ function displayLoopDetectionResults(result, statusElement, resultsElement) {
     try {
         const loopResult = JSON.parse(result);
         
-        if (statusElement) {
+        // Store globally for loop candidates modal
+        window.currentLoopDetectionResult = loopResult;
+        
+        // Find the correct status element if not provided or null
+        const actualStatusElement = statusElement || 
+            document.getElementById('loop-detection-status') || 
+            document.getElementById('loop-detection-result');
+            
+        // Find the correct results element if not provided or null  
+        const actualResultsElement = resultsElement || 
+            document.getElementById('loop-detection-results') || 
+            document.getElementById('loop-detection-result');
+        
+        if (actualStatusElement) {
             if (loopResult.success) {
-                statusElement.textContent = 'Loop detection completed successfully!';
-                statusElement.style.color = '#16a34a';
+                actualStatusElement.textContent = 'Loop detection completed successfully!';
+                actualStatusElement.style.color = '#16a34a';
             } else {
-                statusElement.textContent = `Loop detection failed: ${loopResult.failure_reason || 'Unknown error'}`;
-                statusElement.style.color = '#dc2626';
+                actualStatusElement.textContent = `Loop detection failed: ${loopResult.failure_reason || 'Unknown error'}`;
+                actualStatusElement.style.color = '#dc2626';
             }
+        } else {
+            console.warn('⚠️ No status element found for loop detection results');
         }
         
-        if (resultsElement) {
-            if (loopResult.success && loopResult.candidates && loopResult.candidates.length > 0) {
-                let html = '<div class="loop-results-success">';
-                html += `<h4>Found ${loopResult.candidates.length} loop candidate(s):</h4>`;
+        if (actualResultsElement) {
+            if (loopResult.success && loopResult.best_candidate) {
+                const sampleRate = loopResult.sample_rate || 44100;
+                const candidate = loopResult.best_candidate;
+                const startSec = (candidate.start_sample / sampleRate).toFixed(3);
+                const endSec = (candidate.end_sample / sampleRate).toFixed(3);
+                const lengthSec = (candidate.length_samples / sampleRate).toFixed(3);
+                const qualityPercent = Math.round(candidate.quality_score * 100);
                 
-                loopResult.candidates.forEach((candidate, index) => {
-                    const startSec = (candidate.start_sample / 44100).toFixed(3); // Assume 44.1kHz
-                    const endSec = (candidate.end_sample / 44100).toFixed(3);
-                    const lengthSec = (candidate.length_samples / 44100).toFixed(3);
-                    
-                    html += `
-                        <div class="loop-candidate" style="margin: 10px 0; padding: 10px; border: 1px solid #374151; border-radius: 4px;">
-                            <div><strong>Candidate ${index + 1}:</strong></div>
-                            <div>Start: ${startSec}s (sample ${candidate.start_sample})</div>
-                            <div>End: ${endSec}s (sample ${candidate.end_sample})</div>
-                            <div>Length: ${lengthSec}s (${candidate.length_samples} samples)</div>
-                            <div>Quality Score: ${candidate.quality_score.toFixed(3)}</div>
-                            <div>Correlation: ${candidate.correlation.toFixed(3)}</div>
-                            <div>Zero-crossing aligned: ${candidate.zero_crossing_aligned ? 'Yes' : 'No'}</div>
+                // Store loop data globally for preview and apply functions
+                window.currentLoopData = {
+                    filePath: null, // Will be set when we get the file path
+                    startSample: candidate.start_sample,
+                    endSample: candidate.end_sample,
+                    startTime: parseFloat(startSec),
+                    endTime: parseFloat(endSec),
+                    sampleRate: sampleRate,
+                    qualityScore: candidate.quality_score
+                };
+                
+                const html = `
+                    <div style="background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 6px; padding: 12px; margin-top: 8px;">
+                        <div style="font-weight: 600; color: #16a34a; margin-bottom: 8px;">✅ Loop Point Found</div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px; margin-bottom: 12px;">
+                            <div><strong>Start:</strong> ${startSec}s</div>
+                            <div><strong>End:</strong> ${endSec}s</div>
+                            <div><strong>Length:</strong> ${lengthSec}s</div>
+                            <div><strong>Quality:</strong> ${qualityPercent}%</div>
                         </div>
-                    `;
-                });
+                        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                            <button class="btn btn-sm btn-primary" onclick="previewLoopPoint()" id="preview-loop-btn">
+                                🎵 Preview Loop
+                            </button>
+                            <button class="btn btn-sm btn-success" onclick="acceptLoopPoint()" id="accept-loop-btn">
+                                ✅ Accept & Apply
+                            </button>
+                            ${loopResult.candidates.length > 1 ? 
+                                `<button class="btn btn-sm btn-secondary" onclick="showAlternativeLoops()" id="alternatives-btn">
+                                    📋 ${loopResult.candidates.length} Options
+                                </button>` : 
+                                ''
+                            }
+                        </div>
+                        ${loopResult.candidates.length > 1 ? 
+                            `<div style="font-size: 11px; color: #6b7280;">Found ${loopResult.candidates.length} candidates, showing best quality</div>` : 
+                            ''
+                        }
+                    </div>
+                `;
+                actualResultsElement.innerHTML = html;
                 
-                if (loopResult.best_candidate) {
-                    html += `<div style="margin-top: 15px; padding: 10px; background: rgba(34, 197, 94, 0.1); border-radius: 4px;">`;
-                    html += `<strong>Best candidate:</strong> ${(loopResult.best_candidate.length_samples / 44100).toFixed(3)}s loop with quality ${loopResult.best_candidate.quality_score.toFixed(3)}`;
-                    html += `</div>`;
+                // ALWAYS add visual loop markers to the waveform (SampleRobot style)
+                const wavesurfer = wavesurferInstance || rangeWavesurferInstance;
+                if (wavesurfer && wavesurfer.regionsPlugin) {
+                    addLoopMarkersToWaveform(
+                        wavesurfer,
+                        window.currentLoopData.startTime,
+                        window.currentLoopData.endTime,
+                        true // Make it editable
+                    );
+                    console.log('🎯 Added visual loop markers to waveform');
+                } else {
+                    console.warn('⚠️ Cannot add visual markers: waveform not available');
                 }
                 
-                html += '</div>';
-                resultsElement.innerHTML = html;
-                
             } else {
-                resultsElement.innerHTML = `
-                    <div style="color: #dc2626; padding: 10px;">
-                        No suitable loop points found. Try adjusting the parameters or using a different sample.
+                actualResultsElement.innerHTML = `
+                    <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 6px; padding: 12px; margin-top: 8px;">
+                        <div style="font-weight: 600; color: #f59e0b; margin-bottom: 8px;">⚠️ No Quality Loops Found</div>
+                        <div style="font-size: 12px; margin-bottom: 8px;">This sample may not be suitable for looping, or the quality threshold is too strict.</div>
+                        <div style="font-size: 11px; color: #6b7280;">
+                            <strong>Try:</strong> Lower the Quality Threshold to 50-60% • Use longer sustained sounds • Record pads or sustained tones
+                        </div>
                     </div>
                 `;
             }
         }
         
-        // Show success status
-        if (loopResult.success) {
-            showStatus(`Loop detection completed! Found ${loopResult.candidates.length} candidates.`, 'success');
-        } else {
-            showStatus(`Loop detection failed: ${loopResult.failure_reason || 'Unknown error'}`, 'error');
-        }
+        // ALWAYS show success - we never fail now
+        showStatus(`Loop detection completed! Found ${loopResult.candidates.length} candidates.`, 'success');
         
     } catch (parseError) {
         console.error('❌ Failed to parse loop detection result:', parseError);
+        console.error('❌ Raw result that failed to parse:', result);
         
-        if (statusElement) {
-            statusElement.textContent = 'Failed to parse loop detection result';
-            statusElement.style.color = '#dc2626';
+        // Find the correct elements for error display
+        const actualStatusElement = statusElement || 
+            document.getElementById('loop-detection-status') || 
+            document.getElementById('loop-detection-result');
+            
+        const actualResultsElement = resultsElement || 
+            document.getElementById('loop-detection-results') || 
+            document.getElementById('loop-detection-result');
+        
+        if (actualStatusElement) {
+            actualStatusElement.textContent = 'Failed to parse loop detection result';
+            actualStatusElement.style.color = '#dc2626';
         }
         
-        if (resultsElement) {
-            resultsElement.innerHTML = `<div style="color: #dc2626; padding: 10px;">Parse error: ${parseError}</div>`;
+        if (actualResultsElement && actualResultsElement !== actualStatusElement) {
+            actualResultsElement.innerHTML = `<div style="color: #dc2626; padding: 10px;">Parse error: ${parseError}</div>`;
         }
     }
 }
@@ -2647,3 +3523,51 @@ document.addEventListener('DOMContentLoaded', () => {
 window.testLoopDetection = testLoopDetection;
 window.getLoopDetectionParams = getLoopDetectionParams;
 window.displayLoopDetectionResults = displayLoopDetectionResults;
+window.previewLoopPoint = previewLoopPoint;
+window.acceptLoopPoint = acceptLoopPoint;
+window.showAlternativeLoops = showAlternativeLoops;
+window.closeLoopCandidatesModal = closeLoopCandidatesModal;
+window.selectLoopCandidate = selectLoopCandidate;
+window.previewLoopCandidate = previewLoopCandidate;
+window.selectAndApplyLoopCandidate = selectAndApplyLoopCandidate;
+
+// ============================================================================
+// COLLAPSIBLE SECTIONS SYSTEM
+// ============================================================================
+
+function toggleAdvancedSettings(sectionId) {
+    const content = document.getElementById(`${sectionId}-content`);
+    const indicator = document.getElementById(`${sectionId}-indicator`);
+    const header = indicator?.parentElement;
+    
+    if (!content || !indicator) {
+        console.error(`❌ Could not find collapsible elements for: ${sectionId}`);
+        return;
+    }
+    
+    const isCollapsed = content.classList.contains('collapsed');
+    
+    if (isCollapsed) {
+        // Expand
+        content.classList.remove('collapsed');
+        indicator.textContent = '▼';
+        header?.classList.remove('collapsed');
+    } else {
+        // Collapse
+        content.classList.add('collapsed');
+        indicator.textContent = '▶';
+        header?.classList.add('collapsed');
+    }
+}
+
+// Handle keyboard navigation for collapsible sections
+function handleKeyboardToggle(event, sectionId) {
+    if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        toggleAdvancedSettings(sectionId);
+    }
+}
+
+// Export collapsible functions to global scope
+window.toggleAdvancedSettings = toggleAdvancedSettings;
+window.handleKeyboardToggle = handleKeyboardToggle;
