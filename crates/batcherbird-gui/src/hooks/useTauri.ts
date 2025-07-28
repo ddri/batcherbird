@@ -1,0 +1,422 @@
+import { core } from '@tauri-apps/api'
+const { invoke } = core
+import { useState, useEffect, useCallback } from 'react'
+
+// Types matching our Rust backend
+export interface AudioLevels {
+  peak: number
+  rms: number
+  peak_db: number
+  rms_db: number
+}
+
+export interface LoopCandidate {
+  start_sample: number
+  end_sample: number
+  length_samples: number
+  quality_score: number
+  zero_crossing_aligned: boolean
+  correlation: number
+}
+
+export interface LoopDetectionResponse {
+  success: boolean
+  sample_rate: number
+  candidates: LoopCandidate[]
+  best_candidate: LoopCandidate | null
+  failure_reason: string | null
+}
+
+// Device Management Hooks
+export function useMidiDevices() {
+  const [devices, setDevices] = useState<string[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadDevices = useCallback(async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const result = await invoke<string[]>('list_midi_devices')
+      setDevices(result)
+    } catch (err) {
+      setError(err as string)
+      console.error('Failed to load MIDI devices:', err)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  return { devices, isLoading, error, loadDevices }
+}
+
+export function useAudioInputDevices() {
+  const [devices, setDevices] = useState<string[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadDevices = useCallback(async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const result = await invoke<string[]>('list_audio_input_devices')
+      setDevices(result)
+    } catch (err) {
+      setError(err as string)
+      console.error('Failed to load audio input devices:', err)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  return { devices, isLoading, error, loadDevices }
+}
+
+export function useAudioOutputDevices() {
+  const [devices, setDevices] = useState<string[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadDevices = useCallback(async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const result = await invoke<string[]>('list_audio_output_devices')
+      setDevices(result)
+    } catch (err) {
+      setError(err as string)
+      console.error('Failed to load audio output devices:', err)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  return { devices, isLoading, error, loadDevices }
+}
+
+// Device Connection
+export function useDeviceConnection() {
+  const [midiConnected, setMidiConnected] = useState(false)
+  const [audioConnected, setAudioConnected] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const connectMidi = useCallback(async (deviceIndex: number) => {
+    setIsConnecting(true)
+    setError(null)
+    try {
+      await invoke<string>('connect_midi_device', { deviceIndex })
+      setMidiConnected(true)
+    } catch (err) {
+      setError(err as string)
+      console.error('Failed to connect MIDI device:', err)
+    } finally {
+      setIsConnecting(false)
+    }
+  }, [])
+
+  const testMidiConnection = useCallback(async () => {
+    try {
+      const result = await invoke<string>('test_midi_connection')
+      console.log('MIDI test result:', result)
+      return result
+    } catch (err) {
+      console.error('MIDI test failed:', err)
+      throw err
+    }
+  }, [])
+
+  const sendMidiPanic = useCallback(async () => {
+    try {
+      const result = await invoke<string>('send_midi_panic')
+      console.log('MIDI panic result:', result)
+      return result
+    } catch (err) {
+      console.error('MIDI panic failed:', err)
+      throw err
+    }
+  }, [])
+
+  return {
+    midiConnected,
+    audioConnected,
+    isConnecting,
+    error,
+    connectMidi,
+    testMidiConnection,
+    sendMidiPanic
+  }
+}
+
+// Audio Monitoring
+export function useAudioMonitoring() {
+  const [isMonitoring, setIsMonitoring] = useState(false)
+  const [levels, setLevels] = useState<AudioLevels>({
+    peak: 0,
+    rms: 0,
+    peak_db: -60,
+    rms_db: -60
+  })
+
+  const startMonitoring = useCallback(async () => {
+    try {
+      await invoke<string>('start_input_monitoring')
+      setIsMonitoring(true)
+    } catch (err) {
+      console.error('Failed to start monitoring:', err)
+      throw err
+    }
+  }, [])
+
+  const stopMonitoring = useCallback(async () => {
+    try {
+      await invoke<string>('stop_input_monitoring')
+      setIsMonitoring(false)
+    } catch (err) {
+      console.error('Failed to stop monitoring:', err)
+      throw err
+    }
+  }, [])
+
+  // Poll for audio levels when monitoring
+  useEffect(() => {
+    if (!isMonitoring) return
+
+    const interval = setInterval(async () => {
+      try {
+        const newLevels = await invoke<AudioLevels>('get_audio_levels')
+        setLevels(newLevels)
+      } catch (err) {
+        console.error('Failed to get audio levels:', err)
+      }
+    }, 50) // 20fps updates
+
+    return () => clearInterval(interval)
+  }, [isMonitoring])
+
+  return {
+    isMonitoring,
+    levels,
+    startMonitoring,
+    stopMonitoring
+  }
+}
+
+// Recording Functions
+export function useRecording() {
+  const [isRecording, setIsRecording] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const recordSample = useCallback(async (
+    note: number,
+    velocity: number,
+    duration: number,
+    outputDirectory?: string,
+    sampleName?: string,
+    exportFormat?: string,
+    creatorName?: string,
+    instrumentDescription?: string
+  ) => {
+    setIsRecording(true)
+    setError(null)
+    try {
+      const result = await invoke<string>('record_sample', {
+        note,
+        velocity,
+        duration,
+        outputDirectory,
+        sampleName,
+        exportFormat,
+        creatorName,
+        instrumentDescription
+      })
+      return result
+    } catch (err) {
+      setError(err as string)
+      console.error('Recording failed:', err)
+      throw err
+    } finally {
+      setIsRecording(false)
+    }
+  }, [])
+
+  const recordRange = useCallback(async (
+    startNote: number,
+    endNote: number,
+    velocity: number,
+    duration: number,
+    outputDirectory?: string,
+    sampleName?: string,
+    exportFormat?: string,
+    creatorName?: string,
+    instrumentDescription?: string
+  ) => {
+    setIsRecording(true)
+    setError(null)
+    try {
+      const result = await invoke<string>('record_range', {
+        startNote,
+        endNote,
+        velocity,
+        duration,
+        outputDirectory,
+        sampleName,
+        exportFormat,
+        creatorName,
+        instrumentDescription
+      })
+      return result
+    } catch (err) {
+      setError(err as string)
+      console.error('Range recording failed:', err)
+      throw err
+    } finally {
+      setIsRecording(false)
+    }
+  }, [])
+
+  const previewNote = useCallback(async (note: number, velocity: number, duration: number) => {
+    try {
+      const result = await invoke<string>('preview_note', { note, velocity, duration })
+      return result
+    } catch (err) {
+      console.error('Preview failed:', err)
+      throw err
+    }
+  }, [])
+
+  return {
+    isRecording,
+    error,
+    recordSample,
+    recordRange,
+    previewNote
+  }
+}
+
+// Loop Detection
+export function useLoopDetection() {
+  const [isDetecting, setIsDetecting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const detectLoopPoints = useCallback(async (
+    filePath: string,
+    minLoopLength?: number,
+    maxLoopLength?: number,
+    correlationThreshold?: number
+  ) => {
+    setIsDetecting(true)
+    setError(null)
+    try {
+      const resultJson = await invoke<string>('detect_loop_points', {
+        filePath,
+        minLoopLength,
+        maxLoopLength,
+        correlationThreshold
+      })
+      const result: LoopDetectionResponse = JSON.parse(resultJson)
+      return result
+    } catch (err) {
+      setError(err as string)
+      console.error('Loop detection failed:', err)
+      throw err
+    } finally {
+      setIsDetecting(false)
+    }
+  }, [])
+
+  const applyLoopMetadata = useCallback(async (
+    filePath: string,
+    startSample: number,
+    endSample: number,
+    sampleRate: number
+  ) => {
+    try {
+      const result = await invoke<string>('apply_loop_metadata', {
+        filePath,
+        startSample,
+        endSample,
+        sampleRate
+      })
+      return result
+    } catch (err) {
+      console.error('Apply loop metadata failed:', err)
+      throw err
+    }
+  }, [])
+
+  const getLastRecordedSamplePath = useCallback(async (
+    outputDirectory?: string,
+    sampleName?: string
+  ) => {
+    try {
+      const result = await invoke<string>('get_last_recorded_sample_path', {
+        outputDirectory,
+        sampleName
+      })
+      return result
+    } catch (err) {
+      console.error('Get last sample path failed:', err)
+      throw err
+    }
+  }, [])
+
+  return {
+    isDetecting,
+    error,
+    detectLoopPoints,
+    applyLoopMetadata,
+    getLastRecordedSamplePath
+  }
+}
+
+// File System Operations
+export function useFileSystem() {
+  const selectOutputDirectory = useCallback(async () => {
+    try {
+      const result = await invoke<string>('select_output_directory')
+      return result
+    } catch (err) {
+      console.error('Directory selection failed:', err)
+      throw err
+    }
+  }, [])
+
+  const showSamplesInFinder = useCallback(async () => {
+    try {
+      const result = await invoke<string>('show_samples_in_finder')
+      return result
+    } catch (err) {
+      console.error('Show samples in finder failed:', err)
+      throw err
+    }
+  }, [])
+
+  const generateInstrumentFiles = useCallback(async (
+    directory: string,
+    exportFormat: string,
+    sampleName?: string,
+    creatorName?: string,
+    instrumentDescription?: string
+  ) => {
+    try {
+      const result = await invoke<string>('generate_instrument_files', {
+        directory,
+        exportFormat,
+        sampleName,
+        creatorName,
+        instrumentDescription
+      })
+      return result
+    } catch (err) {
+      console.error('Generate instrument files failed:', err)
+      throw err
+    }
+  }, [])
+
+  return {
+    selectOutputDirectory,
+    showSamplesInFinder,
+    generateInstrumentFiles
+  }
+}

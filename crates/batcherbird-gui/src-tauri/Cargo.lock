@@ -117,6 +117,7 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "batcherbird-core",
+ "chrono",
  "cpal",
  "dirs 5.0.1",
  "hound",

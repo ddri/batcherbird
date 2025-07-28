@@ -9,6 +9,28 @@ use midir::MidiOutputConnection;
 use std::sync::{Mutex, Arc};
 use std::time::Duration;
 use std::process::Command;
+use serde::{Serialize, Deserialize};
+
+/// Serializable version of LoopCandidate for JSON responses
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LoopCandidateResponse {
+    pub start_sample: usize,
+    pub end_sample: usize,
+    pub length_samples: usize,
+    pub quality_score: f32,
+    pub zero_crossing_aligned: bool,
+    pub correlation: f32,
+}
+
+/// Serializable response structure for loop detection results
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LoopDetectionResponse {
+    pub success: bool,
+    pub sample_rate: u32,
+    pub candidates: Vec<LoopCandidateResponse>,
+    pub best_candidate: Option<LoopCandidateResponse>,
+    pub failure_reason: Option<String>,
+}
 
 // Simple working pattern - don't break what works
 static MIDI_MANAGER: Mutex<Option<MidiManager>> = Mutex::new(None);
@@ -898,7 +920,14 @@ fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_
     // Load the audio file
     let path = Path::new(&file_path);
     if !path.exists() {
-        return Err(format!("File not found: {}", file_path));
+        let response = LoopDetectionResponse {
+            success: false,
+            sample_rate: 44100, // Default fallback
+            candidates: vec![],
+            best_candidate: None,
+            failure_reason: Some(format!("File not found: {}", file_path)),
+        };
+        return Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?);
     }
     
     // Read the WAV file
@@ -930,15 +959,43 @@ fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_
                                 .map(|s| s.map(|sample| sample as f32 / i32::MAX as f32))
                                 .collect()
                         },
-                        _ => return Err(format!("Unsupported bit depth: {}", spec.bits_per_sample))
+                        _ => {
+                            let response = LoopDetectionResponse {
+                                success: false,
+                                sample_rate: spec.sample_rate,
+                                candidates: vec![],
+                                best_candidate: None,
+                                failure_reason: Some(format!("Unsupported bit depth: {}", spec.bits_per_sample)),
+                            };
+                            return Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?);
+                        }
                     }
                 }
             };
             
-            let audio_data = samples.map_err(|e| format!("Failed to read audio data: {}", e))?;
+            let audio_data = match samples {
+                Ok(data) => data,
+                Err(e) => {
+                    let response = LoopDetectionResponse {
+                        success: false,
+                        sample_rate: spec.sample_rate,
+                        candidates: vec![],
+                        best_candidate: None,
+                        failure_reason: Some(format!("Failed to read audio data: {}", e)),
+                    };
+                    return Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?);
+                }
+            };
             
             if audio_data.is_empty() {
-                return Err("No audio data found in file".to_string());
+                let response = LoopDetectionResponse {
+                    success: false,
+                    sample_rate: spec.sample_rate,
+                    candidates: vec![],
+                    best_candidate: None,
+                    failure_reason: Some("No audio data found in file".to_string()),
+                };
+                return Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?);
             }
             
             println!("   📄 Loaded {} samples ({:.2}s)", 
@@ -975,39 +1032,112 @@ fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_
             // Apply loop detection
             match sample.apply_loop_detection(config) {
                 Ok(result) => {
+                    // Convert candidates to response format
+                    let candidates_response: Vec<LoopCandidateResponse> = result.all_candidates
+                        .into_iter()
+                        .map(|candidate| LoopCandidateResponse {
+                            start_sample: candidate.start_sample,
+                            end_sample: candidate.end_sample,
+                            length_samples: candidate.length_samples,
+                            quality_score: candidate.quality_score,
+                            zero_crossing_aligned: candidate.zero_crossing_aligned,
+                            correlation: candidate.correlation,
+                        })
+                        .collect();
+                    
+                    let best_candidate_response = result.best_candidate.map(|candidate| LoopCandidateResponse {
+                        start_sample: candidate.start_sample,
+                        end_sample: candidate.end_sample,
+                        length_samples: candidate.length_samples,
+                        quality_score: candidate.quality_score,
+                        zero_crossing_aligned: candidate.zero_crossing_aligned,
+                        correlation: candidate.correlation,
+                    });
+                    
+                    let response = LoopDetectionResponse {
+                        success: result.success,
+                        sample_rate: sample.sample_rate,
+                        candidates: candidates_response,
+                        best_candidate: best_candidate_response,
+                        failure_reason: result.failure_reason,
+                    };
+                    
                     if result.success {
-                        if let Some(candidate) = result.best_candidate {
-                            let loop_info = format!(
-                                "Loop detected successfully!\nStart: {:.3}s\nEnd: {:.3}s\nLength: {:.3}s\nQuality: {:.3}\nCorrelation: {:.3}",
-                                candidate.start_sample as f32 / sample.sample_rate as f32,
-                                candidate.end_sample as f32 / sample.sample_rate as f32,
-                                candidate.length_samples as f32 / sample.sample_rate as f32,
-                                candidate.quality_score,
-                                candidate.correlation
-                            );
-                            println!("   ✅ {}", loop_info.replace('\n', " | "));
-                            Ok(loop_info)
-                        } else {
-                            Err("Loop detection succeeded but no candidate found".to_string())
+                        if let Some(ref candidate) = response.best_candidate {
+                            println!("   ✅ Loop detected: {:.3}s-{:.3}s, quality: {:.3}", 
+                                    candidate.start_sample as f32 / sample.sample_rate as f32,
+                                    candidate.end_sample as f32 / sample.sample_rate as f32,
+                                    candidate.quality_score);
                         }
                     } else {
-                        let error_msg = format!("Loop detection failed: {}", 
-                                result.failure_reason.unwrap_or_else(|| "Unknown reason".to_string()));
-                        println!("   ❌ {}", error_msg);
-                        Err(error_msg)
+                        println!("   ❌ Loop detection failed: {}", 
+                                response.failure_reason.as_ref().unwrap_or(&"Unknown reason".to_string()));
                     }
+                    
+                    Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?)
                 },
                 Err(e) => {
-                    let error_msg = format!("Loop detection error: {}", e);
-                    println!("   ❌ {}", error_msg);
-                    Err(error_msg)
+                    let response = LoopDetectionResponse {
+                        success: false,
+                        sample_rate: sample.sample_rate,
+                        candidates: vec![],
+                        best_candidate: None,
+                        failure_reason: Some(format!("Loop detection error: {}", e)),
+                    };
+                    println!("   ❌ Loop detection error: {}", e);
+                    Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?)
                 }
             }
         },
         Err(e) => {
-            let error_msg = format!("Failed to open WAV file: {}", e);
-            println!("   ❌ {}", error_msg);
-            Err(error_msg)
+            let response = LoopDetectionResponse {
+                success: false,
+                sample_rate: 44100, // Default fallback
+                candidates: vec![],
+                best_candidate: None,
+                failure_reason: Some(format!("Failed to open WAV file: {}", e)),
+            };
+            println!("   ❌ Failed to open WAV file: {}", e);
+            Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?)
+        }
+    }
+}
+
+/// Apply loop metadata to a WAV file
+#[tauri::command]
+fn apply_loop_metadata(file_path: String, start_sample: usize, end_sample: usize, sample_rate: u32) -> Result<String, String> {
+    println!("🔄 GUI: Applying loop metadata to: {}", file_path);
+    println!("   Loop: samples {}-{} (rate: {}Hz)", start_sample, end_sample, sample_rate);
+    
+    use std::path::Path;
+    
+    let path = Path::new(&file_path);
+    if !path.exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+    
+    // For now, we'll store the loop metadata in a companion file
+    // TODO: Implement actual WAV metadata embedding
+    let metadata_path = path.with_extension("loop.json");
+    
+    let loop_metadata = serde_json::json!({
+        "version": "1.0",
+        "loop_start_sample": start_sample,
+        "loop_end_sample": end_sample,
+        "loop_start_time": start_sample as f64 / sample_rate as f64,
+        "loop_end_time": end_sample as f64 / sample_rate as f64,
+        "sample_rate": sample_rate,
+        "applied_at": chrono::Utc::now().to_rfc3339()
+    });
+    
+    match std::fs::write(&metadata_path, serde_json::to_string_pretty(&loop_metadata).unwrap()) {
+        Ok(_) => {
+            println!("✅ GUI: Loop metadata saved to: {}", metadata_path.display());
+            Ok(format!("Loop metadata applied and saved to: {}", metadata_path.display()))
+        },
+        Err(e) => {
+            println!("❌ GUI: Failed to save loop metadata: {}", e);
+            Err(format!("Failed to save loop metadata: {}", e))
         }
     }
 }
@@ -1161,7 +1291,8 @@ pub fn run() {
       stop_input_monitoring,
       get_audio_levels,
       detect_loop_points,
-      get_last_recorded_sample_path
+      get_last_recorded_sample_path,
+      apply_loop_metadata
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

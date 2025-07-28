@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.batcherbird.gui",
   "build": {
-    "frontendDist": "../frontend"
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
   },
   "app": {
     "windows": [
