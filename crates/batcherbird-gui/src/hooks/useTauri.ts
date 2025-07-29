@@ -26,6 +26,19 @@ export interface LoopDetectionResponse {
   failure_reason: string | null
 }
 
+export interface WaveformPeaks {
+  positive: number[]
+  negative: number[]
+}
+
+export interface WaveformData {
+  peaks: WaveformPeaks
+  sample_rate: number
+  duration: number
+  channels: number
+  format: 'mono' | 'stereo'
+}
+
 // Device Management Hooks
 export function useMidiDevices() {
   const [devices, setDevices] = useState<string[]>([])
@@ -101,7 +114,7 @@ export function useAudioOutputDevices() {
 // Device Connection
 export function useDeviceConnection() {
   const [midiConnected, setMidiConnected] = useState(false)
-  const [audioConnected, setAudioConnected] = useState(false)
+  const [audioConnected] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -422,5 +435,44 @@ export function useFileSystem() {
     selectOutputDirectory,
     showSamplesInFinder,
     generateInstrumentFiles
+  }
+}
+
+// Waveform Visualization
+export function useWaveform() {
+  const [waveformData, setWaveformData] = useState<WaveformData | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadWaveform = useCallback(async (filePath: string, resolution?: number) => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const data = await invoke<WaveformData>('get_waveform_data', {
+        filePath,
+        resolution
+      })
+      setWaveformData(data)
+      return data
+    } catch (err) {
+      setError(err as string)
+      console.error('Failed to load waveform:', err)
+      throw err
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  const clearWaveform = useCallback(() => {
+    setWaveformData(null)
+    setError(null)
+  }, [])
+
+  return {
+    waveformData,
+    isLoading,
+    error,
+    loadWaveform,
+    clearWaveform
   }
 }

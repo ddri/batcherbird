@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -7,10 +7,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { DeviceManager } from "@/components/DeviceManager"
-import { useRecording, useFileSystem, useAudioMonitoring, useDeviceConnection } from "@/hooks/useTauri"
+import { WaveformDisplay } from "@/components/WaveformDisplay"
+import { useRecording, useFileSystem, useDeviceConnection, useWaveform, useLoopDetection } from "@/hooks/useTauri"
 import {
   Play,
   Square,
@@ -18,57 +18,14 @@ import {
   Layers,
   FolderOpen,
   Volume2,
-  ZoomIn,
-  ZoomOut,
-  RotateCcw,
 } from "lucide-react"
 
-import { invoke } from '@tauri-apps/api/core'
 
 export default function App() {
-  const [testResult, setTestResult] = useState<string>("")
-  const [tauriReady, setTauriReady] = useState(false)
-  
-  // Check if Tauri is ready on mount
-  useEffect(() => {
-    let attempts = 0;
-    const checkTauri = () => {
-      attempts++;
-      if ((window as any).__TAURI__) {
-        setTauriReady(true)
-        setTestResult("Tauri is available!")
-      } else {
-        setTestResult(`Tauri NOT available yet... (attempt ${attempts}, location: ${window.location.href})`)
-        // Check again in 100ms, but stop after 50 attempts (5 seconds)
-        if (attempts < 50) {
-          setTimeout(checkTauri, 100)
-        } else {
-          setTestResult(`Tauri never became available after 5 seconds. Window location: ${window.location.href}`)
-        }
-      }
-    }
-    checkTauri()
-  }, [])
-  
-  // Test Tauri directly
-  const testTauri = async () => {
-    setTestResult("Testing Tauri invoke...")
-    try {
-      // Try the invoke directly - we're using the npm package, not the global
-      console.log("About to invoke list_midi_devices")
-      console.log("invoke function:", invoke)
-      console.log("typeof invoke:", typeof invoke)
-      const devices = await invoke<string[]>('list_midi_devices')
-      setTestResult(`SUCCESS! Found ${devices.length} MIDI devices: ${devices.join(", ")}`)
-    } catch (e: any) {
-      setTestResult(`FAILED! Error: ${e.message || e}`)
-    }
-  }
   // Recording state
   const [isRecording, setIsRecording] = useState(false)
-  const [recordingProgress, setRecordingProgress] = useState(0)
+  const [recordingProgress] = useState(0)
   const [velocityLayers, setVelocityLayers] = useState([127, 100, 80, 60, 40, 20])
-  const [selectedVelocityLayer, setSelectedVelocityLayer] = useState(0) // Index of selected layer
   
   // Form state
   const [selectedNote, setSelectedNote] = useState("60") // C4
@@ -91,8 +48,12 @@ export default function App() {
   // Tauri hooks
   const { recordSample, recordRange, previewNote, isRecording: backendRecording } = useRecording()
   const { selectOutputDirectory } = useFileSystem()
-  const { startMonitoring, stopMonitoring, isMonitoring } = useAudioMonitoring()
   const { testMidiConnection } = useDeviceConnection()
+  const { waveformData, isLoading: waveformLoading, error: waveformError, loadWaveform } = useWaveform()
+  const { getLastRecordedSamplePath } = useLoopDetection()
+  
+  // Track the last recorded file
+  const [lastRecordedFile, setLastRecordedFile] = useState<string | null>(null)
 
   // Handlers
   const handleMidiPanic = () => {
@@ -123,7 +84,16 @@ export default function App() {
           instrumentDescription
         )
         console.log("Recording complete:", result)
-        // TODO: Show success message to user
+        
+        // Load waveform after successful recording
+        try {
+          const lastSamplePath = await getLastRecordedSamplePath(outputDirectory, sampleName)
+          console.log("Loading waveform for:", lastSamplePath)
+          setLastRecordedFile(lastSamplePath)
+          await loadWaveform(lastSamplePath)
+        } catch (waveformError) {
+          console.error("Failed to load waveform:", waveformError)
+        }
       } catch (error) {
         console.error("Recording failed:", error)
         // TODO: Show error message to user
@@ -184,37 +154,6 @@ export default function App() {
     }
   }
 
-  const handleToggleMonitoring = async () => {
-    try {
-      if (isMonitoring) {
-        await stopMonitoring()
-      } else {
-        await startMonitoring()
-      }
-    } catch (error) {
-      console.error("Toggle monitoring failed:", error)
-    }
-  }
-
-  const handleWaveformPlay = () => {
-    // TODO: Implement waveform playback
-    console.log("Waveform play clicked")
-  }
-
-  const handleWaveformZoomIn = () => {
-    // TODO: Implement waveform zoom in
-    console.log("Zoom in clicked")
-  }
-
-  const handleWaveformZoomOut = () => {
-    // TODO: Implement waveform zoom out
-    console.log("Zoom out clicked")
-  }
-
-  const handleWaveformReset = () => {
-    // TODO: Implement waveform reset view
-    console.log("Waveform reset clicked")
-  }
 
   const handleCustomizeLayers = () => {
     // For now, just cycle through preset layer configurations
@@ -448,7 +387,6 @@ export default function App() {
                             <button
                               onClick={() => {
                                 setSelectedVelocity([velocity])
-                                setSelectedVelocityLayer(index)
                               }}
                               className={`text-xs py-1 px-2 rounded cursor-pointer transition-colors ${
                                 selectedVelocity[0] === velocity 
@@ -479,66 +417,27 @@ export default function App() {
                 <CardHeader>
                   <CardTitle className="flex items-center justify-between text-gray-100">
                     <span>Sample Waveform</span>
-                    <div className="flex items-center space-x-2 text-sm text-gray-400">
-                      <span>Duration: 2.42s</span>
-                      <span>•</span>
-                      <span>Roland-EM1018_C4_60_vel127.wav</span>
-                    </div>
+                    {waveformData && lastRecordedFile && (
+                      <div className="flex items-center space-x-2 text-sm text-gray-400">
+                        <span>Duration: {waveformData.duration.toFixed(2)}s</span>
+                        <span>•</span>
+                        <span>{lastRecordedFile.split('/').pop()}</span>
+                      </div>
+                    )}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="bg-gray-950 rounded-lg p-4 h-48 flex items-center justify-center">
-                    <svg width="100%" height="100%" viewBox="0 0 800 150" className="text-gray-300">
-                      <path
-                        d="M0,75 Q50,25 100,75 T200,75 Q250,125 300,75 T400,75 Q450,25 500,75 T600,75 Q650,125 700,75 T800,75"
-                        stroke="#d1d5db"
-                        strokeWidth="2"
-                        fill="none"
-                      />
-                      <path
-                        d="M0,75 Q50,125 100,75 T200,75 Q250,25 300,75 T400,75 Q450,125 500,75 T600,75 Q650,25 700,75 T800,75"
-                        stroke="#d1d5db"
-                        strokeWidth="2"
-                        fill="none"
-                        opacity="0.6"
-                      />
-                    </svg>
-                  </div>
-                  <div className="flex items-center justify-center space-x-2 mt-4">
-                    <Button
-                      onClick={handleWaveformPlay}
-                      variant="outline"
-                      size="sm"
-                      className="border-gray-600 text-gray-100 hover:bg-gray-800 bg-transparent"
-                    >
-                      <Play className="w-4 h-4 mr-2" />
-                      Play
-                    </Button>
-                    <Button
-                      onClick={handleWaveformZoomIn}
-                      variant="outline"
-                      size="sm"
-                      className="border-gray-600 text-gray-100 hover:bg-gray-800 bg-transparent"
-                    >
-                      <ZoomIn className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      onClick={handleWaveformZoomOut}
-                      variant="outline"
-                      size="sm"
-                      className="border-gray-600 text-gray-100 hover:bg-gray-800 bg-transparent"
-                    >
-                      <ZoomOut className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      onClick={handleWaveformReset}
-                      variant="outline"
-                      size="sm"
-                      className="border-gray-600 text-gray-100 hover:bg-gray-800 bg-transparent"
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                    </Button>
-                  </div>
+                  <WaveformDisplay
+                    waveformData={waveformData}
+                    isLoading={waveformLoading}
+                    error={waveformError}
+                    fileName={lastRecordedFile?.split('/').pop()}
+                    duration={waveformData ? `${waveformData.duration.toFixed(2)}s` : undefined}
+                    onSeek={(position) => {
+                      console.log("Seek to position:", position)
+                      // TODO: Implement actual seek functionality
+                    }}
+                  />
                 </CardContent>
               </Card>
 

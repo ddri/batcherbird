@@ -84,11 +84,6 @@ export function DeviceManager({ onMidiPanic, onOpenSetup }: DeviceManagerProps) 
     console.log("Selected audio input:", audioInputDevices[parseInt(value)])
   }
   
-  const handleAudioOutputChange = (value: string) => {
-    setSelectedAudioOutput(value)
-    // TODO: Connect to audio output device
-    console.log("Selected audio output:", audioOutputDevices[parseInt(value)])
-  }
 
   const handleMidiTest = async () => {
     try {

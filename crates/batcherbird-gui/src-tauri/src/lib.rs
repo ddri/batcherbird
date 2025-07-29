@@ -32,6 +32,23 @@ pub struct LoopDetectionResponse {
     pub failure_reason: Option<String>,
 }
 
+/// Waveform data for visualization
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WaveformData {
+    pub peaks: WaveformPeaks,
+    pub sample_rate: u32,
+    pub duration: f64,
+    pub channels: u8,
+    pub format: String,
+}
+
+/// Peak data for waveform rendering
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WaveformPeaks {
+    pub positive: Vec<f32>,
+    pub negative: Vec<f32>,
+}
+
 // Simple working pattern - don't break what works
 static MIDI_MANAGER: Mutex<Option<MidiManager>> = Mutex::new(None);
 static MIDI_CONNECTION: Mutex<Option<MidiOutputConnection>> = Mutex::new(None);
@@ -1270,6 +1287,120 @@ fn get_last_recorded_sample_path(output_directory: Option<String>, sample_name: 
     Ok(latest_file.to_string_lossy().to_string())
 }
 
+/// Extract waveform data from an audio file for visualization
+#[tauri::command]
+async fn get_waveform_data(file_path: String, resolution: Option<u32>) -> Result<WaveformData, String> {
+    println!("🌊 GUI: Extracting waveform data from: {}", file_path);
+    
+    use hound::WavReader;
+    use std::path::Path;
+    
+    // Default resolution: 800 points (matches UI width)
+    let target_resolution = resolution.unwrap_or(800);
+    
+    // Verify file exists
+    let path = Path::new(&file_path);
+    if !path.exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+    
+    // Open WAV file
+    let mut reader = WavReader::open(&file_path)
+        .map_err(|e| format!("Failed to open WAV file: {}", e))?;
+    
+    let spec = reader.spec();
+    let sample_rate = spec.sample_rate;
+    let channels = spec.channels as u8;
+    let total_samples = reader.len() as usize;
+    let samples_per_channel = total_samples / channels as usize;
+    
+    // Calculate duration
+    let duration = samples_per_channel as f64 / sample_rate as f64;
+    
+    // Calculate downsampling factor
+    let samples_per_pixel = (samples_per_channel as f64 / target_resolution as f64).max(1.0);
+    let chunk_size = samples_per_pixel as usize;
+    
+    println!("   📊 Sample rate: {} Hz, Channels: {}, Duration: {:.2}s", sample_rate, channels, duration);
+    println!("   📊 Total samples: {}, Samples per pixel: {}", total_samples, chunk_size);
+    
+    // Read and process samples
+    let mut positive_peaks = Vec::with_capacity(target_resolution as usize);
+    let mut negative_peaks = Vec::with_capacity(target_resolution as usize);
+    
+    // Convert samples to f32 based on bit depth
+    let samples: Vec<f32> = match spec.bits_per_sample {
+        16 => {
+            reader.samples::<i16>()
+                .filter_map(Result::ok)
+                .map(|s| s as f32 / i16::MAX as f32)
+                .collect()
+        },
+        24 => {
+            reader.samples::<i32>()
+                .filter_map(Result::ok)
+                .map(|s| (s >> 8) as f32 / (1 << 23) as f32)
+                .collect()
+        },
+        32 => {
+            reader.samples::<f32>()
+                .filter_map(Result::ok)
+                .collect()
+        },
+        _ => return Err(format!("Unsupported bit depth: {}", spec.bits_per_sample)),
+    };
+    
+    // Process in chunks to find peaks
+    for chunk_start in (0..samples_per_channel).step_by(chunk_size) {
+        let chunk_end = (chunk_start + chunk_size).min(samples_per_channel);
+        
+        let mut max_positive = 0.0f32;
+        let mut max_negative = 0.0f32;
+        
+        // For stereo, we'll take the maximum of both channels
+        for i in chunk_start..chunk_end {
+            if channels == 1 {
+                let sample = samples.get(i).copied().unwrap_or(0.0);
+                if sample > max_positive {
+                    max_positive = sample;
+                }
+                if sample < max_negative {
+                    max_negative = sample;
+                }
+            } else {
+                // For stereo, check both channels
+                for ch in 0..channels as usize {
+                    let idx = i * channels as usize + ch;
+                    if let Some(&sample) = samples.get(idx) {
+                        if sample > max_positive {
+                            max_positive = sample;
+                        }
+                        if sample < max_negative {
+                            max_negative = sample;
+                        }
+                    }
+                }
+            }
+        }
+        
+        positive_peaks.push(max_positive);
+        negative_peaks.push(max_negative.abs()); // Store as positive for easier rendering
+    }
+    
+    println!("   ✅ Generated {} waveform points", positive_peaks.len());
+    
+    Ok(WaveformData {
+        peaks: WaveformPeaks {
+            positive: positive_peaks,
+            negative: negative_peaks,
+        },
+        sample_rate,
+        duration,
+        channels,
+        format: if channels == 1 { "mono".to_string() } else { "stereo".to_string() },
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -1292,7 +1423,8 @@ pub fn run() {
       get_audio_levels,
       detect_loop_points,
       get_last_recorded_sample_path,
-      apply_loop_metadata
+      apply_loop_metadata,
+      get_waveform_data
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
