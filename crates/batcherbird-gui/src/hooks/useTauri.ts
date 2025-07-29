@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 // Types matching our Rust backend
 export interface AudioLevels {
@@ -474,5 +474,162 @@ export function useWaveform() {
     error,
     loadWaveform,
     clearWaveform
+  }
+}
+
+// Audio Playback
+export function useAudioPlayback() {
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [currentFile, setCurrentFile] = useState<string | null>(null)
+  const [playbackPosition, setPlaybackPosition] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const positionIntervalRef = useRef<number | null>(null)
+
+  // Load audio file for playback
+  const loadAudioFile = useCallback(async (filePath: string) => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const result = await invoke<string>('load_sample_for_playback', { filePath })
+      setCurrentFile(filePath)
+      setPlaybackPosition(0)
+      console.log('Audio file loaded:', result)
+      return result
+    } catch (err) {
+      setError(err as string)
+      console.error('Failed to load audio file:', err)
+      throw err
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  // Start or resume playback
+  const play = useCallback(async () => {
+    if (!currentFile) {
+      setError('No audio file loaded')
+      return
+    }
+    setError(null)
+    try {
+      const result = await invoke<string>('start_playback')
+      setIsPlaying(true)
+      console.log('Playback started:', result)
+      
+      // Start position polling
+      if (positionIntervalRef.current) {
+        clearInterval(positionIntervalRef.current)
+      }
+      positionIntervalRef.current = window.setInterval(async () => {
+        try {
+          const position = await invoke<number>('get_playback_position')
+          setPlaybackPosition(position)
+          
+          // Check if still playing
+          const playing = await invoke<boolean>('is_playing')
+          if (!playing) {
+            setIsPlaying(false)
+            if (positionIntervalRef.current) {
+              clearInterval(positionIntervalRef.current)
+              positionIntervalRef.current = null
+            }
+          }
+        } catch (err) {
+          console.error('Failed to get playback position:', err)
+        }
+      }, 50) // 20fps update rate
+    } catch (err) {
+      setError(err as string)
+      console.error('Failed to start playback:', err)
+      throw err
+    }
+  }, [currentFile])
+
+  // Pause playback
+  const pause = useCallback(async () => {
+    setError(null)
+    try {
+      const result = await invoke<string>('pause_playback')
+      setIsPlaying(false)
+      console.log('Playback paused:', result)
+      
+      // Stop position polling
+      if (positionIntervalRef.current) {
+        clearInterval(positionIntervalRef.current)
+        positionIntervalRef.current = null
+      }
+    } catch (err) {
+      setError(err as string)
+      console.error('Failed to pause playback:', err)
+      throw err
+    }
+  }, [])
+
+  // Stop playback
+  const stop = useCallback(async () => {
+    setError(null)
+    try {
+      const result = await invoke<string>('stop_playback')
+      setIsPlaying(false)
+      setPlaybackPosition(0)
+      console.log('Playback stopped:', result)
+      
+      // Stop position polling
+      if (positionIntervalRef.current) {
+        clearInterval(positionIntervalRef.current)
+        positionIntervalRef.current = null
+      }
+    } catch (err) {
+      setError(err as string)
+      console.error('Failed to stop playback:', err)
+      throw err
+    }
+  }, [])
+
+  // Seek to position
+  const seek = useCallback(async (position: number) => {
+    setError(null)
+    try {
+      const result = await invoke<string>('seek_playback', { position })
+      setPlaybackPosition(position)
+      console.log('Seeked to position:', result)
+    } catch (err) {
+      setError(err as string)
+      console.error('Failed to seek:', err)
+      throw err
+    }
+  }, [])
+
+  // Toggle play/pause
+  const togglePlayPause = useCallback(async () => {
+    if (isPlaying) {
+      await pause()
+    } else {
+      await play()
+    }
+  }, [isPlaying, play, pause])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (positionIntervalRef.current) {
+        clearInterval(positionIntervalRef.current)
+      }
+    }
+  }, [])
+
+  return {
+    isPlaying,
+    isLoading,
+    currentFile,
+    playbackPosition,
+    error,
+    loadAudioFile,
+    play,
+    pause,
+    stop,
+    seek,
+    togglePlayPause
   }
 }

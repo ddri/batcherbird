@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { WaveformData } from '@/hooks/useTauri'
 import { Button } from '@/components/ui/button'
-import { Play, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react'
+import { Play, Pause, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react'
 
 interface WaveformDisplayProps {
   waveformData: WaveformData | null
@@ -11,6 +11,8 @@ interface WaveformDisplayProps {
   playbackPosition?: number
   fileName?: string
   duration?: string
+  isPlaying?: boolean
+  onPlayPause?: () => void
 }
 
 export function WaveformDisplay({
@@ -20,12 +22,13 @@ export function WaveformDisplay({
   onSeek,
   playbackPosition = 0,
   fileName,
-  duration
+  duration,
+  isPlaying = false,
+  onPlayPause
 }: WaveformDisplayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [zoomLevel, setZoomLevel] = useState(1)
   const [scrollPosition, setScrollPosition] = useState(0)
-  const [isPlaying, setIsPlaying] = useState(false)
 
   // Draw waveform on canvas
   useEffect(() => {
@@ -124,8 +127,9 @@ export function WaveformDisplay({
   }
 
   const handlePlay = () => {
-    setIsPlaying(!isPlaying)
-    // TODO: Implement actual playback control
+    if (onPlayPause) {
+      onPlayPause()
+    }
   }
 
   if (error) {
@@ -197,8 +201,17 @@ export function WaveformDisplay({
           size="sm"
           className="border-gray-600 text-gray-100 hover:bg-gray-800 bg-transparent"
         >
-          <Play className="w-4 h-4 mr-2" />
-          {isPlaying ? 'Pause' : 'Play'}
+          {isPlaying ? (
+            <>
+              <Pause className="w-4 h-4 mr-2" />
+              Pause
+            </>
+          ) : (
+            <>
+              <Play className="w-4 h-4 mr-2" />
+              Play
+            </>
+          )}
         </Button>
         <Button
           onClick={handleZoomIn}

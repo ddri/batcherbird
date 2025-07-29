@@ -4,6 +4,7 @@ use batcherbird_core::{
     sampler::{SamplingEngine, SamplingConfig, AudioLevels},
     export::{SampleExporter, ExportConfig, AudioFormat},
     loop_detection::LoopDetectionConfig,
+    playback::AudioPlayback,
 };
 use midir::MidiOutputConnection;
 use std::sync::{Mutex, Arc};
@@ -57,6 +58,9 @@ static MIDI_CONNECTION: Mutex<Option<MidiOutputConnection>> = Mutex::new(None);
 static MONITORING_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static GLOBAL_SAMPLING_ENGINE: Mutex<Option<Arc<SamplingEngine>>> = Mutex::new(None);
 static MONITORING_THREAD: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
+
+// Audio playback state (following existing patterns)
+static AUDIO_PLAYBACK: Mutex<Option<Arc<AudioPlayback>>> = Mutex::new(None);
 
 
 /// Start audio input monitoring (simplified professional approach)
@@ -720,6 +724,8 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
             })?;
             
             println!("💾 GUI: Sample exported: {}", file_path.display());
+            println!("   📂 Full path: {:?}", file_path);
+            println!("   📂 Parent directory: {:?}", file_path.parent());
             
             // Step 5: Return success to UI
             let filename = file_path.file_name()
@@ -1219,6 +1225,8 @@ fn show_samples_in_finder() -> Result<String, String> {
 #[tauri::command]
 fn get_last_recorded_sample_path(output_directory: Option<String>, sample_name: Option<String>) -> Result<String, String> {
     println!("🔍 GUI: Finding last recorded sample path");
+    println!("   📁 Output directory param: {:?}", output_directory);
+    println!("   📁 Sample name param: {:?}", sample_name);
     
     use std::path::PathBuf;
     use std::fs;
@@ -1263,8 +1271,11 @@ fn get_last_recorded_sample_path(output_directory: Option<String>, sample_name: 
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let path = entry.path();
         
+        println!("   🔍 Checking file: {}", path.display());
+        
         // Check if it's a WAV file
         if path.extension().and_then(|ext| ext.to_str()) == Some("wav") {
+            println!("   ✓ Found WAV file: {}", path.display());
             // Get modification time
             if let Ok(metadata) = fs::metadata(&path) {
                 if let Ok(modified) = metadata.modified() {
@@ -1401,6 +1412,112 @@ async fn get_waveform_data(file_path: String, resolution: Option<u32>) -> Result
     })
 }
 
+/// Load audio file for playback
+#[tauri::command]
+async fn load_sample_for_playback(file_path: String) -> Result<String, String> {
+    println!("🎵 GUI: Loading sample for playback: {}", file_path);
+    
+    // Initialize playback engine if needed
+    let mut playback_guard = AUDIO_PLAYBACK.lock().unwrap();
+    if playback_guard.is_none() {
+        println!("   🔧 Initializing audio playback engine");
+        match AudioPlayback::new() {
+            Ok(playback) => {
+                *playback_guard = Some(Arc::new(playback));
+            }
+            Err(e) => {
+                return Err(format!("Failed to initialize playback engine: {}", e));
+            }
+        }
+    }
+    
+    // Load the sample
+    if let Some(playback) = playback_guard.as_ref() {
+        playback.load_sample(&file_path)
+            .map_err(|e| format!("Failed to load sample: {}", e))
+    } else {
+        Err("Playback engine not initialized".to_string())
+    }
+}
+
+/// Start audio playback
+#[tauri::command]
+async fn start_playback() -> Result<String, String> {
+    println!("▶️ GUI: Starting playback");
+    
+    let playback_guard = AUDIO_PLAYBACK.lock().unwrap();
+    if let Some(playback) = playback_guard.as_ref() {
+        playback.start_playback()
+            .map_err(|e| format!("Failed to start playback: {}", e))
+    } else {
+        Err("Playback engine not initialized".to_string())
+    }
+}
+
+/// Stop audio playback
+#[tauri::command]
+async fn stop_playback() -> Result<String, String> {
+    println!("⏹️ GUI: Stopping playback");
+    
+    let playback_guard = AUDIO_PLAYBACK.lock().unwrap();
+    if let Some(playback) = playback_guard.as_ref() {
+        playback.stop_playback()
+            .map_err(|e| format!("Failed to stop playback: {}", e))
+    } else {
+        Err("Playback engine not initialized".to_string())
+    }
+}
+
+/// Pause audio playback
+#[tauri::command]
+async fn pause_playback() -> Result<String, String> {
+    println!("⏸️ GUI: Pausing playback");
+    
+    let playback_guard = AUDIO_PLAYBACK.lock().unwrap();
+    if let Some(playback) = playback_guard.as_ref() {
+        playback.pause_playback()
+            .map_err(|e| format!("Failed to pause playback: {}", e))
+    } else {
+        Err("Playback engine not initialized".to_string())
+    }
+}
+
+/// Seek to position in audio (0.0 to 1.0)
+#[tauri::command]
+async fn seek_playback(position: f64) -> Result<String, String> {
+    println!("⏩ GUI: Seeking to position: {:.1}%", position * 100.0);
+    
+    let playback_guard = AUDIO_PLAYBACK.lock().unwrap();
+    if let Some(playback) = playback_guard.as_ref() {
+        playback.seek_to_position(position)
+            .map_err(|e| format!("Failed to seek: {}", e))
+    } else {
+        Err("Playback engine not initialized".to_string())
+    }
+}
+
+/// Get current playback position (0.0 to 1.0)
+#[tauri::command]
+async fn get_playback_position() -> Result<f64, String> {
+    let playback_guard = AUDIO_PLAYBACK.lock().unwrap();
+    if let Some(playback) = playback_guard.as_ref() {
+        Ok(playback.get_playback_position())
+    } else {
+        Ok(0.0)
+    }
+}
+
+/// Check if audio is playing
+#[tauri::command]
+async fn is_playing() -> Result<bool, String> {
+    let playback_guard = AUDIO_PLAYBACK.lock().unwrap();
+    if let Some(playback) = playback_guard.as_ref() {
+        Ok(playback.is_playing())
+    } else {
+        Ok(false)
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -1424,7 +1541,14 @@ pub fn run() {
       detect_loop_points,
       get_last_recorded_sample_path,
       apply_loop_metadata,
-      get_waveform_data
+      get_waveform_data,
+      load_sample_for_playback,
+      start_playback,
+      stop_playback,
+      pause_playback,
+      seek_playback,
+      get_playback_position,
+      is_playing
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

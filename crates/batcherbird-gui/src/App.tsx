@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Progress } from "@/components/ui/progress"
 import { DeviceManager } from "@/components/DeviceManager"
 import { WaveformDisplay } from "@/components/WaveformDisplay"
-import { useRecording, useFileSystem, useDeviceConnection, useWaveform, useLoopDetection } from "@/hooks/useTauri"
+import { useRecording, useFileSystem, useDeviceConnection, useWaveform, useLoopDetection, useAudioPlayback } from "@/hooks/useTauri"
 import {
   Play,
   Square,
@@ -51,6 +51,13 @@ export default function App() {
   const { testMidiConnection } = useDeviceConnection()
   const { waveformData, isLoading: waveformLoading, error: waveformError, loadWaveform } = useWaveform()
   const { getLastRecordedSamplePath } = useLoopDetection()
+  const { 
+    isPlaying, 
+    playbackPosition, 
+    loadAudioFile, 
+    togglePlayPause, 
+    seek 
+  } = useAudioPlayback()
   
   // Track the last recorded file
   const [lastRecordedFile, setLastRecordedFile] = useState<string | null>(null)
@@ -87,12 +94,24 @@ export default function App() {
         
         // Load waveform after successful recording
         try {
+          // Add a small delay to ensure file is written
+          await new Promise(resolve => setTimeout(resolve, 500))
+          
           const lastSamplePath = await getLastRecordedSamplePath(outputDirectory, sampleName)
           console.log("Loading waveform for:", lastSamplePath)
+          console.log("Output directory:", outputDirectory)
+          console.log("Sample name:", sampleName)
+          
           setLastRecordedFile(lastSamplePath)
           await loadWaveform(lastSamplePath)
+          console.log("Waveform loaded successfully")
+          
+          // Also load the file for playback
+          await loadAudioFile(lastSamplePath)
+          console.log("Audio file loaded for playback")
         } catch (waveformError) {
           console.error("Failed to load waveform:", waveformError)
+          alert(`Failed to load waveform: ${waveformError}`)
         }
       } catch (error) {
         console.error("Recording failed:", error)
@@ -433,10 +452,10 @@ export default function App() {
                     error={waveformError}
                     fileName={lastRecordedFile?.split('/').pop()}
                     duration={waveformData ? `${waveformData.duration.toFixed(2)}s` : undefined}
-                    onSeek={(position) => {
-                      console.log("Seek to position:", position)
-                      // TODO: Implement actual seek functionality
-                    }}
+                    isPlaying={isPlaying}
+                    playbackPosition={playbackPosition}
+                    onPlayPause={togglePlayPause}
+                    onSeek={seek}
                   />
                 </CardContent>
               </Card>
