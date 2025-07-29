@@ -4,13 +4,15 @@ use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}};
 use std::path::Path;
 use hound::WavReader;
 
-/// Professional audio playback engine following SamplingEngine patterns
+/// Professional audio playback engine following the heartbeat pattern
+/// Stream runs continuously in a dedicated thread, controlled by atomic state
 pub struct AudioPlayback {
     audio_manager: crate::audio::AudioManager,
     current_sample: Arc<Mutex<Option<PlaybackSample>>>,
     playback_position: Arc<AtomicU64>, // Sample position
     is_playing: Arc<AtomicBool>,
-    playback_stream: Arc<Mutex<Option<cpal::Stream>>>,
+    // Thread handle for the audio thread - no Stream storage!
+    audio_thread: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
 }
 
 /// Loaded audio sample ready for playback
@@ -32,7 +34,7 @@ impl AudioPlayback {
             current_sample: Arc::new(Mutex::new(None)),
             playback_position: Arc::new(AtomicU64::new(0)),
             is_playing: Arc::new(AtomicBool::new(false)),
-            playback_stream: Arc::new(Mutex::new(None)),
+            audio_thread: Arc::new(Mutex::new(None)),
         })
     }
     
@@ -61,19 +63,19 @@ impl AudioPlayback {
         let samples: Vec<f32> = match spec.bits_per_sample {
             16 => {
                 reader.into_samples::<i16>()
-                    .filter_map(Result::ok)
+                    .filter_map(|r| r.ok())
                     .map(|s| s as f32 / i16::MAX as f32)
                     .collect()
             },
             24 => {
                 reader.into_samples::<i32>()
-                    .filter_map(Result::ok)
+                    .filter_map(|r| r.ok())
                     .map(|s| (s >> 8) as f32 / (1 << 23) as f32)
                     .collect()
             },
             32 => {
                 reader.into_samples::<f32>()
-                    .filter_map(Result::ok)
+                    .filter_map(|r| r.ok())
                     .collect()
             },
             _ => {
@@ -107,24 +109,17 @@ impl AudioPlayback {
                    duration, sample_rate, channels))
     }
     
-    /// Start or resume playback from current position
-    pub fn start_playback(&self) -> Result<String> {
-        println!("▶️ Starting audio playback");
+    /// Initialize the audio engine (creates the continuous audio thread)
+    pub fn initialize_audio_engine(&self) -> Result<String> {
+        println!("🔧 Initializing audio playback engine");
         
-        // Check if sample is loaded
-        let sample = self.current_sample.lock().unwrap();
-        if sample.is_none() {
-            return Err(BatcherbirdError::Audio("No audio file loaded".to_string()));
-        }
-        let sample = sample.as_ref().unwrap().clone();
-        drop(sample); // Release lock early
-        
-        // Check if already playing
-        if self.is_playing.load(Ordering::Relaxed) {
-            return Ok("Already playing".to_string());
+        // Check if already initialized
+        let mut thread_guard = self.audio_thread.lock().unwrap();
+        if thread_guard.is_some() {
+            return Ok("Audio engine already initialized".to_string());
         }
         
-        // Get output device (similar to input device selection in AudioManager)
+        // Get output device
         let device = self.audio_manager.get_default_output_device()?;
         println!("   🔊 Using output device: {}", device.name().unwrap_or("Unknown".to_string()));
         
@@ -135,17 +130,45 @@ impl AudioPlayback {
         println!("   📊 Output config: {} Hz, {} channels", 
                  config.sample_rate().0, config.channels());
         
-        // Build output stream
-        let stream = self.build_output_stream(&device, &config)?;
+        // Clone Arc references for the audio thread
+        let current_sample = Arc::clone(&self.current_sample);
+        let playback_position = Arc::clone(&self.playback_position);
+        let is_playing = Arc::clone(&self.is_playing);
         
-        // Start the stream
-        stream.play()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to start playback: {}", e)))?;
+        // Spawn dedicated audio thread (following the heartbeat pattern)
+        let handle = std::thread::Builder::new()
+            .name("batcherbird-audio-playback".to_string())
+            .spawn(move || {
+                println!("🎵 Audio playback thread started");
+                
+                // Build and run the stream in this thread
+                match Self::run_audio_thread(device, config, current_sample, playback_position, is_playing) {
+                    Ok(_) => println!("🎵 Audio playback thread finished"),
+                    Err(e) => eprintln!("❌ Audio playback thread error: {}", e),
+                }
+            })
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to spawn audio thread: {}", e)))?;
         
-        // Store stream reference
-        *self.playback_stream.lock().unwrap() = Some(stream);
+        *thread_guard = Some(handle);
         
-        // Set playing flag
+        Ok("Audio engine initialized".to_string())
+    }
+    
+    /// Start playback (just sets the atomic flag)
+    pub fn start_playback(&self) -> Result<String> {
+        println!("▶️ Starting audio playback");
+        
+        // Ensure audio engine is initialized
+        self.initialize_audio_engine()?;
+        
+        // Check if sample is loaded
+        let sample = self.current_sample.lock().unwrap();
+        if sample.is_none() {
+            return Err(BatcherbirdError::Audio("No audio file loaded".to_string()));
+        }
+        drop(sample);
+        
+        // Just set the playing flag - the audio thread will see it
         self.is_playing.store(true, Ordering::Relaxed);
         
         Ok("Playback started".to_string())
@@ -158,9 +181,6 @@ impl AudioPlayback {
         // Set playing flag to false
         self.is_playing.store(false, Ordering::Relaxed);
         
-        // Drop the stream to stop playback
-        *self.playback_stream.lock().unwrap() = None;
-        
         // Reset position to beginning
         self.playback_position.store(0, Ordering::Relaxed);
         
@@ -171,11 +191,8 @@ impl AudioPlayback {
     pub fn pause_playback(&self) -> Result<String> {
         println!("⏸️ Pausing audio playback");
         
-        // Set playing flag to false
+        // Just set playing flag to false - position is maintained
         self.is_playing.store(false, Ordering::Relaxed);
-        
-        // Drop the stream but keep position
-        *self.playback_stream.lock().unwrap() = None;
         
         Ok("Playback paused".to_string())
     }
@@ -214,19 +231,16 @@ impl AudioPlayback {
         self.is_playing.load(Ordering::Relaxed)
     }
     
-    /// Build output stream following SamplingEngine patterns
-    fn build_output_stream(
-        &self,
-        device: &cpal::Device,
-        config: &cpal::SupportedStreamConfig,
-    ) -> Result<cpal::Stream> {
-        let sample_rate = config.sample_rate().0;
+    /// Run the audio thread with continuous stream (heartbeat pattern)
+    fn run_audio_thread(
+        device: cpal::Device,
+        config: cpal::SupportedStreamConfig,
+        current_sample: Arc<Mutex<Option<PlaybackSample>>>,
+        playback_position: Arc<AtomicU64>,
+        is_playing: Arc<AtomicBool>,
+    ) -> Result<()> {
+        let _sample_rate = config.sample_rate().0;
         let channels = config.channels() as usize;
-        
-        // Clone Arc references for the audio callback
-        let current_sample = Arc::clone(&self.current_sample);
-        let playback_position = Arc::clone(&self.playback_position);
-        let is_playing = Arc::clone(&self.is_playing);
         
         let stream_config = StreamConfig {
             channels: config.channels(),
@@ -298,6 +312,17 @@ impl AudioPlayback {
             }
         };
         
-        Ok(stream)
+        // Start the stream - it will run forever (heartbeat pattern)
+        stream.play()
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to start stream: {}", e)))?;
+        
+        println!("💓 Audio stream heartbeat started");
+        
+        // Keep the thread alive - the stream runs in the background
+        // In a real implementation, you might want a way to signal shutdown
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            // Could check for a shutdown signal here
+        }
     }
 }

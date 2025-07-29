@@ -1420,13 +1420,17 @@ async fn load_sample_for_playback(file_path: String) -> Result<String, String> {
     // Initialize playback engine if needed
     let mut playback_guard = AUDIO_PLAYBACK.lock().unwrap();
     if playback_guard.is_none() {
-        println!("   🔧 Initializing audio playback engine");
+        println!("   🔧 Creating audio playback instance");
         match AudioPlayback::new() {
             Ok(playback) => {
-                *playback_guard = Some(Arc::new(playback));
+                let playback_arc = Arc::new(playback);
+                // Initialize the audio engine (starts the heartbeat thread)
+                playback_arc.initialize_audio_engine()
+                    .map_err(|e| format!("Failed to initialize audio engine: {}", e))?;
+                *playback_guard = Some(playback_arc);
             }
             Err(e) => {
-                return Err(format!("Failed to initialize playback engine: {}", e));
+                return Err(format!("Failed to create playback engine: {}", e));
             }
         }
     }
