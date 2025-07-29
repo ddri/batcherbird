@@ -5,6 +5,17 @@ import { resolve } from "path";
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+  
+  // Tauri uses this to inject the IPC scripts
+  build: {
+    // Tauri uses an IIFE for the IPC scripts so we must use a custom rollupOptions
+    rollupOptions: {
+      // Here we ensure that the entry file is index.html
+      input: {
+        main: resolve(__dirname, 'index.html'),
+      },
+    },
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
@@ -30,4 +41,7 @@ export default defineConfig(async () => ({
   optimizeDeps: {
     exclude: []
   },
+  
+  // Env variables that start with TAURI_ are exposed
+  envPrefix: ['VITE_', 'TAURI_'],
 }));

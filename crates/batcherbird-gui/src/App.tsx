@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { DeviceManager } from "@/components/DeviceManager"
-import { useRecording, useFileSystem, useAudioMonitoring } from "@/hooks/useTauri"
+import { useRecording, useFileSystem, useAudioMonitoring, useDeviceConnection } from "@/hooks/useTauri"
 import {
   Play,
   Square,
@@ -23,17 +23,59 @@ import {
   RotateCcw,
 } from "lucide-react"
 
+import { invoke } from '@tauri-apps/api/core'
+
 export default function App() {
+  const [testResult, setTestResult] = useState<string>("")
+  const [tauriReady, setTauriReady] = useState(false)
+  
+  // Check if Tauri is ready on mount
+  useEffect(() => {
+    let attempts = 0;
+    const checkTauri = () => {
+      attempts++;
+      if ((window as any).__TAURI__) {
+        setTauriReady(true)
+        setTestResult("Tauri is available!")
+      } else {
+        setTestResult(`Tauri NOT available yet... (attempt ${attempts}, location: ${window.location.href})`)
+        // Check again in 100ms, but stop after 50 attempts (5 seconds)
+        if (attempts < 50) {
+          setTimeout(checkTauri, 100)
+        } else {
+          setTestResult(`Tauri never became available after 5 seconds. Window location: ${window.location.href}`)
+        }
+      }
+    }
+    checkTauri()
+  }, [])
+  
+  // Test Tauri directly
+  const testTauri = async () => {
+    setTestResult("Testing Tauri invoke...")
+    try {
+      // Try the invoke directly - we're using the npm package, not the global
+      console.log("About to invoke list_midi_devices")
+      console.log("invoke function:", invoke)
+      console.log("typeof invoke:", typeof invoke)
+      const devices = await invoke<string[]>('list_midi_devices')
+      setTestResult(`SUCCESS! Found ${devices.length} MIDI devices: ${devices.join(", ")}`)
+    } catch (e: any) {
+      setTestResult(`FAILED! Error: ${e.message || e}`)
+    }
+  }
   // Recording state
   const [isRecording, setIsRecording] = useState(false)
   const [recordingProgress, setRecordingProgress] = useState(0)
-  const [velocityLayers] = useState([127, 100, 80, 60, 40, 20])
+  const [velocityLayers, setVelocityLayers] = useState([127, 100, 80, 60, 40, 20])
+  const [selectedVelocityLayer, setSelectedVelocityLayer] = useState(0) // Index of selected layer
   
   // Form state
   const [selectedNote, setSelectedNote] = useState("60") // C4
-  const [selectedVelocity, setSelectedVelocity] = useState([100])
+  const [selectedVelocity, setSelectedVelocity] = useState([127]) // Default to max velocity
   const [selectedDuration, setSelectedDuration] = useState([2420]) // 2.42s in ms
   const [autoDetectSilence, setAutoDetectSilence] = useState(true)
+  const [detectionThreshold, setDetectionThreshold] = useState([-35])
   const [sampleName, setSampleName] = useState("Roland-EM1018")
   const [outputDirectory, setOutputDirectory] = useState("/Users/dryan/Desktop/Batch")
   const [exportFormat, setExportFormat] = useState("dspreset")
@@ -50,6 +92,7 @@ export default function App() {
   const { recordSample, recordRange, previewNote, isRecording: backendRecording } = useRecording()
   const { selectOutputDirectory } = useFileSystem()
   const { startMonitoring, stopMonitoring, isMonitoring } = useAudioMonitoring()
+  const { testMidiConnection } = useDeviceConnection()
 
   // Handlers
   const handleMidiPanic = () => {
@@ -58,6 +101,11 @@ export default function App() {
 
   const handleOpenSetup = () => {
     setSetupModalOpen(true)
+    console.log("Opening setup modal")
+  }
+  
+  const handleCloseSetup = () => {
+    setSetupModalOpen(false)
   }
 
   const handleRecord = async () => {
@@ -110,13 +158,20 @@ export default function App() {
 
   const handlePreview = async () => {
     try {
-      await previewNote(
+      console.log("Previewing note:", {
+        note: parseInt(selectedNote),
+        velocity: selectedVelocity[0],
+        duration: selectedDuration[0]
+      })
+      const result = await previewNote(
         parseInt(selectedNote),
         selectedVelocity[0],
         selectedDuration[0]
       )
+      console.log("Preview result:", result)
     } catch (error) {
       console.error("Preview failed:", error)
+      alert(`Preview failed: ${error}`)
     }
   }
 
@@ -141,6 +196,64 @@ export default function App() {
     }
   }
 
+  const handleWaveformPlay = () => {
+    // TODO: Implement waveform playback
+    console.log("Waveform play clicked")
+  }
+
+  const handleWaveformZoomIn = () => {
+    // TODO: Implement waveform zoom in
+    console.log("Zoom in clicked")
+  }
+
+  const handleWaveformZoomOut = () => {
+    // TODO: Implement waveform zoom out
+    console.log("Zoom out clicked")
+  }
+
+  const handleWaveformReset = () => {
+    // TODO: Implement waveform reset view
+    console.log("Waveform reset clicked")
+  }
+
+  const handleCustomizeLayers = () => {
+    // For now, just cycle through preset layer configurations
+    const presets = [
+      [127, 100, 80, 60, 40, 20],      // 6 layers
+      [127, 96, 64, 32],               // 4 layers
+      [127, 80, 40],                   // 3 layers
+      [127],                           // 1 layer
+      [127, 100, 80, 60, 40, 20, 10], // 7 layers
+    ]
+    const currentIndex = presets.findIndex(preset => 
+      preset.length === velocityLayers.length && 
+      preset.every((val, idx) => val === velocityLayers[idx])
+    )
+    const nextIndex = (currentIndex + 1) % presets.length
+    setVelocityLayers(presets[nextIndex])
+    setSelectedVelocity([presets[nextIndex][0]]) // Reset to first velocity
+    console.log("Changed velocity layers to:", presets[nextIndex])
+  }
+
+  const handleLoadTemplate = () => {
+    // TODO: Implement template loading
+    console.log("Load template clicked")
+  }
+
+  const handleSaveTemplate = () => {
+    // TODO: Implement template saving
+    console.log("Save template clicked")
+  }
+
+  const handleTestMidiConnection = async () => {
+    try {
+      const result = await testMidiConnection()
+      console.log("Test MIDI result:", result)
+    } catch (error) {
+      console.error("Test MIDI failed:", error)
+    }
+  }
+
   // Update recording state based on backend
   const actuallyRecording = isRecording || backendRecording
 
@@ -148,6 +261,7 @@ export default function App() {
     <div className="h-screen bg-gray-950 text-gray-100 flex flex-col">
       {/* Device Manager handles title bar and device connections */}
       <DeviceManager onMidiPanic={handleMidiPanic} onOpenSetup={handleOpenSetup} />
+      
 
       <div className="flex flex-1 overflow-hidden">
         {/* Main Content */}
@@ -331,11 +445,24 @@ export default function App() {
                       <div className="grid grid-cols-6 gap-2">
                         {velocityLayers.map((velocity, index) => (
                           <div key={index} className="text-center">
-                            <div className="bg-gray-200 text-gray-900 text-xs py-1 px-2 rounded">{velocity}</div>
+                            <button
+                              onClick={() => {
+                                setSelectedVelocity([velocity])
+                                setSelectedVelocityLayer(index)
+                              }}
+                              className={`text-xs py-1 px-2 rounded cursor-pointer transition-colors ${
+                                selectedVelocity[0] === velocity 
+                                  ? "bg-blue-500 text-white" 
+                                  : "bg-gray-200 text-gray-900 hover:bg-gray-300"
+                              }`}
+                            >
+                              {velocity}
+                            </button>
                           </div>
                         ))}
                       </div>
                       <Button
+                        onClick={handleCustomizeLayers}
                         variant="outline"
                         size="sm"
                         className="w-full bg-transparent border-gray-600 text-gray-100 hover:bg-gray-800"
@@ -379,6 +506,7 @@ export default function App() {
                   </div>
                   <div className="flex items-center justify-center space-x-2 mt-4">
                     <Button
+                      onClick={handleWaveformPlay}
                       variant="outline"
                       size="sm"
                       className="border-gray-600 text-gray-100 hover:bg-gray-800 bg-transparent"
@@ -387,6 +515,7 @@ export default function App() {
                       Play
                     </Button>
                     <Button
+                      onClick={handleWaveformZoomIn}
                       variant="outline"
                       size="sm"
                       className="border-gray-600 text-gray-100 hover:bg-gray-800 bg-transparent"
@@ -394,6 +523,7 @@ export default function App() {
                       <ZoomIn className="w-4 h-4" />
                     </Button>
                     <Button
+                      onClick={handleWaveformZoomOut}
                       variant="outline"
                       size="sm"
                       className="border-gray-600 text-gray-100 hover:bg-gray-800 bg-transparent"
@@ -401,6 +531,7 @@ export default function App() {
                       <ZoomOut className="w-4 h-4" />
                     </Button>
                     <Button
+                      onClick={handleWaveformReset}
                       variant="outline"
                       size="sm"
                       className="border-gray-600 text-gray-100 hover:bg-gray-800 bg-transparent"
@@ -561,7 +692,11 @@ export default function App() {
               <h3 className="text-lg font-semibold mb-4 text-gray-100">Sample Detection</h3>
               <div className="space-y-4">
                 <div className="flex items-center space-x-2">
-                  <Switch id="auto-detection" defaultChecked />
+                  <Switch 
+                    id="auto-detection" 
+                    checked={autoDetectSilence}
+                    onCheckedChange={setAutoDetectSilence}
+                  />
                   <Label htmlFor="auto-detection" className="text-gray-200">
                     Enable Auto-Detection
                   </Label>
@@ -570,9 +705,16 @@ export default function App() {
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <Label className="text-gray-200">Detection Threshold</Label>
-                    <span className="text-sm font-mono text-gray-300">-35 dB</span>
+                    <span className="text-sm font-mono text-gray-300">{detectionThreshold[0]} dB</span>
                   </div>
-                  <Slider defaultValue={[-35]} max={-10} min={-60} step={1} className="w-full" />
+                  <Slider 
+                    value={detectionThreshold} 
+                    onValueChange={setDetectionThreshold}
+                    max={-10} 
+                    min={-60} 
+                    step={1} 
+                    className="w-full" 
+                  />
                 </div>
               </div>
             </div>
@@ -581,18 +723,21 @@ export default function App() {
               <h3 className="text-lg font-semibold mb-4 text-gray-100">Quick Actions</h3>
               <div className="space-y-2">
                 <Button
+                  onClick={handleLoadTemplate}
                   variant="outline"
                   className="w-full justify-start bg-transparent border-gray-600 text-gray-100 hover:bg-gray-800"
                 >
                   Load Template
                 </Button>
                 <Button
+                  onClick={handleSaveTemplate}
                   variant="outline"
                   className="w-full justify-start bg-transparent border-gray-600 text-gray-100 hover:bg-gray-800"
                 >
                   Save as Template
                 </Button>
                 <Button
+                  onClick={handleTestMidiConnection}
                   variant="outline"
                   className="w-full justify-start bg-transparent border-gray-600 text-gray-100 hover:bg-gray-800"
                 >
@@ -603,6 +748,22 @@ export default function App() {
           </div>
         </div>
       </div>
+      
+      {/* Setup Modal */}
+      {setupModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-xl font-semibold text-gray-100 mb-4">Setup</h2>
+            <p className="text-gray-300 mb-4">Configure your MIDI and audio settings here.</p>
+            <Button
+              onClick={handleCloseSetup}
+              className="w-full"
+            >
+              Close
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

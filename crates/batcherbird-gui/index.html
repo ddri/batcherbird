@@ -10,5 +10,11 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <!-- Try to force load Tauri in development -->
+    <script>
+      if (!window.__TAURI__ && window.location.hostname === 'localhost') {
+        console.log('Attempting to load Tauri IPC...');
+      }
+    </script>
   </body>
 </html>

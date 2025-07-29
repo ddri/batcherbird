@@ -18,7 +18,7 @@ export function DeviceManager({ onMidiPanic, onOpenSetup }: DeviceManagerProps) 
   const { devices: audioOutputDevices, loadDevices: loadAudioOutputDevices } = useAudioOutputDevices()
   
   // Connection hooks
-  const { midiConnected, connectMidi, testMidiConnection, sendMidiPanic } = useDeviceConnection()
+  const { midiConnected, audioConnected, connectMidi, testMidiConnection, sendMidiPanic } = useDeviceConnection()
   const { levels } = useAudioMonitoring()
   
   // Local state
@@ -32,6 +32,13 @@ export function DeviceManager({ onMidiPanic, onOpenSetup }: DeviceManagerProps) 
     loadAudioInputDevices()
     loadAudioOutputDevices()
   }, [loadMidiDevices, loadAudioInputDevices, loadAudioOutputDevices])
+  
+  // Debug device lists
+  useEffect(() => {
+    if (midiDevices.length > 0) console.log("MIDI devices:", midiDevices)
+    if (audioInputDevices.length > 0) console.log("Audio input devices:", audioInputDevices)
+    if (audioOutputDevices.length > 0) console.log("Audio output devices:", audioOutputDevices)
+  }, [midiDevices, audioInputDevices, audioOutputDevices])
 
   // Auto-select first devices when available
   useEffect(() => {
@@ -54,8 +61,33 @@ export function DeviceManager({ onMidiPanic, onOpenSetup }: DeviceManagerProps) 
 
   const handleMidiConnect = async () => {
     if (selectedMidiDevice) {
-      await connectMidi(parseInt(selectedMidiDevice))
+      try {
+        await connectMidi(parseInt(selectedMidiDevice))
+        console.log("Connected to MIDI device:", midiDevices[parseInt(selectedMidiDevice)])
+      } catch (err) {
+        console.error('Failed to connect MIDI device:', err)
+      }
     }
+  }
+  
+  // Auto-connect when device is selected
+  const handleMidiDeviceChange = (value: string) => {
+    setSelectedMidiDevice(value)
+    if (value && !midiConnected) {
+      connectMidi(parseInt(value))
+    }
+  }
+  
+  const handleAudioInputChange = (value: string) => {
+    setSelectedAudioInput(value)
+    // TODO: Connect to audio input device
+    console.log("Selected audio input:", audioInputDevices[parseInt(value)])
+  }
+  
+  const handleAudioOutputChange = (value: string) => {
+    setSelectedAudioOutput(value)
+    // TODO: Connect to audio output device
+    console.log("Selected audio output:", audioOutputDevices[parseInt(value)])
   }
 
   const handleMidiTest = async () => {
@@ -80,8 +112,32 @@ export function DeviceManager({ onMidiPanic, onOpenSetup }: DeviceManagerProps) 
 
   return (
     <>
+      {/* Title Bar Actions */}
+      <div className="flex items-center justify-between px-6 py-3 bg-gray-900 border-b border-gray-700">
+        <h1 className="text-lg font-semibold text-gray-100">BatcherBird</h1>
+        <div className="flex items-center space-x-2">
+          <Button
+            onClick={onOpenSetup}
+            variant="outline"
+            size="sm"
+            className="border-gray-600 text-gray-100 hover:bg-gray-800 bg-transparent"
+          >
+            <Settings className="w-4 h-4 mr-2" />
+            Setup
+          </Button>
+          <Button 
+            onClick={handleMidiPanic}
+            variant="destructive" 
+            size="sm"
+            disabled={!midiConnected}
+          >
+            MIDI PANIC
+          </Button>
+        </div>
+      </div>
+
       {/* Interface Selection */}
-      <div className="grid md:grid-cols-2 gap-6">
+      <div className="grid md:grid-cols-2 gap-6 p-6">
         <Card className="bg-gray-900 border-gray-700">
           <CardHeader>
             <CardTitle className="flex items-center space-x-2 text-gray-100">
@@ -103,22 +159,28 @@ export function DeviceManager({ onMidiPanic, onOpenSetup }: DeviceManagerProps) 
           <CardContent>
             <Select 
               value={selectedMidiDevice} 
-              onValueChange={setSelectedMidiDevice}
+              onValueChange={handleMidiDeviceChange}
               disabled={midiLoading}
             >
               <SelectTrigger className="bg-gray-800 border-gray-600 text-gray-100">
                 <SelectValue placeholder={midiLoading ? "Loading devices..." : "Select MIDI device"} />
               </SelectTrigger>
               <SelectContent className="bg-gray-800 border-gray-600">
-                {midiDevices.map((device, index) => (
-                  <SelectItem 
-                    key={index} 
-                    value={index.toString()} 
-                    className="text-gray-100 hover:bg-gray-700"
-                  >
-                    {device}
+                {midiDevices.length === 0 ? (
+                  <SelectItem value="none" disabled className="text-gray-400">
+                    No MIDI devices found
                   </SelectItem>
-                ))}
+                ) : (
+                  midiDevices.map((device, index) => (
+                    <SelectItem 
+                      key={index} 
+                      value={index.toString()} 
+                      className="text-gray-100 hover:bg-gray-700"
+                    >
+                      {device}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
             
@@ -166,30 +228,43 @@ export function DeviceManager({ onMidiPanic, onOpenSetup }: DeviceManagerProps) 
             <CardTitle className="flex items-center space-x-2 text-gray-100">
               <Mic className="w-5 h-5 text-gray-300" />
               <span>Audio Interface</span>
-              <Badge variant="secondary" className="bg-green-600 text-white">
-                <CheckCircle className="w-3 h-3 mr-1" />
-                Connected
-              </Badge>
+              {audioConnected ? (
+                <Badge variant="secondary" className="bg-green-600 text-white">
+                  <CheckCircle className="w-3 h-3 mr-1" />
+                  Connected
+                </Badge>
+              ) : (
+                <Badge variant="secondary" className="bg-gray-600 text-white">
+                  <AlertCircle className="w-3 h-3 mr-1" />
+                  Disconnected
+                </Badge>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <Select 
               value={selectedAudioInput} 
-              onValueChange={setSelectedAudioInput}
+              onValueChange={handleAudioInputChange}
             >
               <SelectTrigger className="bg-gray-800 border-gray-600 text-gray-100">
                 <SelectValue placeholder="Select audio input" />
               </SelectTrigger>
               <SelectContent className="bg-gray-800 border-gray-600">
-                {audioInputDevices.map((device, index) => (
-                  <SelectItem 
-                    key={index} 
-                    value={index.toString()} 
-                    className="text-gray-100 hover:bg-gray-700"
-                  >
-                    {device}
+                {audioInputDevices.length === 0 ? (
+                  <SelectItem value="none" disabled className="text-gray-400">
+                    No audio devices found
                   </SelectItem>
-                ))}
+                ) : (
+                  audioInputDevices.map((device, index) => (
+                    <SelectItem 
+                      key={index} 
+                      value={index.toString()} 
+                      className="text-gray-100 hover:bg-gray-700"
+                    >
+                      {device}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
             
@@ -209,37 +284,6 @@ export function DeviceManager({ onMidiPanic, onOpenSetup }: DeviceManagerProps) 
             </div>
           </CardContent>
         </Card>
-      </div>
-
-      {/* Title Bar Actions */}
-      <div className="flex items-center justify-between px-6 py-3 bg-gray-900 border-b border-gray-700">
-        <div className="flex items-center space-x-3">
-          <div className="flex space-x-2">
-            <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-            <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-            <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-          </div>
-          <h1 className="text-lg font-semibold text-gray-100">BatcherBird</h1>
-        </div>
-        <div className="flex items-center space-x-2">
-          <Button
-            onClick={onOpenSetup}
-            variant="outline"
-            size="sm"
-            className="border-gray-600 text-gray-100 hover:bg-gray-800 bg-transparent"
-          >
-            <Settings className="w-4 h-4 mr-2" />
-            Setup
-          </Button>
-          <Button 
-            onClick={handleMidiPanic}
-            variant="destructive" 
-            size="sm"
-            disabled={!midiConnected}
-          >
-            MIDI PANIC
-          </Button>
-        </div>
       </div>
     </>
   )

@@ -1,5 +1,4 @@
-import { core } from '@tauri-apps/api'
-const { invoke } = core
+import { invoke } from '@tauri-apps/api/core'
 import { useState, useEffect, useCallback } from 'react'
 
 // Types matching our Rust backend
@@ -38,10 +37,13 @@ export function useMidiDevices() {
     setError(null)
     try {
       const result = await invoke<string[]>('list_midi_devices')
-      setDevices(result)
+      console.log('MIDI devices loaded:', result)
+      setDevices(result || [])
     } catch (err) {
       setError(err as string)
       console.error('Failed to load MIDI devices:', err)
+      console.error('Full error object:', err)
+      console.error('Error stack:', (err as any)?.stack)
     } finally {
       setIsLoading(false)
     }
@@ -60,7 +62,8 @@ export function useAudioInputDevices() {
     setError(null)
     try {
       const result = await invoke<string[]>('list_audio_input_devices')
-      setDevices(result)
+      console.log('Audio input devices loaded:', result)
+      setDevices(result || [])
     } catch (err) {
       setError(err as string)
       console.error('Failed to load audio input devices:', err)
@@ -82,7 +85,8 @@ export function useAudioOutputDevices() {
     setError(null)
     try {
       const result = await invoke<string[]>('list_audio_output_devices')
-      setDevices(result)
+      console.log('Audio output devices loaded:', result)
+      setDevices(result || [])
     } catch (err) {
       setError(err as string)
       console.error('Failed to load audio output devices:', err)
