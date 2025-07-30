@@ -1,48 +1,27 @@
-import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Music, Mic, Settings, CheckCircle, AlertCircle } from "lucide-react"
-import { useMidiDevices, useAudioInputDevices, useDeviceConnection } from "@/hooks/useTauri"
+import { Music, Mic, Settings } from "lucide-react"
 
 interface DeviceStatusBarProps {
   onOpenSetup: () => void
+  onOpenAudioSetup: () => void
+  selectedMidiDevice: string
+  selectedAudioInput: string
+  midiConnected: boolean
+  getMidiDeviceName: () => string
+  getAudioInputDeviceName: () => string
 }
 
-export function DeviceStatusBar({ onOpenSetup }: DeviceStatusBarProps) {
-  const { devices: midiDevices, loadDevices: loadMidiDevices } = useMidiDevices()
-  const { devices: audioInputDevices, loadDevices: loadAudioInputDevices } = useAudioInputDevices()
-  const { midiConnected, audioConnected } = useDeviceConnection()
-  
-  const [selectedMidiDevice, setSelectedMidiDevice] = useState<string>("")
-  const [selectedAudioInput, setSelectedAudioInput] = useState<string>("")
+export function DeviceStatusBar({ 
+  onOpenSetup,
+  onOpenAudioSetup,
+  selectedMidiDevice, 
+  selectedAudioInput, 
+  midiConnected, 
+  getMidiDeviceName, 
+  getAudioInputDeviceName 
+}: DeviceStatusBarProps) {
 
-  useEffect(() => {
-    loadMidiDevices()
-    loadAudioInputDevices()
-  }, [loadMidiDevices, loadAudioInputDevices])
-
-  // Auto-select first devices when available
-  useEffect(() => {
-    if (midiDevices.length > 0 && !selectedMidiDevice) {
-      setSelectedMidiDevice("0")
-    }
-  }, [midiDevices, selectedMidiDevice])
-
-  useEffect(() => {
-    if (audioInputDevices.length > 0 && !selectedAudioInput) {
-      setSelectedAudioInput("0")
-    }
-  }, [audioInputDevices, selectedAudioInput])
-
-  const getMidiDeviceName = () => {
-    if (!selectedMidiDevice || midiDevices.length === 0) return "No device"
-    return midiDevices[parseInt(selectedMidiDevice)] || "Unknown device"
-  }
-
-  const getAudioDeviceName = () => {
-    if (!selectedAudioInput || audioInputDevices.length === 0) return "No device"
-    return audioInputDevices[parseInt(selectedAudioInput)] || "Unknown device"
-  }
 
   return (
     <div className="flex items-center justify-between px-6 py-3 bg-gray-900 border-b border-gray-700">
@@ -55,26 +34,26 @@ export function DeviceStatusBar({ onOpenSetup }: DeviceStatusBarProps) {
           className="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
         >
           <Music className="w-4 h-4 text-gray-300" />
-          <span className="text-sm text-gray-200">{getMidiDeviceName()}</span>
-          {midiConnected ? (
-            <CheckCircle className="w-4 h-4 text-green-400" />
-          ) : (
-            <AlertCircle className="w-4 h-4 text-gray-500" />
-          )}
+          <span className="text-sm text-gray-200">
+            {getMidiDeviceName()}
+          </span>
+          <span className="text-sm font-mono text-green-400">
+            ✓
+          </span>
         </button>
 
         {/* Audio Status */}
         <button
-          onClick={onOpenSetup}
+          onClick={onOpenAudioSetup}
           className="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
         >
           <Mic className="w-4 h-4 text-gray-300" />
-          <span className="text-sm text-gray-200">{getAudioDeviceName()}</span>
-          {audioConnected ? (
-            <CheckCircle className="w-4 h-4 text-green-400" />
-          ) : (
-            <AlertCircle className="w-4 h-4 text-gray-500" />
-          )}
+          <span className="text-sm text-gray-200">
+            {getAudioInputDeviceName()}
+          </span>
+          <span className="text-sm font-mono text-green-400">
+            ✓
+          </span>
         </button>
 
         {/* Setup Button */}

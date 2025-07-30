@@ -17,9 +17,6 @@ import {
   Zap 
 } from "lucide-react"
 import { 
-  useMidiDevices, 
-  useAudioInputDevices, 
-  useAudioOutputDevices, 
   useDeviceConnection, 
   useAudioMonitoring, 
   useAudioDeviceInfo 
@@ -28,37 +25,56 @@ import {
 interface SetupModalProps {
   isOpen: boolean
   onClose: () => void
+  initialTab: string
   onInputConfigChange?: (config: { mode: 'mono' | 'stereo', channels: number[] }) => void
+  midiDevices: string[]
+  audioInputDevices: string[]
+  audioOutputDevices: string[]
+  midiLoading: boolean
+  selectedMidiDevice: string
+  selectedAudioInput: string
+  selectedAudioOutput: string
+  setSelectedAudioInput: (value: string) => void
+  setSelectedAudioOutput: (value: string) => void
+  handleMidiDeviceChange: (value: string) => void
+  midiConnected: boolean
 }
 
-export function SetupModal({ isOpen, onClose, onInputConfigChange }: SetupModalProps) {
-  // Device hooks
-  const { devices: midiDevices, loadDevices: loadMidiDevices, isLoading: midiLoading } = useMidiDevices()
-  const { devices: audioInputDevices, loadDevices: loadAudioInputDevices } = useAudioInputDevices()
-  const { devices: audioOutputDevices, loadDevices: loadAudioOutputDevices } = useAudioOutputDevices()
+export function SetupModal({ 
+  isOpen, 
+  onClose, 
+  initialTab,
+  onInputConfigChange,
+  midiDevices,
+  audioInputDevices,
+  audioOutputDevices,
+  midiLoading,
+  selectedMidiDevice,
+  selectedAudioInput,
+  selectedAudioOutput,
+  setSelectedAudioInput,
+  setSelectedAudioOutput,
+  handleMidiDeviceChange,
+  midiConnected
+}: SetupModalProps) {
   
   // Connection hooks
-  const { midiConnected, audioConnected, connectMidi, testMidiConnection, sendMidiPanic } = useDeviceConnection()
+  const { connectMidi, testMidiConnection, sendMidiPanic } = useDeviceConnection()
   const { levels } = useAudioMonitoring()
   const { deviceInfo, getDeviceInfo } = useAudioDeviceInfo()
   
-  // Local state
-  const [selectedMidiDevice, setSelectedMidiDevice] = useState<string>("")
-  const [selectedAudioInput, setSelectedAudioInput] = useState<string>("")
-  const [selectedAudioOutput, setSelectedAudioOutput] = useState<string>("")
+  // Local state (not shared)
+  const [currentTab, setCurrentTab] = useState(initialTab)
   const [inputMode, setInputMode] = useState<'mono' | 'stereo'>('stereo')
   const [selectedInputChannels, setSelectedInputChannels] = useState<number[]>([0, 1])
   const [detectionThreshold, setDetectionThreshold] = useState([-35])
   const [autoDetectSilence, setAutoDetectSilence] = useState(true)
 
-  // Load devices on mount
+  // Update tab when initialTab changes
   useEffect(() => {
-    if (isOpen) {
-      loadMidiDevices()
-      loadAudioInputDevices()
-      loadAudioOutputDevices()
-    }
-  }, [isOpen, loadMidiDevices, loadAudioInputDevices, loadAudioOutputDevices])
+    setCurrentTab(initialTab)
+  }, [initialTab])
+
   
   // Notify parent when input configuration changes
   useEffect(() => {
@@ -70,25 +86,6 @@ export function SetupModal({ isOpen, onClose, onInputConfigChange }: SetupModalP
     }
   }, [inputMode, selectedInputChannels, onInputConfigChange])
 
-  // Auto-select first devices when available
-  useEffect(() => {
-    if (midiDevices.length > 0 && !selectedMidiDevice) {
-      setSelectedMidiDevice("0")
-    }
-  }, [midiDevices, selectedMidiDevice])
-
-  useEffect(() => {
-    if (audioInputDevices.length > 0 && !selectedAudioInput) {
-      setSelectedAudioInput("0")
-    }
-  }, [audioInputDevices, selectedAudioInput])
-
-  useEffect(() => {
-    if (audioOutputDevices.length > 0 && !selectedAudioOutput) {
-      setSelectedAudioOutput("0")
-    }
-  }, [audioOutputDevices, selectedAudioOutput])
-
   const handleMidiConnect = async () => {
     if (selectedMidiDevice) {
       try {
@@ -96,13 +93,6 @@ export function SetupModal({ isOpen, onClose, onInputConfigChange }: SetupModalP
       } catch (err) {
         console.error('Failed to connect MIDI device:', err)
       }
-    }
-  }
-  
-  const handleMidiDeviceChange = (value: string) => {
-    setSelectedMidiDevice(value)
-    if (value && !midiConnected) {
-      connectMidi(parseInt(value))
     }
   }
   
@@ -140,7 +130,6 @@ export function SetupModal({ isOpen, onClose, onInputConfigChange }: SetupModalP
     }
   }
 
-  const audioLevelPercent = Math.max(0, Math.min(100, (levels.peak_db + 60) * (100 / 60)))
 
   if (!isOpen) return null
 
@@ -161,8 +150,8 @@ export function SetupModal({ isOpen, onClose, onInputConfigChange }: SetupModalP
         </div>
 
         {/* Content */}
-        <div className="p-6 overflow-auto max-h-[calc(80vh-120px)]">
-          <Tabs defaultValue="midi" className="w-full">
+        <div className="p-6 overflow-auto max-h-[calc(80vh-120px)] min-h-[350px]">
+          <Tabs value={currentTab} onValueChange={setCurrentTab} className="w-full">
             <TabsList className="grid w-full grid-cols-4 bg-gray-800">
               <TabsTrigger value="midi" className="data-[state=active]:bg-gray-700 text-gray-100">
                 <Music className="w-4 h-4 mr-2" />
@@ -280,17 +269,6 @@ export function SetupModal({ isOpen, onClose, onInputConfigChange }: SetupModalP
             <TabsContent value="audio-input" className="mt-6 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-medium text-gray-100">Audio Input</h3>
-                {audioConnected ? (
-                  <Badge className="bg-green-600 text-white">
-                    <CheckCircle className="w-3 h-3 mr-1" />
-                    Connected
-                  </Badge>
-                ) : (
-                  <Badge variant="secondary" className="bg-gray-600 text-white">
-                    <AlertCircle className="w-3 h-3 mr-1" />
-                    Disconnected
-                  </Badge>
-                )}
               </div>
 
               <div className="space-y-4">
@@ -323,23 +301,6 @@ export function SetupModal({ isOpen, onClose, onInputConfigChange }: SetupModalP
                   </Select>
                 </div>
 
-                {/* Input Level Monitor */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <Label className="text-gray-200">Input Level</Label>
-                    <span className="text-sm text-gray-400">{levels.peak_db.toFixed(1)} dB</span>
-                  </div>
-                  <div className="w-full bg-gray-800 rounded-full h-3">
-                    <div 
-                      className={`h-3 rounded-full transition-all duration-75 ${
-                        levels.peak_db > -6 ? 'bg-red-400' : 
-                        levels.peak_db > -12 ? 'bg-yellow-400' : 
-                        'bg-green-400'
-                      }`}
-                      style={{ width: `${audioLevelPercent}%` }}
-                    />
-                  </div>
-                </div>
 
                 {/* Input Mode Selection */}
                 {deviceInfo && deviceInfo.total_channels > 1 && (
@@ -439,8 +400,22 @@ export function SetupModal({ isOpen, onClose, onInputConfigChange }: SetupModalP
                       </div>
                     </div>
                     
-                    <div className="text-xs text-gray-500">
-                      Device: {deviceInfo.total_channels} channels @ {deviceInfo.sample_rate} Hz
+                    <div className="mt-4 p-3 bg-gray-800 rounded-lg">
+                      <div className="text-sm text-gray-300 font-medium mb-2">Device Information</div>
+                      <div className="space-y-1 text-xs text-gray-400">
+                        <div className="flex justify-between">
+                          <span>Channels:</span>
+                          <span>{deviceInfo.total_channels}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Sample Rate:</span>
+                          <span>{deviceInfo.sample_rate} Hz</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Status:</span>
+                          <span className="text-green-400">Ready</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -527,8 +502,8 @@ export function SetupModal({ isOpen, onClose, onInputConfigChange }: SetupModalP
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end p-6 border-t border-gray-700">
-          <Button onClick={onClose} className="px-6">
+        <div className="flex justify-end p-4 border-t border-gray-700">
+          <Button onClick={onClose} className="px-4 py-2">
             Done
           </Button>
         </div>
