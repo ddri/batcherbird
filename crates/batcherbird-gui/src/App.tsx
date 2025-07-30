@@ -8,9 +8,10 @@ import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Progress } from "@/components/ui/progress"
-import { DeviceManager } from "@/components/DeviceManager"
+import { DeviceStatusBar } from "@/components/DeviceStatusBar"
+import { SetupModal } from "@/components/SetupModal"
 import { WaveformDisplay } from "@/components/WaveformDisplay"
-import { useRecording, useFileSystem, useDeviceConnection, useWaveform, useLoopDetection, useAudioPlayback } from "@/hooks/useTauri"
+import { useRecording, useFileSystem, useWaveform, useLoopDetection, useAudioPlayback } from "@/hooks/useTauri"
 import {
   Play,
   Square,
@@ -48,7 +49,6 @@ export default function App() {
   // Tauri hooks
   const { recordSample, recordRange, previewNote, isRecording: backendRecording } = useRecording()
   const { selectOutputDirectory } = useFileSystem()
-  const { testMidiConnection } = useDeviceConnection()
   const { waveformData, isLoading: waveformLoading, error: waveformError, loadWaveform } = useWaveform()
   const { getLastRecordedSamplePath } = useLoopDetection()
   const { 
@@ -63,9 +63,6 @@ export default function App() {
   const [lastRecordedFile, setLastRecordedFile] = useState<string | null>(null)
 
   // Handlers
-  const handleMidiPanic = () => {
-    console.log("MIDI Panic triggered")
-  }
 
   const handleOpenSetup = () => {
     setSetupModalOpen(true)
@@ -203,38 +200,29 @@ export default function App() {
     console.log("Save template clicked")
   }
 
-  const handleTestMidiConnection = async () => {
-    try {
-      const result = await testMidiConnection()
-      console.log("Test MIDI result:", result)
-    } catch (error) {
-      console.error("Test MIDI failed:", error)
-    }
-  }
 
   // Update recording state based on backend
   const actuallyRecording = isRecording || backendRecording
 
   return (
     <div className="h-screen bg-gray-950 text-gray-100 flex flex-col">
-      {/* Device Manager handles title bar and device connections */}
-      <DeviceManager onMidiPanic={handleMidiPanic} onOpenSetup={handleOpenSetup} />
+      {/* Device Status Bar */}
+      <DeviceStatusBar onOpenSetup={handleOpenSetup} />
       
 
       <div className="flex flex-1 overflow-hidden">
         {/* Main Content */}
         <div className="flex-1 flex flex-col">
-          {/* Step Content */}
-          <div className="flex-1 p-6 overflow-auto">
-            <div className="max-w-4xl mx-auto space-y-6">
-              {/* Device interfaces are now handled by DeviceManager component above */}
+          {/* Main Recording Interface */}
+          <div className="flex-1 p-8 overflow-auto">
+            <div className="max-w-5xl mx-auto space-y-8">
 
-              {/* Sample Type Selection */}
+              {/* Recording Mode Selection */}
               <Card className="bg-gray-900 border-gray-700">
                 <CardHeader>
-                  <CardTitle className="flex items-center space-x-2 text-gray-100">
-                    <Layers className="w-5 h-5 text-gray-300" />
-                    <span>Sample Type</span>
+                  <CardTitle className="flex items-center space-x-2 text-gray-100 text-xl">
+                    <Layers className="w-6 h-6 text-gray-300" />
+                    <span>Recording Mode</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -350,7 +338,7 @@ export default function App() {
               <div className="grid md:grid-cols-2 gap-6">
                 <Card className="bg-gray-900 border-gray-700">
                   <CardHeader>
-                    <CardTitle className="flex items-center space-x-2 text-gray-100">
+                    <CardTitle className="flex items-center space-x-2 text-gray-100 text-lg">
                       <Clock className="w-5 h-5 text-gray-300" />
                       <span>Duration</span>
                     </CardTitle>
@@ -389,7 +377,7 @@ export default function App() {
 
                 <Card className="bg-gray-900 border-gray-700">
                   <CardHeader>
-                    <CardTitle className="flex items-center space-x-2 text-gray-100">
+                    <CardTitle className="flex items-center space-x-2 text-gray-100 text-lg">
                       <Volume2 className="w-5 h-5 text-gray-300" />
                       <span>Velocity Layers</span>
                     </CardTitle>
@@ -432,9 +420,9 @@ export default function App() {
               </div>
 
               {/* Waveform Display */}
-              <Card className="bg-gray-900 border-gray-700">
+              <Card className="bg-gray-900 border-gray-700 min-h-[320px]">
                 <CardHeader>
-                  <CardTitle className="flex items-center justify-between text-gray-100">
+                  <CardTitle className="flex items-center justify-between text-gray-100 text-xl">
                     <span>Sample Waveform</span>
                     {waveformData && lastRecordedFile && (
                       <div className="flex items-center space-x-2 text-sm text-gray-400">
@@ -462,7 +450,7 @@ export default function App() {
 
               {/* Recording Controls */}
               <Card className="bg-gray-900 border-gray-700">
-                <CardContent className="pt-6">
+                <CardContent className="pt-8">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-4">
                       <div className="flex items-center space-x-4">
@@ -506,7 +494,7 @@ export default function App() {
                     </div>
                     <div className="text-right">
                       <div className="text-sm text-gray-400">Ready to record</div>
-                      <div className="text-xs text-gray-300">6 velocity layers • Single note</div>
+                      <div className="text-xs text-gray-300">{velocityLayers.length} velocity layers • {recordingMode === 'single' ? 'Single note' : 'Range recording'}</div>
                     </div>
                   </div>
                   {isRecording && (
@@ -654,13 +642,6 @@ export default function App() {
                 >
                   Save as Template
                 </Button>
-                <Button
-                  onClick={handleTestMidiConnection}
-                  variant="outline"
-                  className="w-full justify-start bg-transparent border-gray-600 text-gray-100 hover:bg-gray-800"
-                >
-                  Test MIDI Connection
-                </Button>
               </div>
             </div>
           </div>
@@ -668,20 +649,10 @@ export default function App() {
       </div>
       
       {/* Setup Modal */}
-      {setupModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-900 border border-gray-700 rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-semibold text-gray-100 mb-4">Setup</h2>
-            <p className="text-gray-300 mb-4">Configure your MIDI and audio settings here.</p>
-            <Button
-              onClick={handleCloseSetup}
-              className="w-full"
-            >
-              Close
-            </Button>
-          </div>
-        </div>
-      )}
+      <SetupModal
+        isOpen={setupModalOpen}
+        onClose={handleCloseSetup}
+      />
     </div>
   )
 }
