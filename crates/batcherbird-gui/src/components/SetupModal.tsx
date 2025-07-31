@@ -18,7 +18,6 @@ import {
 } from "lucide-react"
 import { 
   useDeviceConnection, 
-  useAudioMonitoring, 
   useAudioDeviceInfo 
 } from "@/hooks/useTauri"
 
@@ -60,7 +59,6 @@ export function SetupModal({
   
   // Connection hooks
   const { connectMidi, testMidiConnection, sendMidiPanic } = useDeviceConnection()
-  const { levels } = useAudioMonitoring()
   const { deviceInfo, getDeviceInfo } = useAudioDeviceInfo()
   
   // Local state (not shared)

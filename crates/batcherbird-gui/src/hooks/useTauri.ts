@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useState, useEffect, useCallback, useRef } from 'react'
 
 // Types matching our Rust backend
@@ -37,6 +38,22 @@ export interface WaveformData {
   duration: number
   channels: number
   format: 'mono' | 'stereo'
+}
+
+export interface AudioDeviceInfo {
+  device_name: string
+  total_channels: number
+  sample_rate: number
+  channel_names: string[]
+}
+
+export interface VizChunk {
+  peak: number        // Peak amplitude for this chunk (0.0 to 1.0)
+  rms: number         // RMS level for this chunk (0.0 to 1.0)
+  peak_db: number     // Peak in dBFS
+  rms_db: number      // RMS in dBFS
+  timestamp: number   // Timestamp in samples since recording start
+  chunk_size: number  // Number of samples in this chunk
 }
 
 // Device Management Hooks
@@ -111,12 +128,38 @@ export function useAudioOutputDevices() {
   return { devices, isLoading, error, loadDevices }
 }
 
+// Get Audio Device Info Hook
+export function useAudioDeviceInfo() {
+  const [deviceInfo, setDeviceInfo] = useState<AudioDeviceInfo | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const getDeviceInfo = useCallback(async (deviceIndex: number) => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const info = await invoke<AudioDeviceInfo>('get_audio_device_info', { deviceIndex })
+      setDeviceInfo(info)
+      return info
+    } catch (err) {
+      const errorMsg = err as string
+      setError(errorMsg)
+      console.error('Failed to get audio device info:', errorMsg)
+      throw err
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  return { deviceInfo, isLoading, error, getDeviceInfo }
+}
+
 // Device Connection
 export function useDeviceConnection() {
   const [midiConnected, setMidiConnected] = useState(false)
-  const [audioConnected] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [lastMidiActivity, setLastMidiActivity] = useState<number | null>(null)
 
   const connectMidi = useCallback(async (deviceIndex: number) => {
     setIsConnecting(true)
@@ -136,6 +179,8 @@ export function useDeviceConnection() {
     try {
       const result = await invoke<string>('test_midi_connection')
       console.log('MIDI test result:', result)
+      // Mark MIDI activity when test succeeds
+      setLastMidiActivity(Date.now())
       return result
     } catch (err) {
       console.error('MIDI test failed:', err)
@@ -147,6 +192,8 @@ export function useDeviceConnection() {
     try {
       const result = await invoke<string>('send_midi_panic')
       console.log('MIDI panic result:', result)
+      // Mark MIDI activity when panic is sent
+      setLastMidiActivity(Date.now())
       return result
     } catch (err) {
       console.error('MIDI panic failed:', err)
@@ -154,14 +201,40 @@ export function useDeviceConnection() {
     }
   }, [])
 
+  // Function to manually mark MIDI activity (for external calls)
+  const markMidiActivity = useCallback(() => {
+    setLastMidiActivity(Date.now())
+  }, [])
+
+  // Query actual backend MIDI connection status for state recovery
+  const checkMidiConnectionStatus = useCallback(async () => {
+    try {
+      const backendConnected = await invoke<boolean>('get_midi_connection_status')
+      console.log('🔍 Backend MIDI status:', backendConnected, 'Frontend state:', midiConnected)
+      
+      // Sync frontend state with backend reality
+      if (backendConnected !== midiConnected) {
+        console.log('🔄 Syncing MIDI connection state: backend =', backendConnected)
+        setMidiConnected(backendConnected)
+      }
+      
+      return backendConnected
+    } catch (err) {
+      console.error('Failed to check MIDI connection status:', err)
+      return false
+    }
+  }, [midiConnected])
+
   return {
     midiConnected,
-    audioConnected,
     isConnecting,
     error,
+    lastMidiActivity,
     connectMidi,
     testMidiConnection,
-    sendMidiPanic
+    sendMidiPanic,
+    markMidiActivity,
+    checkMidiConnectionStatus
   }
 }
 
@@ -175,9 +248,13 @@ export function useAudioMonitoring() {
     rms_db: -60
   })
 
-  const startMonitoring = useCallback(async () => {
+  const startMonitoring = useCallback(async (enablePlaythrough: boolean = false) => {
     try {
-      await invoke<string>('start_input_monitoring')
+      if (enablePlaythrough) {
+        await invoke<string>('start_input_monitoring_with_playthrough', { enablePlaythrough })
+      } else {
+        await invoke<string>('start_input_monitoring')
+      }
       setIsMonitoring(true)
     } catch (err) {
       console.error('Failed to start monitoring:', err)
@@ -237,7 +314,7 @@ export function useRecording() {
     setIsRecording(true)
     setError(null)
     try {
-      const result = await invoke<string>('record_sample', {
+      const result = await invoke<string>('record_sample_with_viz', {
         note,
         velocity,
         duration,
@@ -633,3 +710,79 @@ export function useAudioPlayback() {
     togglePlayPause
   }
 }
+
+// Real-time Tauri-based visualization hook (replaces Web Audio API)
+export function useRealTimeVisualization() {
+  const [isRecording, setIsRecording] = useState(false)
+  const [vizChunks, setVizChunks] = useState<VizChunk[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const unlistenRef = useRef<(() => void) | null>(null)
+
+  // Start recording visualization
+  const startRecording = useCallback(async () => {
+    setError(null)
+    setVizChunks([]) // Clear previous data
+    
+    try {
+      console.log('🎤 Starting real-time visualization via Tauri channels')
+      
+      // Set up Tauri channel listener for waveform chunks
+      const unlisten = await listen<VizChunk>('waveform_chunk', (event) => {
+        const vizChunk = event.payload
+        
+        // Only log every 60th chunk (once per second) to avoid spam
+        if (vizChunk.timestamp % 60 === 0) {
+          console.log('📊 VizChunk stream active - Peak:', vizChunk.peak.toFixed(3), 'RMS:', vizChunk.rms.toFixed(3))
+        }
+        
+        setVizChunks(prev => {
+          // Keep a rolling buffer of recent chunks (last 3 seconds at 60fps = 180 chunks)
+          const newChunks = [...prev, vizChunk]
+          return newChunks.slice(-180)
+        })
+      })
+      
+      unlistenRef.current = unlisten
+      setIsRecording(true)
+      console.log('✅ Real-time visualization started')
+      
+    } catch (err) {
+      const errorMsg = `Failed to start real-time visualization: ${err}`
+      setError(errorMsg)
+      console.error('❌', errorMsg)
+      throw err
+    }
+  }, [])
+
+  // Stop recording visualization
+  const stopRecording = useCallback(() => {
+    console.log('🛑 Stopping real-time visualization')
+    
+    // Clean up Tauri listener
+    if (unlistenRef.current) {
+      unlistenRef.current()
+      unlistenRef.current = null
+    }
+    
+    setIsRecording(false)
+    console.log('✅ Real-time visualization stopped')
+  }, [])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (unlistenRef.current) {
+        unlistenRef.current()
+      }
+    }
+  }, [])
+
+  return {
+    isRecording,
+    vizChunks,
+    error,
+    startRecording,
+    stopRecording
+  }
+}
+

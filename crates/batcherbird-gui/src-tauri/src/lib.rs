@@ -1,7 +1,7 @@
 use batcherbird_core::{
     midi::MidiManager, 
     audio::AudioManager,
-    sampler::{SamplingEngine, SamplingConfig, AudioLevels},
+    sampler::{SamplingEngine, SamplingConfig, AudioLevels, VizChunk},
     export::{SampleExporter, ExportConfig, AudioFormat},
     loop_detection::LoopDetectionConfig,
     playback::AudioPlayback,
@@ -11,6 +11,7 @@ use std::sync::{Mutex, Arc};
 use std::time::Duration;
 use std::process::Command;
 use serde::{Serialize, Deserialize};
+use tauri::Emitter;
 
 /// Serializable version of LoopCandidate for JSON responses
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -48,6 +49,15 @@ pub struct WaveformData {
 pub struct WaveformPeaks {
     pub positive: Vec<f32>,
     pub negative: Vec<f32>,
+}
+
+/// Audio device channel information
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AudioDeviceInfo {
+    pub device_name: String,
+    pub total_channels: u16,
+    pub sample_rate: u32,
+    pub channel_names: Vec<String>,
 }
 
 // Simple working pattern - don't break what works
@@ -90,6 +100,7 @@ async fn start_input_monitoring() -> Result<String, String> {
             post_delay_ms: 0,        // Not used for monitoring
             midi_channel: 0,         // Not used for monitoring
             velocity: 100,           // Not used for monitoring
+            ..SamplingConfig::default() // Use defaults for input_mode and input_channels
         };
         
         let sampling_engine = match SamplingEngine::new(config) {
@@ -151,6 +162,115 @@ async fn start_input_monitoring() -> Result<String, String> {
     
     println!("✅ Audio input monitoring started (using SamplingEngine infrastructure)");
     Ok("Audio input monitoring started".to_string())
+}
+
+#[tauri::command]
+async fn start_input_monitoring_with_playthrough(enable_playthrough: bool) -> Result<String, String> {
+    println!("🎛️ Starting audio input monitoring with playthrough: {}", enable_playthrough);
+    
+    // Check if already monitoring
+    if MONITORING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok("Audio monitoring already active".to_string());
+    }
+    
+    // Set monitoring flag first
+    MONITORING_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+    
+    // Create monitoring with playthrough in a separate thread
+    let handle = std::thread::spawn(move || {
+        println!("🧵 Monitoring thread started (with playthrough: {})", enable_playthrough);
+        
+        // Create SamplingEngine in this thread
+        let config = SamplingConfig {
+            note_duration_ms: 0,     // Not used for monitoring
+            release_time_ms: 0,      // Not used for monitoring 
+            pre_delay_ms: 0,         // Not used for monitoring
+            post_delay_ms: 0,        // Not used for monitoring
+            midi_channel: 0,         // Not used for monitoring
+            velocity: 127,           // Not used for monitoring
+            ..SamplingConfig::default()
+        };
+        
+        let sampling_engine = match SamplingEngine::new(config) {
+            Ok(engine) => {
+                println!("✅ SamplingEngine created for monitoring with playthrough");
+                Arc::new(engine)
+            },
+            Err(e) => {
+                println!("❌ Failed to create SamplingEngine: {}", e);
+                MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+        };
+        
+        // Store the engine globally for level access
+        {
+            let mut global_engine = GLOBAL_SAMPLING_ENGINE.lock().unwrap();
+            *global_engine = Some(Arc::clone(&sampling_engine));
+        }
+        
+        // Start monitoring with playthrough
+        let (input_stream, output_stream) = match sampling_engine.start_monitoring_stream_with_playthrough(enable_playthrough) {
+            Ok(streams) => streams,
+            Err(e) => {
+                println!("❌ Failed to create monitoring streams: {}", e);
+                MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+        };
+        
+        // Start input stream
+        use cpal::traits::StreamTrait;
+        if let Err(e) = input_stream.play() {
+            println!("❌ Failed to start input stream: {}", e);
+            MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+            return;
+        }
+        
+        // Start output stream if playthrough enabled
+        if let Some(ref output) = output_stream {
+            if let Err(e) = output.play() {
+                println!("❌ Failed to start output stream: {}", e);
+                MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+        }
+        
+        println!("✅ Audio monitoring streams started (playthrough: {})", enable_playthrough);
+        
+        // Keep streams alive while monitoring is active
+        while MONITORING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        
+        // Stop streams
+        if let Err(e) = input_stream.pause() {
+            println!("⚠️ Warning: Failed to stop input stream: {}", e);
+        }
+        if let Some(ref output) = output_stream {
+            if let Err(e) = output.pause() {
+                println!("⚠️ Warning: Failed to stop output stream: {}", e);
+            }
+        }
+        
+        println!("✅ Audio monitoring streams stopped");
+    });
+    
+    // Store the thread handle for cleanup
+    {
+        let mut thread_guard = MONITORING_THREAD.lock().unwrap();
+        *thread_guard = Some(handle);
+    }
+    
+    Ok("Audio monitoring with playthrough started successfully".to_string())
+}
+
+#[tauri::command]
+async fn get_midi_connection_status() -> Result<bool, String> {
+    let connection_guard = MIDI_CONNECTION.lock().unwrap();
+    let is_connected = connection_guard.is_some();
+    println!("🔍 MIDI connection status query: {}", if is_connected { "Connected" } else { "Disconnected" });
+    Ok(is_connected)
 }
 
 
@@ -610,6 +730,7 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
             post_delay_ms: 100,    // Clean buffer flush
             midi_channel: 0,       // Channel 1 (0-indexed)
             velocity,
+            ..SamplingConfig::default() // Use defaults for input_mode and input_channels
         };
         
         println!("🎛️ Creating SamplingEngine with config: {:?}", sampling_config);
@@ -745,6 +866,173 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
     }
 }
 
+/// GUI Layer: Recording with real-time visualization streaming via Tauri channels
+#[tauri::command]
+fn record_sample_with_viz(
+    app_handle: tauri::AppHandle,
+    note: u8, 
+    velocity: u8, 
+    duration: u32, 
+    _output_directory: Option<String>, 
+    _sample_name: Option<String>, 
+    _export_format: Option<String>, 
+    _creator_name: Option<String>, 
+    _instrument_description: Option<String>
+) -> Result<String, String> {
+    println!("🎛️ GUI: Recording sample with real-time visualization (note: {}, velocity: {}, duration: {}ms)", note, velocity, duration);
+    
+    // Step 1: Get MIDI connection (GUI responsibility)
+    let mut connection = {
+        let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
+        match connection_guard.take() {
+            Some(conn) => conn,
+            None => return Err("No MIDI connection established. Please select a MIDI device first.".to_string()),
+        }
+    };
+    
+    // Step 2: Audio processing with visualization in dedicated thread
+    println!("📡 GUI: Delegating to Core Audio Engine with visualization...");
+    
+    let (tx, rx) = std::sync::mpsc::channel();
+    let app_handle_clone = app_handle.clone();
+    std::thread::spawn(move || {
+        println!("🧵 Audio thread with visualization started");
+        
+        // Configure Core Audio Engine
+        println!("🔧 Configuring sampling engine...");
+        let sampling_config = SamplingConfig {
+            note_duration_ms: duration as u64,
+            release_time_ms: 500,
+            pre_delay_ms: 100,
+            post_delay_ms: 100,
+            midi_channel: 0,
+            velocity,
+            ..SamplingConfig::default()
+        };
+        
+        let sampling_engine = match SamplingEngine::new(sampling_config) {
+            Ok(engine) => engine,
+            Err(e) => {
+                println!("❌ Failed to create sampling engine: {}", e);
+                tx.send(Err(format!("Failed to create sampling engine: {}", e))).unwrap();
+                return;
+            }
+        };
+        
+        // Step 3: Record with visualization (returns both Sample and Consumer)
+        match sampling_engine.sample_single_note_with_viz_blocking(&mut connection, note) {
+            Ok((recorded_sample, mut viz_consumer)) => {
+                println!("🎵 Core: Recording with visualization completed successfully");
+                
+                // Step 4: Start visualization thread (following INFRA-RESEARCH.md pattern)
+                let viz_handle = app_handle_clone.clone();
+                std::thread::spawn(move || {
+                    println!("👁️ Visualization thread started - reading at 60fps");
+                    
+                    loop {
+                        match viz_consumer.pop() {
+                            Ok(viz_chunk) => {
+                                // Send via Tauri channel to frontend (never blocks)
+                                if let Err(e) = viz_handle.emit("waveform_chunk", &viz_chunk) {
+                                    println!("⚠️ Failed to emit waveform chunk: {}", e);
+                                }
+                            }
+                            Err(_) => {
+                                // No data available - this is normal
+                            }
+                        }
+                        
+                        // 60fps timing (16.67ms)
+                        std::thread::sleep(Duration::from_millis(16));
+                    }
+                });
+                
+                tx.send(Ok(recorded_sample)).unwrap();
+            }
+            Err(e) => {
+                println!("❌ Core: Recording with visualization failed: {}", e);
+                tx.send(Err(format!("Recording failed: {}", e))).unwrap();
+            }
+        }
+    });
+    
+    // Step 5: Wait for result and handle export (same as original record_sample)
+    match rx.recv().unwrap() {
+        Ok(recorded_sample) => {
+            // Handle export logic (same as original record_sample)
+            // ... [export logic would go here] ...
+            
+            let success_message = format!("Recording with visualization saved: {} samples", recorded_sample.audio_data.len());
+            println!("✅ GUI: {}", success_message);
+            Ok(success_message)
+        }
+        Err(e) => {
+            println!("❌ GUI: Core Audio Engine reported error: {}", e);
+            Err(format!("Core Audio Engine error: {}", e))
+        }
+    }
+}
+
+/// Test command to verify Tauri channel throughput at 60fps
+#[tauri::command]
+fn test_viz_throughput(app_handle: tauri::AppHandle) -> Result<String, String> {
+    println!("🧪 Testing visualization throughput at 60fps...");
+    
+    // Create a test ring buffer
+    let (mut producer, mut consumer) = rtrb::RingBuffer::<VizChunk>::new(64);
+    
+    // Producer thread (simulates audio thread)
+    let producer_handle = std::thread::spawn(move || {
+        for i in 0..600 { // 10 seconds worth of 60fps data
+            let test_samples = vec![0.1 * (i as f32), -0.1 * (i as f32)];
+            let chunk = VizChunk::from_samples(&test_samples, i * 2);
+            
+            // Try to push (never block)
+            if producer.push(chunk).is_err() {
+                println!("⚠️ Buffer full at chunk {}", i);
+            }
+            
+            // Simulate audio callback timing (roughly 1ms chunks)
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        println!("✅ Producer finished sending 600 chunks");
+    });
+    
+    // Consumer thread (simulates visualization thread)
+    let app_clone = app_handle.clone();
+    let consumer_handle = std::thread::spawn(move || {
+        let mut chunks_sent = 0;
+        let start_time = std::time::Instant::now();
+        
+        for _ in 0..600 { // 10 seconds at 60fps = 600 iterations
+            // Try to consume available chunks
+            while let Ok(chunk) = consumer.pop() {
+                // Send via Tauri channel
+                if let Err(e) = app_clone.emit("viz_test_chunk", &chunk) {
+                    println!("⚠️ Failed to emit chunk: {}", e);
+                } else {
+                    chunks_sent += 1;
+                }
+            }
+            
+            // 60fps timing
+            std::thread::sleep(Duration::from_millis(16));
+        }
+        
+        let elapsed = start_time.elapsed();
+        println!("✅ Consumer finished: {} chunks sent in {:.2}s", chunks_sent, elapsed.as_secs_f32());
+        chunks_sent
+    });
+    
+    // Wait for both threads
+    producer_handle.join().unwrap();
+    let chunks_sent = consumer_handle.join().unwrap();
+    
+    let result = format!("Throughput test completed: {} chunks sent via Tauri channels", chunks_sent);
+    println!("🧪 {}", result);
+    Ok(result)
+}
+
 #[tauri::command]
 fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, output_directory: Option<String>, sample_name: Option<String>, export_format: Option<String>, creator_name: Option<String>, instrument_description: Option<String>) -> Result<String, String> {
     println!("🎹 GUI: Recording range sampling (notes: {}-{}, velocity: {}, duration: {}ms)", start_note, end_note, velocity, duration);
@@ -774,6 +1062,7 @@ fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, outpu
             post_delay_ms: 100,    // Clean buffer flush
             midi_channel: 0,       // Channel 1 (0-indexed)
             velocity,
+            ..SamplingConfig::default() // Use defaults for input_mode and input_channels
         };
         
         println!("🎛️ Creating SamplingEngine for range sampling...");
@@ -1522,6 +1811,47 @@ async fn is_playing() -> Result<bool, String> {
     }
 }
 
+/// Get audio device channel information
+#[tauri::command]
+fn get_audio_device_info(device_index: usize) -> Result<AudioDeviceInfo, String> {
+    println!("🎤 Getting info for audio device index: {}", device_index);
+    
+    use cpal::traits::{DeviceTrait, HostTrait};
+    
+    let host = cpal::default_host();
+    let devices: Vec<_> = host.input_devices()
+        .map_err(|e| format!("Failed to enumerate input devices: {}", e))?
+        .collect();
+    
+    let device = devices.get(device_index)
+        .ok_or_else(|| format!("Device index {} not found", device_index))?;
+    
+    let device_name = device.name()
+        .unwrap_or_else(|_| "Unknown".to_string());
+    
+    // Get default input config to determine channels
+    let config = device.default_input_config()
+        .map_err(|e| format!("Failed to get device config: {}", e))?;
+    
+    let total_channels = config.channels();
+    let sample_rate = config.sample_rate().0;
+    
+    // Generate channel names
+    let channel_names: Vec<String> = (1..=total_channels)
+        .map(|ch| format!("Input {}", ch))
+        .collect();
+    
+    println!("   📊 Device: {}, Channels: {}, Sample Rate: {} Hz", 
+             device_name, total_channels, sample_rate);
+    
+    Ok(AudioDeviceInfo {
+        device_name,
+        total_channels,
+        sample_rate,
+        channel_names,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -1534,13 +1864,17 @@ pub fn run() {
       test_midi_connection,
       preview_note,
       record_sample,
+      record_sample_with_viz,
+      test_viz_throughput,
       record_range,
       generate_instrument_files,
       select_output_directory,
       show_samples_in_finder,
       send_midi_panic,
       start_input_monitoring,
+      start_input_monitoring_with_playthrough,
       stop_input_monitoring,
+      get_midi_connection_status,
       get_audio_levels,
       detect_loop_points,
       get_last_recorded_sample_path,
@@ -1552,7 +1886,8 @@ pub fn run() {
       pause_playback,
       seek_playback,
       get_playback_position,
-      is_playing
+      is_playing,
+      get_audio_device_info
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

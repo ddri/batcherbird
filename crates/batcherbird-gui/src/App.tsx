@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -11,7 +11,9 @@ import { Progress } from "@/components/ui/progress"
 import { DeviceStatusBar } from "@/components/DeviceStatusBar"
 import { SetupModal } from "@/components/SetupModal"
 import { WaveformDisplay } from "@/components/WaveformDisplay"
-import { useRecording, useFileSystem, useWaveform, useLoopDetection, useAudioPlayback } from "@/hooks/useTauri"
+import { LevelMeter } from "@/components/LevelMeter"
+import { useRecording, useFileSystem, useWaveform, useLoopDetection, useAudioPlayback, useMidiDevices, useAudioInputDevices, useAudioOutputDevices, useDeviceConnection, useRealTimeVisualization } from "@/hooks/useTauri"
+import { useRecordingState } from "@/hooks/useRecordingState"
 import {
   Play,
   Square,
@@ -45,11 +47,109 @@ export default function App() {
   
   // Modal state
   const [setupModalOpen, setSetupModalOpen] = useState(false)
+  const [setupModalTab, setSetupModalTab] = useState("midi")
   
   // Tauri hooks
   const { recordSample, recordRange, previewNote, isRecording: backendRecording } = useRecording()
   const { selectOutputDirectory } = useFileSystem()
-  const { waveformData, isLoading: waveformLoading, error: waveformError, loadWaveform } = useWaveform()
+  
+  // Device hooks
+  const { devices: midiDevices, loadDevices: loadMidiDevices, isLoading: midiLoading } = useMidiDevices()
+  const { devices: audioInputDevices, loadDevices: loadAudioInputDevices } = useAudioInputDevices()
+  const { devices: audioOutputDevices, loadDevices: loadAudioOutputDevices } = useAudioOutputDevices()
+  const { midiConnected, connectMidi } = useDeviceConnection()
+  
+  // Device selection state (managed directly in App)
+  const [selectedMidiDevice, setSelectedMidiDevice] = useState<string>("")
+  const [selectedAudioInput, setSelectedAudioInput] = useState<string>("")
+  const [selectedAudioOutput, setSelectedAudioOutput] = useState<string>("")
+  
+  // Load devices on mount
+  useEffect(() => {
+    loadMidiDevices()
+    loadAudioInputDevices()
+    loadAudioOutputDevices()
+  }, [loadMidiDevices, loadAudioInputDevices, loadAudioOutputDevices])
+
+  // Load device preferences from localStorage and auto-select + auto-connect
+  useEffect(() => {
+    if (midiDevices.length > 0 && !selectedMidiDevice) {
+      const savedDevice = localStorage.getItem('selectedMidiDevice')
+      const deviceIndex = savedDevice && parseInt(savedDevice) < midiDevices.length ? savedDevice : "0"
+      setSelectedMidiDevice(deviceIndex)
+      
+      // Auto-connect like manual selection does (following professional audio app pattern)
+      if (deviceIndex && !midiConnected) {
+        console.log('🔌 Auto-connecting to saved MIDI device:', midiDevices[parseInt(deviceIndex)])
+        connectMidi(parseInt(deviceIndex))
+      }
+    }
+  }, [midiDevices, selectedMidiDevice, midiConnected, connectMidi])
+
+  useEffect(() => {
+    if (audioInputDevices.length > 0 && !selectedAudioInput) {
+      const savedDevice = localStorage.getItem('selectedAudioInput')
+      const deviceIndex = savedDevice && parseInt(savedDevice) < audioInputDevices.length ? savedDevice : "0"
+      setSelectedAudioInput(deviceIndex)
+    }
+  }, [audioInputDevices, selectedAudioInput])
+
+  useEffect(() => {
+    if (audioOutputDevices.length > 0 && !selectedAudioOutput) {
+      const savedDevice = localStorage.getItem('selectedAudioOutput')
+      const deviceIndex = savedDevice && parseInt(savedDevice) < audioOutputDevices.length ? savedDevice : "0"
+      setSelectedAudioOutput(deviceIndex)
+    }
+  }, [audioOutputDevices, selectedAudioOutput])
+
+  // Device name getters
+  const getMidiDeviceName = () => {
+    if (!selectedMidiDevice || midiDevices.length === 0) return "No MIDI Device"
+    return midiDevices[parseInt(selectedMidiDevice)] || "Unknown device"
+  }
+
+  const getAudioInputDeviceName = () => {
+    if (!selectedAudioInput || audioInputDevices.length === 0) return "No Audio Device"
+    return audioInputDevices[parseInt(selectedAudioInput)] || "Unknown device"
+  }
+
+  // MIDI device change handler with auto-connect and persistence
+  const handleMidiDeviceChange = (value: string) => {
+    setSelectedMidiDevice(value)
+    localStorage.setItem('selectedMidiDevice', value)
+    if (value && !midiConnected) {
+      connectMidi(parseInt(value))
+    }
+  }
+
+  // Audio device change handlers with persistence
+  const handleAudioInputChange = (value: string) => {
+    setSelectedAudioInput(value)
+    localStorage.setItem('selectedAudioInput', value)
+  }
+
+  const handleAudioOutputChange = (value: string) => {
+    setSelectedAudioOutput(value)
+    localStorage.setItem('selectedAudioOutput', value)
+  }
+
+  // Recording state management
+  const {
+    state: recordingState,
+    canRecord,
+    canArm,
+    canDisarm,
+    showLevelMeter,
+    arm,
+    disarm,
+    startRecording,
+    stopRecording,
+    startPreview,
+    stopPreview,
+    getStateDisplayText,
+    getStateColor
+  } = useRecordingState()
+  const { waveformData, isLoading: waveformLoading, error: waveformError, loadWaveform, clearWaveform } = useWaveform()
   const { getLastRecordedSamplePath } = useLoopDetection()
   const { 
     isPlaying, 
@@ -59,24 +159,43 @@ export default function App() {
     seek 
   } = useAudioPlayback()
   
+  // Real-time visualization using Tauri channels
+  const {
+    isRecording: isRealTimeRecording,
+    vizChunks: realtimeVizChunks,
+    startRecording: startRealTimeVisualization,
+    stopRecording: stopRealTimeVisualization
+  } = useRealTimeVisualization()
+  
   // Track the last recorded file
   const [lastRecordedFile, setLastRecordedFile] = useState<string | null>(null)
 
   // Handlers
 
-  const handleOpenSetup = () => {
-    setSetupModalOpen(true)
-    console.log("Opening setup modal")
-  }
   
   const handleCloseSetup = () => {
     setSetupModalOpen(false)
   }
 
   const handleRecord = async () => {
+    if (!canRecord) {
+      console.warn("Cannot record - not armed")
+      return
+    }
+
     if (recordingMode === "single") {
       try {
+        startRecording() // Update state to recording
         setIsRecording(true)
+        
+        // Clear old waveform data
+        clearWaveform()
+        
+        // Start real-time waveform visualization via Tauri channels
+        console.log('🎤 Starting real-time visualization...')
+        await startRealTimeVisualization()
+        console.log('🎤 Real-time visualization started, isRealTimeRecording:', isRealTimeRecording)
+        
         const result = await recordSample(
           parseInt(selectedNote),
           selectedVelocity[0],
@@ -88,6 +207,10 @@ export default function App() {
           instrumentDescription
         )
         console.log("Recording complete:", result)
+        
+        // Stop real-time visualization immediately after recording completes
+        console.log("🔄 Transitioning from real-time to file-based waveform...")
+        stopRealTimeVisualization()
         
         // Load waveform after successful recording
         try {
@@ -106,6 +229,7 @@ export default function App() {
           // Also load the file for playback
           await loadAudioFile(lastSamplePath)
           console.log("Audio file loaded for playback")
+          console.log("✅ Smooth transition to playback mode complete")
         } catch (waveformError) {
           console.error("Failed to load waveform:", waveformError)
           alert(`Failed to load waveform: ${waveformError}`)
@@ -115,11 +239,23 @@ export default function App() {
         // TODO: Show error message to user
       } finally {
         setIsRecording(false)
+        stopRecording() // Return to armed state
+        
+        // Ensure real-time visualization is stopped (safety cleanup)
+        stopRealTimeVisualization()
       }
     } else {
       // Range recording
       try {
+        startRecording() // Update state to recording
         setIsRecording(true)
+        
+        // Clear old waveform data
+        clearWaveform()
+        
+        // Start real-time waveform visualization via Tauri channels
+        await startRealTimeVisualization()
+        
         const result = await recordRange(
           parseInt(startNote),
           parseInt(endNote),
@@ -132,31 +268,51 @@ export default function App() {
           instrumentDescription
         )
         console.log("Range recording complete:", result)
+        
+        // Stop real-time visualization immediately after range recording completes
+        console.log("🔄 Range recording complete, stopping visualization...")
+        stopRealTimeVisualization()
+        
         // TODO: Show success message to user
       } catch (error) {
         console.error("Range recording failed:", error)
         // TODO: Show error message to user
       } finally {
         setIsRecording(false)
+        stopRecording() // Return to armed state
+        
+        // Ensure real-time visualization is stopped (safety cleanup)
+        stopRealTimeVisualization()
       }
     }
   }
 
   const handlePreview = async () => {
     try {
+      // Temporarily arm for preview
+      await startPreview()
+      
       console.log("Previewing note:", {
         note: parseInt(selectedNote),
         velocity: selectedVelocity[0],
         duration: selectedDuration[0]
       })
+      
       const result = await previewNote(
         parseInt(selectedNote),
         selectedVelocity[0],
         selectedDuration[0]
       )
       console.log("Preview result:", result)
+      
+      // Stop preview after a delay
+      setTimeout(async () => {
+        await stopPreview()
+      }, selectedDuration[0] + 1000) // Duration + 1 second buffer
+      
     } catch (error) {
       console.error("Preview failed:", error)
+      await stopPreview() // Cleanup on error
       alert(`Preview failed: ${error}`)
     }
   }
@@ -207,7 +363,18 @@ export default function App() {
   return (
     <div className="h-screen bg-gray-950 text-gray-100 flex flex-col">
       {/* Device Status Bar */}
-      <DeviceStatusBar onOpenSetup={handleOpenSetup} />
+      <DeviceStatusBar 
+        onOpenSetup={() => {
+          setSetupModalTab("midi")
+          setSetupModalOpen(true)
+        }}
+        onOpenAudioSetup={() => {
+          setSetupModalTab("audio-input")
+          setSetupModalOpen(true)
+        }}
+        getMidiDeviceName={getMidiDeviceName}
+        getAudioInputDeviceName={getAudioInputDeviceName}
+      />
       
 
       <div className="flex flex-1 overflow-hidden">
@@ -444,6 +611,8 @@ export default function App() {
                     playbackPosition={playbackPosition}
                     onPlayPause={togglePlayPause}
                     onSeek={seek}
+                    realtimeVizChunks={realtimeVizChunks}
+                    isRecording={isRealTimeRecording}
                   />
                 </CardContent>
               </Card>
@@ -451,9 +620,40 @@ export default function App() {
               {/* Recording Controls */}
               <Card className="bg-gray-900 border-gray-700">
                 <CardContent className="pt-8">
+                  {/* ARM State and Level Meter */}
+                  {showLevelMeter && (
+                    <div className="mb-6 p-4 bg-gray-800 rounded-lg border border-yellow-600/30">
+                      <LevelMeter isVisible={showLevelMeter} />
+                    </div>
+                  )}
+
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-4">
                       <div className="flex items-center space-x-4">
+                        {/* ARM/DISARM Button */}
+                        {canArm && (
+                          <Button
+                            onClick={arm}
+                            variant="outline"
+                            size="lg"
+                            className="bg-yellow-900/50 border-yellow-600 text-yellow-200 hover:bg-yellow-800/50"
+                          >
+                            🎤 ARM TO RECORD
+                          </Button>
+                        )}
+
+                        {canDisarm && (
+                          <Button
+                            onClick={disarm}
+                            variant="outline"
+                            size="lg"
+                            className="bg-yellow-900/50 border-yellow-600 text-yellow-200 hover:bg-yellow-800/50"
+                          >
+                            DISARM
+                          </Button>
+                        )}
+
+                        {/* Preview Button */}
                         <Button
                           onClick={handlePreview}
                           variant="outline"
@@ -464,11 +664,13 @@ export default function App() {
                           <Play className="w-5 h-5 mr-2" />
                           Preview
                         </Button>
+
+                        {/* Record Button */}
                         <Button
                           onClick={handleRecord}
                           size="lg"
                           className={`${actuallyRecording ? "bg-red-600 hover:bg-red-700 text-white" : "bg-gray-200 hover:bg-gray-300 text-gray-900"}`}
-                          disabled={actuallyRecording && recordingMode === "range"} // Can't stop range recording from UI
+                          disabled={!canRecord || (actuallyRecording && recordingMode === "range")}
                         >
                           {actuallyRecording ? (
                             <>
@@ -493,8 +695,11 @@ export default function App() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-sm text-gray-400">Ready to record</div>
-                      <div className="text-xs text-gray-300">{velocityLayers.length} velocity layers • {recordingMode === 'single' ? 'Single note' : 'Range recording'}</div>
+                      <div className={`text-sm ${getStateColor()}`}>{getStateDisplayText()}</div>
+                      <div className="text-xs text-gray-300">
+                        {velocityLayers.length} velocity layers • {recordingMode === 'single' ? 'Single note' : 'Range recording'}
+                        {!canRecord && recordingState === 'idle' && ' • ARM to record'}
+                      </div>
                     </div>
                   </div>
                   {isRecording && (
@@ -652,6 +857,18 @@ export default function App() {
       <SetupModal
         isOpen={setupModalOpen}
         onClose={handleCloseSetup}
+        initialTab={setupModalTab}
+        midiDevices={midiDevices}
+        audioInputDevices={audioInputDevices}
+        audioOutputDevices={audioOutputDevices}
+        midiLoading={midiLoading}
+        selectedMidiDevice={selectedMidiDevice}
+        selectedAudioInput={selectedAudioInput}
+        selectedAudioOutput={selectedAudioOutput}
+        setSelectedAudioInput={handleAudioInputChange}
+        setSelectedAudioOutput={handleAudioOutputChange}
+        handleMidiDeviceChange={handleMidiDeviceChange}
+        midiConnected={midiConnected}
       />
     </div>
   )

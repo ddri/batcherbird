@@ -3,28 +3,34 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
+import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
 import { Music, Mic, Settings, AlertCircle, CheckCircle } from "lucide-react"
-import { useMidiDevices, useAudioInputDevices, useAudioOutputDevices, useDeviceConnection, useAudioMonitoring } from "@/hooks/useTauri"
+import { useMidiDevices, useAudioInputDevices, useAudioOutputDevices, useDeviceConnection, useAudioMonitoring, useAudioDeviceInfo } from "@/hooks/useTauri"
 
 interface DeviceManagerProps {
   onMidiPanic: () => void
   onOpenSetup: () => void
+  onInputConfigChange?: (config: { mode: 'mono' | 'stereo', channels: number[] }) => void
 }
 
-export function DeviceManager({ onMidiPanic, onOpenSetup }: DeviceManagerProps) {
+export function DeviceManager({ onMidiPanic, onOpenSetup, onInputConfigChange }: DeviceManagerProps) {
   // Device hooks
   const { devices: midiDevices, loadDevices: loadMidiDevices, isLoading: midiLoading } = useMidiDevices()
   const { devices: audioInputDevices, loadDevices: loadAudioInputDevices } = useAudioInputDevices()
   const { devices: audioOutputDevices, loadDevices: loadAudioOutputDevices } = useAudioOutputDevices()
   
   // Connection hooks
-  const { midiConnected, audioConnected, connectMidi, testMidiConnection, sendMidiPanic } = useDeviceConnection()
+  const { midiConnected, connectMidi, testMidiConnection, sendMidiPanic } = useDeviceConnection()
   const { levels } = useAudioMonitoring()
+  const { deviceInfo, getDeviceInfo } = useAudioDeviceInfo()
   
   // Local state
   const [selectedMidiDevice, setSelectedMidiDevice] = useState<string>("")
   const [selectedAudioInput, setSelectedAudioInput] = useState<string>("")
   const [selectedAudioOutput, setSelectedAudioOutput] = useState<string>("")
+  const [inputMode, setInputMode] = useState<'mono' | 'stereo'>('stereo')
+  const [selectedInputChannels, setSelectedInputChannels] = useState<number[]>([0, 1])
 
   // Load devices on mount
   useEffect(() => {
@@ -32,6 +38,16 @@ export function DeviceManager({ onMidiPanic, onOpenSetup }: DeviceManagerProps) 
     loadAudioInputDevices()
     loadAudioOutputDevices()
   }, [loadMidiDevices, loadAudioInputDevices, loadAudioOutputDevices])
+  
+  // Notify parent when input configuration changes
+  useEffect(() => {
+    if (onInputConfigChange) {
+      onInputConfigChange({
+        mode: inputMode,
+        channels: selectedInputChannels
+      })
+    }
+  }, [inputMode, selectedInputChannels, onInputConfigChange])
   
   // Debug device lists
   useEffect(() => {
@@ -78,10 +94,26 @@ export function DeviceManager({ onMidiPanic, onOpenSetup }: DeviceManagerProps) 
     }
   }
   
-  const handleAudioInputChange = (value: string) => {
+  const handleAudioInputChange = async (value: string) => {
     setSelectedAudioInput(value)
-    // TODO: Connect to audio input device
     console.log("Selected audio input:", audioInputDevices[parseInt(value)])
+    
+    // Get device info to know how many channels it has
+    try {
+      const info = await getDeviceInfo(parseInt(value))
+      console.log("Device info:", info)
+      
+      // Reset to stereo mode with first two channels if available
+      if (info.total_channels >= 2) {
+        setInputMode('stereo')
+        setSelectedInputChannels([0, 1])
+      } else {
+        setInputMode('mono')
+        setSelectedInputChannels([0])
+      }
+    } catch (err) {
+      console.error('Failed to get device info:', err)
+    }
   }
   
 
@@ -223,17 +255,10 @@ export function DeviceManager({ onMidiPanic, onOpenSetup }: DeviceManagerProps) 
             <CardTitle className="flex items-center space-x-2 text-gray-100">
               <Mic className="w-5 h-5 text-gray-300" />
               <span>Audio Interface</span>
-              {audioConnected ? (
-                <Badge variant="secondary" className="bg-green-600 text-white">
-                  <CheckCircle className="w-3 h-3 mr-1" />
-                  Connected
-                </Badge>
-              ) : (
-                <Badge variant="secondary" className="bg-gray-600 text-white">
-                  <AlertCircle className="w-3 h-3 mr-1" />
-                  Disconnected
-                </Badge>
-              )}
+              <Badge variant="secondary" className="bg-green-600 text-white">
+                <CheckCircle className="w-3 h-3 mr-1" />
+                Ready
+              </Badge>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -277,6 +302,117 @@ export function DeviceManager({ onMidiPanic, onOpenSetup }: DeviceManagerProps) 
                 style={{ width: `${audioLevelPercent}%` }}
               />
             </div>
+            
+            {/* Input Mode Selection */}
+            {deviceInfo && deviceInfo.total_channels > 1 && (
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="input-mode" className="text-sm text-gray-400">
+                    Input Mode
+                  </Label>
+                  <div className="flex items-center space-x-2">
+                    <Label htmlFor="input-mode" className="text-xs text-gray-500">
+                      Mono
+                    </Label>
+                    <Switch
+                      id="input-mode"
+                      checked={inputMode === 'stereo'}
+                      onCheckedChange={(checked) => {
+                        setInputMode(checked ? 'stereo' : 'mono')
+                        if (checked) {
+                          setSelectedInputChannels([0, 1])
+                        } else {
+                          setSelectedInputChannels([selectedInputChannels[0] || 0])
+                        }
+                      }}
+                      className="data-[state=checked]:bg-blue-600"
+                    />
+                    <Label htmlFor="input-mode" className="text-xs text-gray-500">
+                      Stereo
+                    </Label>
+                  </div>
+                </div>
+                
+                {/* Channel Selection */}
+                <div className="space-y-2">
+                  <Label className="text-sm text-gray-400">
+                    Input Channels ({inputMode === 'mono' ? 'Select 1' : 'Select 2'})
+                  </Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {inputMode === 'mono' ? (
+                      <Select
+                        value={selectedInputChannels[0]?.toString() || '0'}
+                        onValueChange={(value) => setSelectedInputChannels([parseInt(value)])}
+                      >
+                        <SelectTrigger className="bg-gray-800 border-gray-600 text-gray-100">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-gray-800 border-gray-600">
+                          {Array.from({ length: deviceInfo.total_channels }, (_, i) => (
+                            <SelectItem
+                              key={i}
+                              value={i.toString()}
+                              className="text-gray-100 hover:bg-gray-700"
+                            >
+                              {deviceInfo.channel_names[i] || `Input ${i + 1}`}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <>
+                        <Select
+                          value={selectedInputChannels[0]?.toString() || '0'}
+                          onValueChange={(value) => 
+                            setSelectedInputChannels([parseInt(value), selectedInputChannels[1] || 1])
+                          }
+                        >
+                          <SelectTrigger className="bg-gray-800 border-gray-600 text-gray-100">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-gray-800 border-gray-600">
+                            {Array.from({ length: deviceInfo.total_channels }, (_, i) => (
+                              <SelectItem
+                                key={i}
+                                value={i.toString()}
+                                className="text-gray-100 hover:bg-gray-700"
+                              >
+                                L: {deviceInfo.channel_names[i] || `Input ${i + 1}`}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={selectedInputChannels[1]?.toString() || '1'}
+                          onValueChange={(value) => 
+                            setSelectedInputChannels([selectedInputChannels[0] || 0, parseInt(value)])
+                          }
+                        >
+                          <SelectTrigger className="bg-gray-800 border-gray-600 text-gray-100">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-gray-800 border-gray-600">
+                            {Array.from({ length: deviceInfo.total_channels }, (_, i) => (
+                              <SelectItem
+                                key={i}
+                                value={i.toString()}
+                                className="text-gray-100 hover:bg-gray-700"
+                              >
+                                R: {deviceInfo.channel_names[i] || `Input ${i + 1}`}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="text-xs text-gray-500">
+                  Device: {deviceInfo.total_channels} channels @ {deviceInfo.sample_rate} Hz
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

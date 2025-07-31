@@ -1,13 +1,9 @@
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Music, Mic, Settings } from "lucide-react"
 
 interface DeviceStatusBarProps {
   onOpenSetup: () => void
   onOpenAudioSetup: () => void
-  selectedMidiDevice: string
-  selectedAudioInput: string
-  midiConnected: boolean
   getMidiDeviceName: () => string
   getAudioInputDeviceName: () => string
 }
@@ -15,9 +11,6 @@ interface DeviceStatusBarProps {
 export function DeviceStatusBar({ 
   onOpenSetup,
   onOpenAudioSetup,
-  selectedMidiDevice, 
-  selectedAudioInput, 
-  midiConnected, 
   getMidiDeviceName, 
   getAudioInputDeviceName 
 }: DeviceStatusBarProps) {
