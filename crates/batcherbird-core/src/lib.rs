@@ -7,6 +7,7 @@ pub mod midi;
 pub mod audio;
 pub mod device;
 pub mod session;
+pub mod session_manager;
 pub mod config;
 pub mod sampler;
 pub mod export;

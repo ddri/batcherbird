@@ -173,7 +173,6 @@ export default function App() {
     disarm,
     startCountdown,
     startRecording,
-    stopRecording,
     cancelCountdown,
     startPreview,
     stopPreview,
@@ -195,7 +194,7 @@ export default function App() {
     showError,
     showSuccess
   } = useNotifications()
-  const { waveformData, isLoading: waveformLoading, error: waveformError, loadWaveform, clearWaveform } = useWaveform()
+  const { waveformData, isLoading: waveformLoading, isTransitioning: waveformTransitioning, error: waveformError, clearWaveform, transitionToFilePlayback } = useWaveform()
   const { getLastRecordedSamplePath } = useLoopDetection()
   const { 
     isPlaying, 
@@ -313,17 +312,17 @@ export default function App() {
         console.log("🔄 Transitioning from real-time to file-based waveform...")
         stopRealTimeVisualization()
         
-        // Load waveform after successful recording
+        // Transition from recording to file playback
         try {
           console.log("🔍 Debug - Regular recording - About to call getLastRecordedSamplePath with:", { outputDirectory: capturedOutputDirectory, sampleName: capturedSampleName })
           const lastSamplePath = await getLastRecordedSamplePath(capturedOutputDirectory, capturedSampleName)
-          console.log("Loading waveform for:", lastSamplePath)
+          console.log("🔄 Transitioning to file playback for:", lastSamplePath)
           console.log("Output directory:", capturedOutputDirectory)
           console.log("Sample name:", capturedSampleName)
           
           setLastRecordedFile(lastSamplePath)
-          await loadWaveform(lastSamplePath)
-          console.log("Waveform loaded successfully")
+          await transitionToFilePlayback(lastSamplePath)
+          console.log("🌊 Waveform transition completed successfully")
           
           // Also load the file for playback
           await loadAudioFile(lastSamplePath)
@@ -335,12 +334,21 @@ export default function App() {
             "Recording Complete",
             `Sample recorded successfully. Press spacebar to play.`
           )
+          
+          // Recording completed successfully - update state
+          setIsRecording(false)
+          await disarm() // Return to idle state after successful recording
+          
         } catch (waveformError) {
           console.error("Failed to load waveform:", waveformError)
           showError(
             "Waveform Loading Failed",
             `Could not load waveform visualization: ${waveformError}. Recording saved successfully.`
           )
+          
+          // Even if waveform loading failed, recording was successful
+          setIsRecording(false)
+          await disarm() // Return to idle state after successful recording
         }
       } catch (error) {
         console.error("Recording failed:", error)
@@ -348,10 +356,11 @@ export default function App() {
           "Recording Failed",
           `Could not complete recording: ${error}. Check your audio interface and try again.`
         )
-      } finally {
-        setIsRecording(false)
-        stopRecording() // Return to armed state
         
+        // Only reset state on actual recording failure
+        setIsRecording(false)
+        await disarm() // Return to idle state on recording failure
+      } finally {
         // Ensure real-time visualization is stopped (safety cleanup)
         stopRealTimeVisualization()
       }
@@ -384,14 +393,27 @@ export default function App() {
         console.log("🔄 Range recording complete, stopping visualization...")
         stopRealTimeVisualization()
         
-        // TODO: Show success message to user
+        // Show success notification
+        showSuccess(
+          "Range Recording Complete",
+          `All samples recorded successfully.`
+        )
+        
+        // Recording completed successfully - update state
+        setIsRecording(false)
+        await disarm() // Return to idle state after successful recording
+        
       } catch (error) {
         console.error("Range recording failed:", error)
-        // TODO: Show error message to user
-      } finally {
-        setIsRecording(false)
-        stopRecording() // Return to armed state
+        showError(
+          "Range Recording Failed",
+          `Could not complete range recording: ${error}. Check your audio interface and try again.`
+        )
         
+        // Only reset state on actual recording failure
+        setIsRecording(false)
+        await disarm() // Return to idle state on recording failure
+      } finally {
         // Ensure real-time visualization is stopped (safety cleanup)
         stopRealTimeVisualization()
       }
@@ -413,7 +435,7 @@ export default function App() {
     try {
       // Stop recording immediately
       setIsRecording(false)
-      stopRecording() // Return to armed state
+      // Note: Don't disarm here - we want to stay in playback mode
       
       // Stop real-time visualization
       console.log("🔄 Stopping real-time visualization...")
@@ -443,10 +465,10 @@ export default function App() {
       await togglePlayPause()
       console.log("▶️ Started immediate playback")
       
-      // Load waveform in background (visual feedback)
+      // Transition waveform in background (visual feedback)
       setLastRecordedFile(lastSamplePath)
-      await loadWaveform(lastSamplePath)
-      console.log("📊 Waveform loaded")
+      await transitionToFilePlayback(lastSamplePath)
+      console.log("🌊 Waveform transition completed")
       
       console.log("✅ Seamless stop→play transition complete")
       
@@ -454,7 +476,7 @@ export default function App() {
       console.error("Failed to stop and play:", error)
       // Fallback to regular stop behavior
       setIsRecording(false)
-      stopRecording()
+      await disarm() // Return to idle state on failure
       stopRealTimeVisualization()
     }
   }
@@ -792,6 +814,7 @@ export default function App() {
                   <WaveformDisplay
                     waveformData={waveformData}
                     isLoading={waveformLoading}
+                    isTransitioning={waveformTransitioning}
                     error={waveformError}
                     fileName={lastRecordedFile?.split('/').pop()}
                     duration={waveformData ? `${waveformData.duration.toFixed(2)}s` : undefined}

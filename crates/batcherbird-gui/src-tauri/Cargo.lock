@@ -124,6 +124,7 @@ dependencies = [
  "log",
  "midir",
  "regex",
+ "rtrb",
  "serde",
  "serde_json",
  "tauri",
@@ -257,8 +258,10 @@ dependencies = [
  "anyhow",
  "chrono",
  "cpal",
+ "dirs 5.0.1",
  "hound",
  "midir",
+ "rtrb",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -3458,6 +3461,12 @@ dependencies = [
  "quote",
  "syn 1.0.109",
 ]
+
+[[package]]
+name = "rtrb"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad8388ea1a9e0ea807e442e8263a699e7edcb320ecbcd21b4fa8ff859acce3ba"
 
 [[package]]
 name = "rust_decimal"

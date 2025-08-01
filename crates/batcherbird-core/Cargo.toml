@@ -19,6 +19,7 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 rtrb = "0.3"
+dirs = "5.0"
 
 [features]
 default = []

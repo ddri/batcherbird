@@ -2,6 +2,14 @@
 
 ## Critical React State Management Lessons
 
+
+### Workflow
+
+  1. Check PRODUCTPLAN.md for current epic/task
+  2. Reference INFRA-RESEARCH.md for technical approach
+  3. Implement with your checkpoint questions
+  4. Update PRODUCTPLAN.md with progress
+
 ### Always Check: Props vs Local State
 - **Props named "initial*" are meant to set initial values, then become local state**
 - **Controlled components need BOTH `value` and `onChange` handlers**
@@ -30,3 +38,45 @@ Before writing any interactive component, ask:
 - GUI: React + TypeScript + Tauri in `crates/batcherbird-gui/`
 - Run development: `npm run dev` (from GUI directory)
 - MIDI device selection state is managed in App.tsx and passed down to components
+
+
+
+# AUDIO APPLICATION DEVELOPMENT RULES
+
+  ## Real-Time Audio Architecture
+  - NEVER use Tauri events for high-frequency data
+  streaming (causes crashes)
+  - ALWAYS use Tauri channels for streaming audio
+  visualization data
+  - FOLLOW the 3-thread pattern: UI Thread, Audio Thread,
+   Visualization Thread
+  - USE lock-free ring buffers (rtrb crate) between audio
+   callback and visualization
+  - KEEP audio thread work minimal (only peak/RMS
+  calculation, never blocking operations)
+
+  ## Audio Thread Safety
+  - NEVER allocate memory in audio callbacks
+  - NEVER use Arc<Mutex> in audio callbacks (use
+  lock-free structures)
+  - ALWAYS use try_push/try_pop on ring buffers (never
+  blocking variants)
+  - CALCULATE visualization data in audio thread, SEND
+  via separate thread
+
+  ## Rust Audio Stack
+  - USE rtrb crate for real-time ring buffers
+  - USE CPAL for audio I/O (single stream for recording +
+   visualization)
+  - AVOID Web Audio API entirely in favor of native Rust
+  processing
+  - PREFER bounded channels with appropriate buffer sizes
+
+  ## Implementation Order
+  - ALWAYS implement backend streaming first, then
+  frontend consumption
+  - START with simple peak/RMS data before complex
+  waveform visualization
+  - TEST ring buffer performance separately before
+  integrating with Tauri
+  - VERIFY no audio dropouts before adding UI features

@@ -28,6 +28,7 @@ tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 batcherbird-core = { path = "../../batcherbird-core" }
 midir = "0.10"
+rtrb = "0.3"
 tokio = { version = "1.35", features = ["time"] }
 dirs = "5.0"
 cpal = "0.15"

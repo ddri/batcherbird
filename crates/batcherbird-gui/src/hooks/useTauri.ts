@@ -526,13 +526,15 @@ export function useFileSystem() {
   }
 }
 
-// Waveform Visualization
+// Waveform Visualization with Transition Management
 export function useWaveform() {
   const [waveformData, setWaveformData] = useState<WaveformData | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isTransitioning, setIsTransitioning] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const loadWaveform = useCallback(async (filePath: string, resolution?: number) => {
+    console.log('🌊 Loading waveform for:', filePath)
     setIsLoading(true)
     setError(null)
     try {
@@ -540,11 +542,16 @@ export function useWaveform() {
         filePath,
         resolution
       })
+      console.log('🌊 Waveform loaded successfully:', { 
+        duration: data.duration, 
+        channels: data.channels, 
+        peaksLength: data.peaks.positive.length 
+      })
       setWaveformData(data)
       return data
     } catch (err) {
       setError(err as string)
-      console.error('Failed to load waveform:', err)
+      console.error('❌ Failed to load waveform:', err)
       throw err
     } finally {
       setIsLoading(false)
@@ -556,12 +563,40 @@ export function useWaveform() {
     setError(null)
   }, [])
 
+  // Transition from recording to file playback
+  const transitionToFilePlayback = useCallback(async (filePath: string, resolution?: number) => {
+    console.log('🔄 Transitioning from recording to file playback:', filePath)
+    setIsTransitioning(true)
+    setError(null)
+    
+    try {
+      // Clear any existing waveform data first
+      setWaveformData(null)
+      
+      // Small delay to ensure real-time visualization has stopped
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      // Load the file waveform
+      const data = await loadWaveform(filePath, resolution)
+      
+      console.log('✅ Transition to file playback complete')
+      return data
+    } catch (err) {
+      console.error('❌ Failed to transition to file playback:', err)
+      throw err
+    } finally {
+      setIsTransitioning(false)
+    }
+  }, [loadWaveform])
+
   return {
     waveformData,
     isLoading,
+    isTransitioning,
     error,
     loadWaveform,
-    clearWaveform
+    clearWaveform,
+    transitionToFilePlayback
   }
 }
 
