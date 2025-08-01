@@ -12,8 +12,15 @@ import { DeviceStatusBar } from "@/components/DeviceStatusBar"
 import { SetupModal } from "@/components/SetupModal"
 import { WaveformDisplay } from "@/components/WaveformDisplay"
 import { LevelMeter } from "@/components/LevelMeter"
+import { GainStagingHelper } from "@/components/GainStagingHelper"
 import { useRecording, useFileSystem, useWaveform, useLoopDetection, useAudioPlayback, useMidiDevices, useAudioInputDevices, useAudioOutputDevices, useDeviceConnection, useRealTimeVisualization } from "@/hooks/useTauri"
 import { useRecordingState } from "@/hooks/useRecordingState"
+import { useRecordingCountdown } from "@/hooks/useRecordingCountdown"
+import { useNotifications } from "@/hooks/useNotifications"
+// import { useSessionManager } from "@/hooks/useSession"
+import { RecordingCountdown } from "@/components/RecordingCountdown"
+import { NotificationDisplay } from "@/components/NotificationDisplay"
+import { SessionInitializationWizard } from "@/components/SessionInitializationWizard-Simple"
 import {
   Play,
   Square,
@@ -25,6 +32,19 @@ import {
 
 
 export default function App() {
+  // Professional session management - temporarily disabled until types are fixed
+  // const { 
+  //   isInitialized: sessionInitialized, 
+  //   sessionState, 
+  //   // currentSession, 
+  //   // canRecord: sessionCanRecord,
+  //   // error: sessionError 
+  // } = useSessionManager()
+  
+  // Session initialization wizard state
+  const [showSessionWizard, setShowSessionWizard] = useState(false)
+  const [sessionInitialized, setSessionInitialized] = useState(false)
+  
   // Recording state
   const [isRecording, setIsRecording] = useState(false)
   const [recordingProgress] = useState(0)
@@ -38,7 +58,7 @@ export default function App() {
   const [detectionThreshold, setDetectionThreshold] = useState([-35])
   const [sampleName, setSampleName] = useState("Roland-EM1018")
   const [outputDirectory, setOutputDirectory] = useState("/Users/dryan/Desktop/Batch")
-  const [exportFormat, setExportFormat] = useState("dspreset")
+  const [exportFormat, setExportFormat] = useState("wav24")
   const [creatorName, setCreatorName] = useState("")
   const [instrumentDescription, setInstrumentDescription] = useState("")
   const [recordingMode, setRecordingMode] = useState("single")
@@ -51,7 +71,7 @@ export default function App() {
   
   // Tauri hooks
   const { recordSample, recordRange, previewNote, isRecording: backendRecording } = useRecording()
-  const { selectOutputDirectory } = useFileSystem()
+  const { selectOutputDirectory, createDirectory } = useFileSystem()
   
   // Device hooks
   const { devices: midiDevices, loadDevices: loadMidiDevices, isLoading: midiLoading } = useMidiDevices()
@@ -70,6 +90,14 @@ export default function App() {
     loadAudioInputDevices()
     loadAudioOutputDevices()
   }, [loadMidiDevices, loadAudioInputDevices, loadAudioOutputDevices])
+
+  // Check if session initialization is needed
+  useEffect(() => {
+    if (!sessionInitialized && !showSessionWizard) {
+      console.log('🎛️ Session not initialized, showing setup wizard')
+      setShowSessionWizard(true)
+    }
+  }, [sessionInitialized, showSessionWizard])
 
   // Load device preferences from localStorage and auto-select + auto-connect
   useEffect(() => {
@@ -139,16 +167,34 @@ export default function App() {
     canRecord,
     canArm,
     canDisarm,
+    isCountingDown,
     showLevelMeter,
     arm,
     disarm,
+    startCountdown,
     startRecording,
     stopRecording,
+    cancelCountdown,
     startPreview,
     stopPreview,
     getStateDisplayText,
     getStateColor
   } = useRecordingState()
+
+  // Professional countdown system
+  const {
+    countdownState,
+    startCountdown: startCountdownTimer,
+    cancelCountdown: cancelCountdownTimer
+  } = useRecordingCountdown()
+
+  // Professional notification system
+  const {
+    notifications,
+    removeNotification,
+    showError,
+    showSuccess
+  } = useNotifications()
   const { waveformData, isLoading: waveformLoading, error: waveformError, loadWaveform, clearWaveform } = useWaveform()
   const { getLastRecordedSamplePath } = useLoopDetection()
   const { 
@@ -170,6 +216,37 @@ export default function App() {
   // Track the last recorded file
   const [lastRecordedFile, setLastRecordedFile] = useState<string | null>(null)
 
+  // Keyboard shortcuts for professional workflow
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Prevent shortcuts when typing in inputs
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+        return
+      }
+
+      // ESC cancels countdown
+      if (event.key === 'Escape' && isCountingDown) {
+        event.preventDefault()
+        cancelCountdownTimer()
+        cancelCountdown()
+        return
+      }
+
+      // Spacebar for play/pause (universal professional standard)
+      if (event.key === ' ') {
+        event.preventDefault()
+        if (lastRecordedFile) {
+          togglePlayPause()
+          console.log('🎹 Spacebar: Toggle play/pause')
+        }
+        return
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isCountingDown, cancelCountdownTimer, cancelCountdown, lastRecordedFile, togglePlayPause])
+
   // Handlers
 
   
@@ -182,6 +259,30 @@ export default function App() {
       console.warn("Cannot record - not armed")
       return
     }
+
+    // Professional countdown before recording (2 seconds like Pro Tools)
+    startCountdown()
+    
+    try {
+      await startCountdownTimer(2000) // 2 second countdown
+    } catch (error) {
+      console.log("Countdown cancelled")
+      cancelCountdown()
+      return
+    }
+
+    // Capture state values to avoid race conditions during recording
+    const capturedOutputDirectory = outputDirectory
+    const capturedSampleName = sampleName
+    const capturedExportFormat = exportFormat
+    const capturedCreatorName = creatorName
+    const capturedInstrumentDescription = instrumentDescription
+    
+    console.log('🎤 Recording with values:', {
+      capturedOutputDirectory,
+      capturedSampleName,
+      sessionInitialized
+    })
 
     if (recordingMode === "single") {
       try {
@@ -200,11 +301,11 @@ export default function App() {
           parseInt(selectedNote),
           selectedVelocity[0],
           selectedDuration[0],
-          outputDirectory,
-          sampleName,
-          exportFormat,
-          creatorName,
-          instrumentDescription
+          capturedOutputDirectory,
+          capturedSampleName,
+          capturedExportFormat,
+          capturedCreatorName,
+          capturedInstrumentDescription
         )
         console.log("Recording complete:", result)
         
@@ -214,13 +315,11 @@ export default function App() {
         
         // Load waveform after successful recording
         try {
-          // Add a small delay to ensure file is written
-          await new Promise(resolve => setTimeout(resolve, 500))
-          
-          const lastSamplePath = await getLastRecordedSamplePath(outputDirectory, sampleName)
+          console.log("🔍 Debug - Regular recording - About to call getLastRecordedSamplePath with:", { outputDirectory: capturedOutputDirectory, sampleName: capturedSampleName })
+          const lastSamplePath = await getLastRecordedSamplePath(capturedOutputDirectory, capturedSampleName)
           console.log("Loading waveform for:", lastSamplePath)
-          console.log("Output directory:", outputDirectory)
-          console.log("Sample name:", sampleName)
+          console.log("Output directory:", capturedOutputDirectory)
+          console.log("Sample name:", capturedSampleName)
           
           setLastRecordedFile(lastSamplePath)
           await loadWaveform(lastSamplePath)
@@ -230,13 +329,25 @@ export default function App() {
           await loadAudioFile(lastSamplePath)
           console.log("Audio file loaded for playback")
           console.log("✅ Smooth transition to playback mode complete")
+          
+          // Show success notification
+          showSuccess(
+            "Recording Complete",
+            `Sample recorded successfully. Press spacebar to play.`
+          )
         } catch (waveformError) {
           console.error("Failed to load waveform:", waveformError)
-          alert(`Failed to load waveform: ${waveformError}`)
+          showError(
+            "Waveform Loading Failed",
+            `Could not load waveform visualization: ${waveformError}. Recording saved successfully.`
+          )
         }
       } catch (error) {
         console.error("Recording failed:", error)
-        // TODO: Show error message to user
+        showError(
+          "Recording Failed",
+          `Could not complete recording: ${error}. Check your audio interface and try again.`
+        )
       } finally {
         setIsRecording(false)
         stopRecording() // Return to armed state
@@ -261,11 +372,11 @@ export default function App() {
           parseInt(endNote),
           selectedVelocity[0],
           selectedDuration[0],
-          outputDirectory,
-          sampleName,
-          exportFormat,
-          creatorName,
-          instrumentDescription
+          capturedOutputDirectory,
+          capturedSampleName,
+          capturedExportFormat,
+          capturedCreatorName,
+          capturedInstrumentDescription
         )
         console.log("Range recording complete:", result)
         
@@ -284,6 +395,67 @@ export default function App() {
         // Ensure real-time visualization is stopped (safety cleanup)
         stopRealTimeVisualization()
       }
+    }
+  }
+
+  const handleStopAndPlay = async () => {
+    console.log("🎵 Stopping recording and starting playback (Ableton-style)")
+    
+    // Capture state values immediately to avoid race conditions
+    const capturedSampleName = sampleName
+    const capturedOutputDirectory = outputDirectory
+    
+    console.log("🔍 Debug - Captured sampleName:", capturedSampleName)
+    console.log("🔍 Debug - Captured outputDirectory:", capturedOutputDirectory)
+    console.log("🔍 Debug - Current sampleName:", sampleName)
+    console.log("🔍 Debug - Current outputDirectory:", outputDirectory)
+    
+    try {
+      // Stop recording immediately
+      setIsRecording(false)
+      stopRecording() // Return to armed state
+      
+      // Stop real-time visualization
+      console.log("🔄 Stopping real-time visualization...")
+      stopRealTimeVisualization()
+      
+      // Get the recorded file path immediately
+      let lastSamplePath: string
+      try {
+        console.log("🔍 Debug - About to call getLastRecordedSamplePath with:", { outputDirectory: capturedOutputDirectory, sampleName: capturedSampleName })
+        lastSamplePath = await getLastRecordedSamplePath(capturedOutputDirectory, capturedSampleName)
+        console.log("📁 Loading recorded sample:", lastSamplePath)
+      } catch (pathError) {
+        console.error("Failed to find recorded sample:", pathError)
+        console.error("🔍 Debug - pathError details:", pathError)
+        showError(
+          "File Not Found",
+          `Could not locate the recorded sample. Check your output directory: ${capturedOutputDirectory}`
+        )
+        return
+      }
+      
+      // Load for playback FIRST (immediate audio feedback)
+      await loadAudioFile(lastSamplePath)
+      console.log("🎵 Audio loaded for playback")
+      
+      // Start playback immediately (Ableton-style)
+      await togglePlayPause()
+      console.log("▶️ Started immediate playback")
+      
+      // Load waveform in background (visual feedback)
+      setLastRecordedFile(lastSamplePath)
+      await loadWaveform(lastSamplePath)
+      console.log("📊 Waveform loaded")
+      
+      console.log("✅ Seamless stop→play transition complete")
+      
+    } catch (error) {
+      console.error("Failed to stop and play:", error)
+      // Fallback to regular stop behavior
+      setIsRecording(false)
+      stopRecording()
+      stopRealTimeVisualization()
     }
   }
 
@@ -313,7 +485,10 @@ export default function App() {
     } catch (error) {
       console.error("Preview failed:", error)
       await stopPreview() // Cleanup on error
-      alert(`Preview failed: ${error}`)
+      showError(
+        "Preview Failed", 
+        `Could not preview note: ${error}. Check your MIDI and audio connections.`
+      )
     }
   }
 
@@ -380,8 +555,21 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
         {/* Main Content */}
         <div className="flex-1 flex flex-col">
+          {/* Session Status Indicator */}
+          {sessionInitialized && (
+            <div className="bg-green-900/20 border-b border-green-600/30 px-8 py-2">
+              <div className="flex items-center space-x-2 text-sm">
+                <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                <span className="text-green-200">Session: {sampleName}</span>
+                <span className="text-gray-400">•</span>
+                <span className="text-green-200">Output: {outputDirectory}</span>
+              </div>
+            </div>
+          )}
+          
           {/* Main Recording Interface */}
-          <div className="flex-1 p-8 overflow-auto">
+          {sessionInitialized ? (
+            <div className="flex-1 p-8 overflow-auto">
             <div className="max-w-5xl mx-auto space-y-8">
 
               {/* Recording Mode Selection */}
@@ -622,8 +810,13 @@ export default function App() {
                 <CardContent className="pt-8">
                   {/* ARM State and Level Meter */}
                   {showLevelMeter && (
-                    <div className="mb-6 p-4 bg-gray-800 rounded-lg border border-yellow-600/30">
-                      <LevelMeter isVisible={showLevelMeter} />
+                    <div className="mb-6 space-y-4">
+                      <div className="p-4 bg-gray-800 rounded-lg border border-yellow-600/30">
+                        <LevelMeter isVisible={showLevelMeter} />
+                      </div>
+                      
+                      {/* Professional Gain Staging Helper */}
+                      <GainStagingHelper isVisible={showLevelMeter} />
                     </div>
                   )}
 
@@ -665,17 +858,17 @@ export default function App() {
                           Preview
                         </Button>
 
-                        {/* Record Button */}
+                        {/* Record Button - Ableton-style seamless record/stop */}
                         <Button
-                          onClick={handleRecord}
+                          onClick={actuallyRecording ? handleStopAndPlay : handleRecord}
                           size="lg"
                           className={`${actuallyRecording ? "bg-red-600 hover:bg-red-700 text-white" : "bg-gray-200 hover:bg-gray-300 text-gray-900"}`}
-                          disabled={!canRecord || (actuallyRecording && recordingMode === "range")}
+                          disabled={!canRecord && !actuallyRecording}
                         >
                           {actuallyRecording ? (
                             <>
                               <Square className="w-5 h-5 mr-2" />
-                              {recordingMode === "range" ? "Recording Range..." : "Stop Recording"}
+                              {recordingMode === "range" ? "Stop & Export" : "Stop & Play"}
                             </>
                           ) : (
                             <>
@@ -697,7 +890,10 @@ export default function App() {
                     <div className="text-right">
                       <div className={`text-sm ${getStateColor()}`}>{getStateDisplayText()}</div>
                       <div className="text-xs text-gray-300">
-                        {velocityLayers.length} velocity layers • {recordingMode === 'single' ? 'Single note' : 'Range recording'}
+                        {recordingMode === 'single' 
+                          ? 'Single note' 
+                          : `${velocityLayers.length} velocity layers • Range recording`
+                        }
                         {!canRecord && recordingState === 'idle' && ' • ARM to record'}
                       </div>
                     </div>
@@ -714,7 +910,20 @@ export default function App() {
                 </CardContent>
               </Card>
             </div>
-          </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center space-y-4">
+                <div className="w-16 h-16 bg-gray-600 rounded-full flex items-center justify-center mx-auto">
+                  <Play className="w-8 h-8 text-gray-400" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-gray-300 mb-2">Session Initialization Required</h3>
+                  <p className="text-gray-500">Please complete the setup wizard to start recording.</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right Sidebar */}
@@ -758,11 +967,17 @@ export default function App() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="bg-gray-800 border-gray-600">
-                      <SelectItem value="decentsampler" className="text-gray-100 hover:bg-gray-700">
+                      <SelectItem value="dspreset" className="text-gray-100 hover:bg-gray-700">
                         Decent Sampler (.dspreset)
                       </SelectItem>
-                      <SelectItem value="wav" className="text-gray-100 hover:bg-gray-700">
-                        WAV Files Only
+                      <SelectItem value="wav24" className="text-gray-100 hover:bg-gray-700">
+                        WAV 24-bit
+                      </SelectItem>
+                      <SelectItem value="wav16" className="text-gray-100 hover:bg-gray-700">
+                        WAV 16-bit
+                      </SelectItem>
+                      <SelectItem value="wav32" className="text-gray-100 hover:bg-gray-700">
+                        WAV 32-bit Float
                       </SelectItem>
                       <SelectItem value="sfz" className="text-gray-100 hover:bg-gray-700">
                         SFZ (.sfz)
@@ -869,6 +1084,54 @@ export default function App() {
         setSelectedAudioOutput={handleAudioOutputChange}
         handleMidiDeviceChange={handleMidiDeviceChange}
         midiConnected={midiConnected}
+      />
+      
+      {/* Professional Notification System */}
+      <NotificationDisplay
+        notifications={notifications}
+        onRemove={removeNotification}
+      />
+      
+      {/* Professional Recording Countdown Overlay */}
+      <RecordingCountdown
+        isCountingDown={countdownState.isCountingDown}
+        countdownValue={countdownState.countdownValue}
+        totalDuration={countdownState.totalDuration}
+      />
+      
+      {/* Professional Session Initialization Wizard */}
+      <SessionInitializationWizard
+        isOpen={showSessionWizard}
+        onClose={() => setShowSessionWizard(false)}
+        onComplete={async (sessionData) => {
+          console.log('✅ Session initialization completed with data:', sessionData)
+          
+          // Create full project path: outputDirectory/projectName
+          const fullProjectPath = `${sessionData.outputDirectory}/${sessionData.projectName}`
+          
+          try {
+            // Create the project directory
+            await createDirectory(fullProjectPath)
+            console.log('📁 Project directory created:', fullProjectPath)
+          } catch (error) {
+            console.error('❌ Failed to create project directory:', error)
+            // Continue anyway - the recording system will try to create it
+          }
+          
+          // Apply session data to the recording interface
+          setSampleName(sessionData.projectName)
+          setOutputDirectory(fullProjectPath)
+          
+          // Set professional defaults for session-based recording
+          setExportFormat("all") // Default to "All Formats" for professional workflow
+          
+          // Session is now initialized
+          setSessionInitialized(true)
+          setShowSessionWizard(false)
+          
+          console.log('🎤 Recording interface is now ready!')
+          console.log('📁 Project directory:', fullProjectPath)
+        }}
       />
     </div>
   )

@@ -5,6 +5,8 @@ use batcherbird_core::{
     export::{SampleExporter, ExportConfig, AudioFormat},
     loop_detection::LoopDetectionConfig,
     playback::AudioPlayback,
+    session::{SessionConfig, ValidationReport},
+    session_manager::{SessionManager, DeviceTestResult},
 };
 use midir::MidiOutputConnection;
 use std::sync::{Mutex, Arc};
@@ -71,6 +73,9 @@ static MONITORING_THREAD: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::ne
 
 // Audio playback state (following existing patterns)
 static AUDIO_PLAYBACK: Mutex<Option<Arc<AudioPlayback>>> = Mutex::new(None);
+
+// Professional session management (new architecture)
+static SESSION_MANAGER: Mutex<Option<SessionManager>> = Mutex::new(None);
 
 
 /// Start audio input monitoring (simplified professional approach)
@@ -667,6 +672,31 @@ async fn preview_note(note: u8, velocity: u8, duration: u32) -> Result<String, S
 }
 
 #[tauri::command]
+fn create_directory(path: String) -> Result<bool, String> {
+    println!("📁 Creating directory: {}", path);
+    
+    use std::path::Path;
+    
+    let dir_path = Path::new(&path);
+    
+    if dir_path.exists() {
+        println!("✅ Directory already exists: {}", path);
+        return Ok(true);
+    }
+    
+    match std::fs::create_dir_all(dir_path) {
+        Ok(_) => {
+            println!("✅ Successfully created directory: {}", path);
+            Ok(true)
+        },
+        Err(e) => {
+            println!("❌ Failed to create directory: {} - Error: {}", path, e);
+            Err(format!("Failed to create directory '{}': {}", path, e))
+        }
+    }
+}
+
+#[tauri::command]
 async fn select_output_directory(app: tauri::AppHandle) -> Result<String, String> {
     use tauri_plugin_dialog::DialogExt;
     use std::sync::mpsc;
@@ -873,11 +903,11 @@ fn record_sample_with_viz(
     note: u8, 
     velocity: u8, 
     duration: u32, 
-    _output_directory: Option<String>, 
-    _sample_name: Option<String>, 
-    _export_format: Option<String>, 
-    _creator_name: Option<String>, 
-    _instrument_description: Option<String>
+    output_directory: Option<String>, 
+    sample_name: Option<String>, 
+    export_format: Option<String>, 
+    creator_name: Option<String>, 
+    instrument_description: Option<String>
 ) -> Result<String, String> {
     println!("🎛️ GUI: Recording sample with real-time visualization (note: {}, velocity: {}, duration: {}ms)", note, velocity, duration);
     
@@ -959,10 +989,95 @@ fn record_sample_with_viz(
     // Step 5: Wait for result and handle export (same as original record_sample)
     match rx.recv().unwrap() {
         Ok(recorded_sample) => {
-            // Handle export logic (same as original record_sample)
-            // ... [export logic would go here] ...
+            println!("✅ GUI: Core Audio Engine completed recording successfully");
+            println!("📊 GUI: Received {} samples from Core Engine", recorded_sample.audio_data.len());
             
-            let success_message = format!("Recording with visualization saved: {} samples", recorded_sample.audio_data.len());
+            // Step 4: Handle export with metadata support
+            println!("🎤 Recording with values: output_directory={:?}, sample_name={:?}, export_format={:?}", output_directory, sample_name, export_format);
+            
+            let output_dir = if let Some(dir) = output_directory {
+                if dir.trim().is_empty() {
+                    // Use Desktop/Batcherbird Samples when field is empty
+                    println!("⚠️ Empty output directory provided, using fallback");
+                    dirs::desktop_dir()
+                        .map(|desktop| desktop.join("Batcherbird Samples"))
+                        .unwrap_or_else(|| std::path::PathBuf::from("samples"))
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    println!("✅ Using session-initialized directory: {}", dir);
+                    dir
+                }
+            } else {
+                // Default to Desktop/Batcherbird Samples
+                println!("⚠️ No output directory provided, using fallback");
+                dirs::desktop_dir()
+                    .map(|desktop| desktop.join("Batcherbird Samples"))
+                    .unwrap_or_else(|| std::path::PathBuf::from("samples"))
+                    .to_string_lossy()
+                    .to_string()
+            };
+            
+            let mut output_path = std::path::PathBuf::from(&output_dir);
+            
+            // Create subfolder if sample name is provided (professional organization)
+            if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
+                output_path = output_path.join(name.trim());
+                println!("📁 GUI: Creating subfolder for sample: {}", name.trim());
+            }
+            
+            // Ensure output directory exists (including subfolder)
+            if let Err(e) = std::fs::create_dir_all(&output_path) {
+                println!("❌ GUI: Failed to create output directory: {}", e);
+                return Err(format!("Failed to create output directory '{}': {}", output_path.display(), e));
+            }
+            
+            println!("📁 GUI: Using output directory: {}", output_path.display());
+            
+            // Build naming pattern with optional sample name prefix
+            let naming_pattern = if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
+                format!("{}_{{note_name}}_{{note}}_{{velocity}}.wav", name.trim())
+            } else {
+                "{note_name}_{note}_{velocity}.wav".to_string()
+            };
+            
+            // Determine export format based on user selection
+            let sample_format = match export_format.as_deref() {
+                Some("wav16") => AudioFormat::Wav16Bit,
+                Some("wav24") => AudioFormat::Wav24Bit,
+                Some("wav32") => AudioFormat::Wav32BitFloat,
+                Some("dspreset") => AudioFormat::DecentSampler,
+                Some("sfz") => AudioFormat::SFZ,
+                Some("all") => AudioFormat::Wav24Bit, // All formats - start with 24-bit WAV, additional formats generated later
+                _ => AudioFormat::Wav24Bit, // Default to 24-bit WAV
+            };
+            
+            let export_config = ExportConfig {
+                output_directory: output_path,
+                naming_pattern,
+                sample_format,
+                normalize: false, // Preserve original dynamics from core
+                fade_in_ms: 0.0,
+                fade_out_ms: 10.0,
+                apply_detection: true, // Enable detection by default
+                detection_config: Default::default(),
+                creator_name: creator_name.clone(),
+                instrument_description: instrument_description.clone(),
+            };
+            
+            println!("🔧 GUI: Creating sample exporter...");
+            let exporter = SampleExporter::new(export_config).map_err(|e| {
+                println!("❌ GUI: Failed to create exporter: {}", e);
+                format!("Failed to create sample exporter: {}", e)
+            })?;
+            
+            println!("💾 GUI: Exporting sample (WAV only)...");
+            let file_path = exporter.export_sample(&recorded_sample).map_err(|e| {
+                println!("❌ GUI: Export failed: {}", e);
+                format!("Failed to export sample: {}", e)
+            })?;
+            
+            let success_message = format!("Sample with visualization recorded and saved to: {}", file_path.display());
             println!("✅ GUI: {}", success_message);
             Ok(success_message)
         }
@@ -1852,6 +1967,206 @@ fn get_audio_device_info(device_index: usize) -> Result<AudioDeviceInfo, String>
     })
 }
 
+/// Initialize professional session management
+#[tauri::command]
+fn initialize_session_manager() -> Result<String, String> {
+    println!("🎛️ Initializing professional session manager");
+    
+    let mut manager_guard = SESSION_MANAGER.lock().unwrap();
+    if manager_guard.is_some() {
+        return Ok("Session manager already initialized".to_string());
+    }
+    
+    match SessionManager::new() {
+        Ok(mut manager) => {
+            // Update available devices in the validator
+            let audio_inputs = list_audio_input_devices_sync().unwrap_or_default();
+            let audio_outputs = list_audio_output_devices_sync().unwrap_or_default(); 
+            let midi_devices = list_midi_devices_sync().unwrap_or_default();
+            
+            manager.config_validator.update_available_devices(
+                audio_inputs,
+                audio_outputs, 
+                midi_devices
+            );
+            
+            *manager_guard = Some(manager);
+            println!("✅ Session manager initialized successfully");
+            Ok("Session manager initialized".to_string())
+        }
+        Err(e) => {
+            println!("❌ Failed to initialize session manager: {}", e);
+            Err(format!("Failed to initialize session manager: {}", e))
+        }
+    }
+}
+
+/// Validate session configuration before initialization
+#[tauri::command]
+fn validate_session_config(config: SessionConfig) -> Result<ValidationReport, String> {
+    println!("🔍 Validating session configuration: {}", config.project_name);
+    
+    let manager_guard = SESSION_MANAGER.lock().unwrap();
+    let manager = manager_guard.as_ref()
+        .ok_or_else(|| "Session manager not initialized".to_string())?;
+    
+    match manager.config_validator.validate_session_config(&config) {
+        Ok(report) => {
+            println!("📋 Validation complete: {} errors, {} warnings", report.errors.len(), report.warnings.len());
+            Ok(report)
+        }
+        Err(e) => {
+            println!("❌ Validation failed: {}", e);
+            Err(format!("Validation failed: {}", e))
+        }
+    }
+}
+
+/// Test device connectivity before session initialization
+#[tauri::command]
+fn test_device_connectivity(config: SessionConfig) -> Result<DeviceTestResult, String> {
+    println!("🔍 Testing device connectivity for session: {}", config.project_name);
+    
+    let manager_guard = SESSION_MANAGER.lock().unwrap();
+    let manager = manager_guard.as_ref()
+        .ok_or_else(|| "Session manager not initialized".to_string())?;
+    
+    match manager.test_device_connectivity(&config) {
+        Ok(test_result) => {
+            println!("🧪 Device test complete: overall success = {}", test_result.overall_success);
+            Ok(test_result)
+        }
+        Err(e) => {
+            println!("❌ Device test failed: {}", e);
+            Err(format!("Device test failed: {}", e))
+        }
+    }
+}
+
+/// Initialize a new professional session
+#[tauri::command]
+fn initialize_session(config: SessionConfig) -> Result<String, String> {
+    println!("🎛️ Initializing professional session: {}", config.project_name);
+    
+    let mut manager_guard = SESSION_MANAGER.lock().unwrap();
+    let manager = manager_guard.as_mut()
+        .ok_or_else(|| "Session manager not initialized".to_string())?;
+    
+    match manager.initialize_session(config.clone()) {
+        Ok(_) => {
+            println!("✅ Session '{}' initialized successfully", config.project_name);
+            Ok(format!("Session '{}' ready for recording", config.project_name))
+        }
+        Err(e) => {
+            println!("❌ Session initialization failed: {}", e);
+            Err(format!("Session initialization failed: {}", e))
+        }
+    }
+}
+
+/// Get current session state
+#[tauri::command]
+fn get_session_state() -> Result<String, String> {
+    let manager_guard = SESSION_MANAGER.lock().unwrap();
+    if let Some(manager) = manager_guard.as_ref() {
+        let state = manager.get_session_state();
+        Ok(format!("{:?}", state))
+    } else {
+        Ok("Uninitialized".to_string())
+    }
+}
+
+/// Check if session is ready for recording
+#[tauri::command]
+fn can_record() -> Result<bool, String> {
+    let manager_guard = SESSION_MANAGER.lock().unwrap();
+    if let Some(manager) = manager_guard.as_ref() {
+        match manager.validate_recording_state() {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    } else {
+        Ok(false)
+    }
+}
+
+/// Get default session configuration
+#[tauri::command]
+fn get_default_session_config() -> Result<SessionConfig, String> {
+    use batcherbird_core::session::*;
+    use std::time::SystemTime;
+    
+    let default_config = SessionConfig {
+        project_name: format!("New Project {}", chrono::Utc::now().format("%Y-%m-%d %H-%M")),
+        project_directory: dirs::document_dir()
+            .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from(".")))
+            .join("BatcherBird Projects"),
+        audio: AudioSessionConfig::default(),
+        midi: MidiSessionConfig::default(),
+        recording: RecordingSessionConfig::default(),
+        export: ExportSessionConfig::default(),
+        created_at: SystemTime::now(),
+    };
+    
+    Ok(default_config)
+}
+
+/// Save session configuration as template
+#[tauri::command]
+fn save_session_template(name: String, config: SessionConfig) -> Result<String, String> {
+    println!("💾 Saving session template: {}", name);
+    
+    let mut manager_guard = SESSION_MANAGER.lock().unwrap();
+    let manager = manager_guard.as_mut()
+        .ok_or_else(|| "Session manager not initialized".to_string())?;
+    
+    match manager.save_session_template(name.clone(), config) {
+        Ok(_) => Ok(format!("Template '{}' saved successfully", name)),
+        Err(e) => Err(format!("Failed to save template: {}", e)),
+    }
+}
+
+/// Load session template
+#[tauri::command]
+fn load_session_template(name: String) -> Result<SessionConfig, String> {
+    println!("📂 Loading session template: {}", name);
+    
+    let manager_guard = SESSION_MANAGER.lock().unwrap();
+    let manager = manager_guard.as_ref()
+        .ok_or_else(|| "Session manager not initialized".to_string())?;
+    
+    match manager.load_session_template(&name) {
+        Some(config) => Ok(config.clone()),
+        None => Err(format!("Template '{}' not found", name)),
+    }
+}
+
+/// List available session templates
+#[tauri::command]
+fn list_session_templates() -> Result<Vec<String>, String> {
+    let manager_guard = SESSION_MANAGER.lock().unwrap();
+    let manager = manager_guard.as_ref()
+        .ok_or_else(|| "Session manager not initialized".to_string())?;
+    
+    Ok(manager.list_session_templates())
+}
+
+// Helper functions for device listing (synchronous versions)
+fn list_audio_input_devices_sync() -> Result<Vec<String>, String> {
+    let audio_manager = AudioManager::new().map_err(|e| e.to_string())?;
+    audio_manager.list_input_devices().map_err(|e| e.to_string())
+}
+
+fn list_audio_output_devices_sync() -> Result<Vec<String>, String> {
+    let audio_manager = AudioManager::new().map_err(|e| e.to_string())?;
+    audio_manager.list_output_devices().map_err(|e| e.to_string())
+}
+
+fn list_midi_devices_sync() -> Result<Vec<String>, String> {
+    let mut midi_manager = MidiManager::new().map_err(|e| e.to_string())?;
+    midi_manager.list_output_devices().map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -1868,6 +2183,7 @@ pub fn run() {
       test_viz_throughput,
       record_range,
       generate_instrument_files,
+      create_directory,
       select_output_directory,
       show_samples_in_finder,
       send_midi_panic,
@@ -1887,7 +2203,18 @@ pub fn run() {
       seek_playback,
       get_playback_position,
       is_playing,
-      get_audio_device_info
+      get_audio_device_info,
+      // Professional session management commands
+      initialize_session_manager,
+      validate_session_config,
+      test_device_connectivity,
+      initialize_session,
+      get_session_state,
+      can_record,
+      get_default_session_config,
+      save_session_template,
+      load_session_template,
+      list_session_templates
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

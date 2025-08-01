@@ -508,10 +508,21 @@ export function useFileSystem() {
     }
   }, [])
 
+  const createDirectory = useCallback(async (path: string) => {
+    try {
+      const result = await invoke<boolean>('create_directory', { path })
+      return result
+    } catch (err) {
+      console.error('Create directory failed:', err)
+      throw err
+    }
+  }, [])
+
   return {
     selectOutputDirectory,
     showSamplesInFinder,
-    generateInstrumentFiles
+    generateInstrumentFiles,
+    createDirectory
   }
 }
 
