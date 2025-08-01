@@ -1,7 +1,7 @@
 use batcherbird_core::{
     midi::MidiManager, 
     audio::AudioManager,
-    sampler::{SamplingEngine, SamplingConfig, AudioLevels, VizChunk},
+    sampler::{SamplingEngine, SamplingConfig, AudioLevels, VizChunk, Sample},
     export::{SampleExporter, ExportConfig, AudioFormat},
     loop_detection::LoopDetectionConfig,
     playback::AudioPlayback,
@@ -896,10 +896,10 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
     }
 }
 
-/// GUI Layer: Recording with real-time visualization streaming via Tauri channels
+/// GUI Layer: Record sample synchronously - blocks until complete
 #[tauri::command]
-fn record_sample_with_viz(
-    app_handle: tauri::AppHandle,
+fn start_recording_with_viz(
+    _app_handle: tauri::AppHandle,
     note: u8, 
     velocity: u8, 
     duration: u32, 
@@ -909,9 +909,9 @@ fn record_sample_with_viz(
     creator_name: Option<String>, 
     instrument_description: Option<String>
 ) -> Result<String, String> {
-    println!("🎛️ GUI: Recording sample with real-time visualization (note: {}, velocity: {}, duration: {}ms)", note, velocity, duration);
+    println!("🎛️ GUI: Starting SYNCHRONOUS recording (note: {}, velocity: {}, duration: {}ms)", note, velocity, duration);
     
-    // Step 1: Get MIDI connection (GUI responsibility)
+    // Step 1: Get MIDI connection
     let mut connection = {
         let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
         match connection_guard.take() {
@@ -920,117 +920,105 @@ fn record_sample_with_viz(
         }
     };
     
-    // Step 2: Audio processing with visualization in dedicated thread
-    println!("📡 GUI: Delegating to Core Audio Engine with visualization...");
+    // Step 2: Configure and create sampling engine
+    println!("🔧 Configuring sampling engine...");
+    let sampling_config = SamplingConfig {
+        note_duration_ms: duration as u64,
+        release_time_ms: 500,
+        pre_delay_ms: 100,
+        post_delay_ms: 100,
+        midi_channel: 0,
+        velocity,
+        ..SamplingConfig::default()
+    };
     
-    let (tx, rx) = std::sync::mpsc::channel();
-    let app_handle_clone = app_handle.clone();
-    std::thread::spawn(move || {
-        println!("🧵 Audio thread with visualization started");
-        
-        // Configure Core Audio Engine
-        println!("🔧 Configuring sampling engine...");
-        let sampling_config = SamplingConfig {
-            note_duration_ms: duration as u64,
-            release_time_ms: 500,
-            pre_delay_ms: 100,
-            post_delay_ms: 100,
-            midi_channel: 0,
-            velocity,
-            ..SamplingConfig::default()
-        };
-        
-        let sampling_engine = match SamplingEngine::new(sampling_config) {
-            Ok(engine) => engine,
-            Err(e) => {
-                println!("❌ Failed to create sampling engine: {}", e);
-                tx.send(Err(format!("Failed to create sampling engine: {}", e))).unwrap();
-                return;
-            }
-        };
-        
-        // Step 3: Record with visualization (returns both Sample and Consumer)
-        match sampling_engine.sample_single_note_with_viz_blocking(&mut connection, note) {
-            Ok((recorded_sample, mut viz_consumer)) => {
-                println!("🎵 Core: Recording with visualization completed successfully");
-                
-                // Step 4: Start visualization thread (following INFRA-RESEARCH.md pattern)
-                let viz_handle = app_handle_clone.clone();
-                std::thread::spawn(move || {
-                    println!("👁️ Visualization thread started - reading at 60fps");
-                    
-                    loop {
-                        match viz_consumer.pop() {
-                            Ok(viz_chunk) => {
-                                // Send via Tauri channel to frontend (never blocks)
-                                if let Err(e) = viz_handle.emit("waveform_chunk", &viz_chunk) {
-                                    println!("⚠️ Failed to emit waveform chunk: {}", e);
-                                }
-                            }
-                            Err(_) => {
-                                // No data available - this is normal
-                            }
-                        }
-                        
-                        // 60fps timing (16.67ms)
-                        std::thread::sleep(Duration::from_millis(16));
-                    }
-                });
-                
-                tx.send(Ok(recorded_sample)).unwrap();
-            }
-            Err(e) => {
-                println!("❌ Core: Recording with visualization failed: {}", e);
-                tx.send(Err(format!("Recording failed: {}", e))).unwrap();
-            }
+    let sampling_engine = match SamplingEngine::new(sampling_config) {
+        Ok(engine) => engine,
+        Err(e) => {
+            *MIDI_CONNECTION.lock().unwrap() = Some(connection);
+            return Err(format!("Failed to create sampling engine: {}", e));
         }
-    });
+    };
     
-    // Step 5: Wait for result and handle export (same as original record_sample)
-    match rx.recv().unwrap() {
-        Ok(recorded_sample) => {
-            println!("✅ GUI: Core Audio Engine completed recording successfully");
-            println!("📊 GUI: Received {} samples from Core Engine", recorded_sample.audio_data.len());
-            
-            // Step 4: Handle export with metadata support
-            println!("🎤 Recording with values: output_directory={:?}, sample_name={:?}, export_format={:?}", output_directory, sample_name, export_format);
-            
-            let output_dir = if let Some(dir) = output_directory {
-                if dir.trim().is_empty() {
-                    // Use Desktop/Batcherbird Samples when field is empty
-                    println!("⚠️ Empty output directory provided, using fallback");
-                    dirs::desktop_dir()
-                        .map(|desktop| desktop.join("Batcherbird Samples"))
-                        .unwrap_or_else(|| std::path::PathBuf::from("samples"))
-                        .to_string_lossy()
-                        .to_string()
-                } else {
-                    println!("✅ Using session-initialized directory: {}", dir);
-                    dir
-                }
-            } else {
-                // Default to Desktop/Batcherbird Samples
-                println!("⚠️ No output directory provided, using fallback");
-                dirs::desktop_dir()
-                    .map(|desktop| desktop.join("Batcherbird Samples"))
-                    .unwrap_or_else(|| std::path::PathBuf::from("samples"))
-                    .to_string_lossy()
-                    .to_string()
-            };
-            
-            let mut output_path = std::path::PathBuf::from(&output_dir);
-            
-            // Create subfolder if sample name is provided (professional organization)
-            if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
-                output_path = output_path.join(name.trim());
-                println!("📁 GUI: Creating subfolder for sample: {}", name.trim());
-            }
-            
-            // Ensure output directory exists (including subfolder)
-            if let Err(e) = std::fs::create_dir_all(&output_path) {
-                println!("❌ GUI: Failed to create output directory: {}", e);
-                return Err(format!("Failed to create output directory '{}': {}", output_path.display(), e));
-            }
+    // Step 3: Record synchronously (blocks until complete)
+    println!("🎵 Recording note {} synchronously...", note);
+    let recorded_sample = match sampling_engine.sample_single_note_blocking(&mut connection, note) {
+        Ok(sample) => {
+            println!("✅ Recording completed: {} samples", sample.audio_data.len());
+            sample
+        },
+        Err(e) => {
+            *MIDI_CONNECTION.lock().unwrap() = Some(connection);
+            return Err(format!("Recording failed: {}", e));
+        }
+    };
+    
+    // Step 4: Export synchronously (blocks until file is written)
+    let file_path = export_sample_synchronously(
+        recorded_sample, 
+        output_directory, 
+        sample_name, 
+        export_format, 
+        creator_name, 
+        instrument_description
+    )?;
+    
+    // Put connection back
+    *MIDI_CONNECTION.lock().unwrap() = Some(connection);
+    
+    println!("✅ SYNCHRONOUS recording complete: {}", file_path);
+    Ok(file_path)
+}
+
+// Helper function to export sample synchronously
+fn export_sample_synchronously(
+    recorded_sample: Sample,
+    output_directory: Option<String>, 
+    sample_name: Option<String>, 
+    export_format: Option<String>, 
+    creator_name: Option<String>, 
+    instrument_description: Option<String>
+) -> Result<String, String> {
+    println!("✅ GUI: Core Audio Engine completed recording successfully");
+    println!("📊 GUI: Received {} samples from Core Engine", recorded_sample.audio_data.len());
+    
+    // Handle export with metadata support
+    let output_dir = if let Some(dir) = output_directory {
+        if dir.trim().is_empty() {
+            // Use Desktop/Batcherbird Samples when field is empty
+            println!("⚠️ Empty output directory provided, using fallback");
+            dirs::desktop_dir()
+                .map(|desktop| desktop.join("Batcherbird Samples"))
+                .unwrap_or_else(|| std::path::PathBuf::from("samples"))
+                .to_string_lossy()
+                .to_string()
+        } else {
+            println!("✅ Using session-initialized directory: {}", dir);
+            dir
+        }
+    } else {
+        // Default to Desktop/Batcherbird Samples
+        println!("⚠️ No output directory provided, using fallback");
+        dirs::desktop_dir()
+            .map(|desktop| desktop.join("Batcherbird Samples"))
+            .unwrap_or_else(|| std::path::PathBuf::from("samples"))
+            .to_string_lossy()
+            .to_string()
+    };
+    
+    let mut output_path = std::path::PathBuf::from(&output_dir);
+    
+    // Create subfolder if sample name is provided (professional organization)
+    if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
+        output_path = output_path.join(name.trim());
+        println!("📁 GUI: Creating subfolder for sample: {}", name.trim());
+    }
+    
+    // Ensure output directory exists (including subfolder)
+    if let Err(e) = std::fs::create_dir_all(&output_path) {
+        println!("❌ GUI: Failed to create output directory: {}", e);
+        return Err(format!("Failed to create output directory '{}': {}", output_path.display(), e));
+    }
             
             println!("📁 GUI: Using output directory: {}", output_path.display());
             
@@ -1051,41 +1039,62 @@ fn record_sample_with_viz(
                 Some("all") => AudioFormat::Wav24Bit, // All formats - start with 24-bit WAV, additional formats generated later
                 _ => AudioFormat::Wav24Bit, // Default to 24-bit WAV
             };
-            
-            let export_config = ExportConfig {
-                output_directory: output_path,
-                naming_pattern,
-                sample_format,
-                normalize: false, // Preserve original dynamics from core
-                fade_in_ms: 0.0,
-                fade_out_ms: 10.0,
-                apply_detection: true, // Enable detection by default
-                detection_config: Default::default(),
-                creator_name: creator_name.clone(),
-                instrument_description: instrument_description.clone(),
-            };
-            
-            println!("🔧 GUI: Creating sample exporter...");
-            let exporter = SampleExporter::new(export_config).map_err(|e| {
-                println!("❌ GUI: Failed to create exporter: {}", e);
-                format!("Failed to create sample exporter: {}", e)
-            })?;
-            
-            println!("💾 GUI: Exporting sample (WAV only)...");
-            let file_path = exporter.export_sample(&recorded_sample).map_err(|e| {
-                println!("❌ GUI: Export failed: {}", e);
-                format!("Failed to export sample: {}", e)
-            })?;
-            
-            let success_message = format!("Sample with visualization recorded and saved to: {}", file_path.display());
-            println!("✅ GUI: {}", success_message);
-            Ok(success_message)
-        }
+    
+    println!("📁 GUI: Using output directory: {}", output_path.display());
+    
+    // Build naming pattern with optional sample name prefix
+    let naming_pattern = if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
+        format!("{}_{{note_name}}_{{note}}_{{velocity}}.wav", name.trim())
+    } else {
+        "{note_name}_{note}_{velocity}.wav".to_string()
+    };
+    
+    // Determine export format based on user selection
+    let sample_format = match export_format.as_deref() {
+        Some("wav16") => AudioFormat::Wav16Bit,
+        Some("wav24") => AudioFormat::Wav24Bit,
+        Some("wav32") => AudioFormat::Wav32BitFloat,
+        Some("dspreset") => AudioFormat::DecentSampler,
+        Some("sfz") => AudioFormat::SFZ,
+        Some("all") => AudioFormat::Wav24Bit, // All formats - start with 24-bit WAV, additional formats generated later
+        _ => AudioFormat::Wav24Bit, // Default to 24-bit WAV
+    };
+    
+    let export_config = ExportConfig {
+        output_directory: output_path.clone(),
+        naming_pattern,
+        sample_format,
+        normalize: false, // Preserve original dynamics from core
+        fade_in_ms: 0.0,
+        fade_out_ms: 10.0,
+        apply_detection: true, // Enable detection by default
+        detection_config: Default::default(),
+        creator_name: creator_name.clone(),
+        instrument_description: instrument_description.clone(),
+    };
+    
+    println!("🔧 GUI: Creating sample exporter...");
+    let exporter = match SampleExporter::new(export_config) {
+        Ok(exporter) => exporter,
         Err(e) => {
-            println!("❌ GUI: Core Audio Engine reported error: {}", e);
-            Err(format!("Core Audio Engine error: {}", e))
+            println!("❌ GUI: Failed to create exporter: {}", e);
+            return Err(format!("Failed to create sample exporter: {}", e));
         }
-    }
+    };
+    
+    println!("💾 GUI: Exporting sample (WAV only)...");
+    let file_path = match exporter.export_sample(&recorded_sample) {
+        Ok(path) => path,
+        Err(e) => {
+            println!("❌ GUI: Export failed: {}", e);
+            return Err(format!("Failed to export sample: {}", e));
+        }
+    };
+    
+    let file_path_str = file_path.to_string_lossy().to_string();
+    println!("✅ GUI: Sample recorded and saved to: {}", file_path_str);
+    
+    Ok(file_path_str)
 }
 
 /// Test command to verify Tauri channel throughput at 60fps
@@ -1595,6 +1604,41 @@ async fn send_midi_panic() -> Result<String, String> {
     }
 }
 
+#[tauri::command]
+async fn select_audio_file(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_dialog::DialogExt;
+    use std::sync::mpsc;
+    
+    println!("🎵 Opening native file picker for audio files...");
+    
+    let (tx, rx) = mpsc::channel();
+    
+    app.dialog()
+        .file()
+        .set_title("Select Audio File")
+        .add_filter("Audio Files", &["wav", "mp3", "flac", "aiff", "m4a", "ogg"])
+        .add_filter("WAV Files", &["wav"])
+        .add_filter("All Files", &["*"])
+        .pick_file(move |file_path| {
+            let _ = tx.send(file_path);
+        });
+    
+    match rx.recv() {
+        Ok(Some(path)) => {
+            let path_str = path.to_string();
+            println!("✅ User selected audio file: {}", path_str);
+            Ok(path_str)
+        }
+        Ok(None) => {
+            println!("❌ User cancelled file selection");
+            Err("File selection cancelled".to_string())
+        }
+        Err(e) => {
+            println!("❌ File picker error: {}", e);
+            Err(format!("File picker error: {}", e))
+        }
+    }
+}
 
 #[tauri::command]
 fn show_samples_in_finder() -> Result<String, String> {
@@ -2179,12 +2223,13 @@ pub fn run() {
       test_midi_connection,
       preview_note,
       record_sample,
-      record_sample_with_viz,
+      start_recording_with_viz,
       test_viz_throughput,
       record_range,
       generate_instrument_files,
       create_directory,
       select_output_directory,
+      select_audio_file,
       show_samples_in_finder,
       send_midi_panic,
       start_input_monitoring,
