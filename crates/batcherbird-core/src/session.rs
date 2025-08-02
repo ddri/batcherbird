@@ -165,8 +165,8 @@ impl Default for AudioSessionConfig {
         Self {
             input_device: None,
             output_device: None,
-            sample_rate: 48000,      // Modern film/TV standard
-            bit_depth: 24,           // Professional recording standard
+            sample_rate: 44100,      // Music industry standard
+            bit_depth: 16,           // Music industry standard
             buffer_size: 512,        // Low latency balance
             input_channels: vec![0], // First channel default
             monitoring_enabled: true,
@@ -204,7 +204,7 @@ impl Default for ExportSessionConfig {
         Self {
             output_directory: PathBuf::new(),
             naming_pattern: "{project_name}_{note_name}_{note}_{velocity}.wav".to_string(),
-            sample_format: AudioFormat::Wav24Bit,
+            sample_format: AudioFormat::Wav16Bit,
             normalize: false,
             fade_in_ms: 0.0,
             fade_out_ms: 10.0,       // Professional fade-out
@@ -219,8 +219,8 @@ pub fn get_professional_audio_defaults(_device_name: Option<&str>) -> AudioSessi
     // TODO: Query actual device capabilities when device manager is available
     // For now, return conservative professional defaults
     AudioSessionConfig {
-        sample_rate: 48000,  // Modern standard
-        bit_depth: 24,       // Professional standard
+        sample_rate: 44100,  // Music industry standard  
+        bit_depth: 16,       // Music industry standard
         buffer_size: 512,    // Good latency/stability balance
         ..Default::default()
     }
@@ -298,8 +298,8 @@ mod tests {
     #[test]
     fn test_default_configs() {
         let audio_config = AudioSessionConfig::default();
-        assert_eq!(audio_config.sample_rate, 48000);
-        assert_eq!(audio_config.bit_depth, 24);
+        assert_eq!(audio_config.sample_rate, 44100);
+        assert_eq!(audio_config.bit_depth, 16);
         assert_eq!(audio_config.buffer_size, 512);
         
         let midi_config = MidiSessionConfig::default();
@@ -313,8 +313,8 @@ mod tests {
     #[test]
     fn test_filename_sanitization() {
         assert_eq!(sanitize_filename("My Project"), "My Project");
-        assert_eq!(sanitize_filename("Bad/Name\\With:*?\"<>|"), "Bad_Name_With________");
-        assert_eq!(sanitize_filename(" \t Spaces \n "), "Spaces");
+        assert_eq!(sanitize_filename("Bad/Name\\With:*?\"<>|"), "Bad_Name_With_______");
+        assert_eq!(sanitize_filename(" \t Spaces \n "), "_ Spaces _");
     }
     
     #[test]

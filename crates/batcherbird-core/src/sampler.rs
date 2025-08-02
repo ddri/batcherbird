@@ -260,7 +260,7 @@ impl SamplingEngine {
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
         
         let sample_rate = input_config.sample_rate().0;
-        let channels = input_config.channels();
+        let _channels = input_config.channels();
         let level_state = Arc::clone(&self.level_meter_state);
             
         // Create shared buffer for input->output if playthrough enabled
@@ -270,12 +270,8 @@ impl SamplingEngine {
             None
         };
         
-        use cpal::{SampleFormat, StreamConfig};
-        let input_stream_config = StreamConfig {
-            channels,
-            sample_rate: input_config.sample_rate(),
-            buffer_size: cpal::BufferSize::Default,
-        };
+        use cpal::SampleFormat;
+        let input_stream_config = AudioManager::get_standard_stream_config();
         
         // Build input stream
         let input_stream = match input_config.sample_format() {
@@ -314,11 +310,7 @@ impl SamplingEngine {
             let output_config = output_device.default_output_config()
                 .map_err(|e| BatcherbirdError::Audio(format!("Failed to get output config: {}", e)))?;
             
-            let output_stream_config = StreamConfig {
-                channels,
-                sample_rate: output_config.sample_rate(),
-                buffer_size: cpal::BufferSize::Default,
-            };
+            let output_stream_config = AudioManager::get_standard_stream_config();
             
             let shared_buffer_output = shared_buffer.unwrap(); // Safe because we created it above
             
@@ -370,16 +362,12 @@ impl SamplingEngine {
         let config = device.default_input_config()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
 
-        let sample_rate = config.sample_rate().0;
+        let sample_rate = 44100; // Use our standard sample rate
         let level_state = Arc::clone(&self.level_meter_state);
         
-        use cpal::{SampleFormat, StreamConfig};
+        use cpal::SampleFormat;
 
-        let stream_config = StreamConfig {
-            channels: config.channels(),
-            sample_rate: config.sample_rate(),
-            buffer_size: cpal::BufferSize::Default,
-        };
+        let stream_config = AudioManager::get_standard_stream_config();
 
         let stream = match config.sample_format() {
             SampleFormat::F32 => {
@@ -681,14 +669,10 @@ impl SamplingEngine {
         viz_producer: Option<Producer<VizChunk>>,
     ) -> Result<cpal::Stream> {
         let level_state = Arc::clone(&self.level_meter_state);
-        let sample_rate = config.sample_rate().0;
-        use cpal::{SampleFormat, StreamConfig};
+        let sample_rate = 44100; // Use our standard sample rate
+        use cpal::SampleFormat;
 
-        let stream_config = StreamConfig {
-            channels: config.channels(),
-            sample_rate: config.sample_rate(),
-            buffer_size: cpal::BufferSize::Default,
-        };
+        let stream_config = AudioManager::get_standard_stream_config();
 
         let stream = match config.sample_format() {
             SampleFormat::F32 => {
@@ -812,14 +796,10 @@ impl SamplingEngine {
         recording_active: Arc<Mutex<bool>>,
     ) -> Result<cpal::Stream> {
         let level_state = Arc::clone(&self.level_meter_state);
-        let sample_rate = config.sample_rate().0;
-        use cpal::{SampleFormat, StreamConfig};
+        let sample_rate = 44100; // Use our standard sample rate
+        use cpal::SampleFormat;
 
-        let stream_config = StreamConfig {
-            channels: config.channels(),
-            sample_rate: config.sample_rate(),
-            buffer_size: cpal::BufferSize::Default,
-        };
+        let stream_config = AudioManager::get_standard_stream_config();
 
         let stream = match config.sample_format() {
             SampleFormat::F32 => {

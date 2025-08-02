@@ -49,8 +49,8 @@ impl Default for Config {
             },
             audio: AudioConfig {
                 device_name: String::new(),
-                sample_rate: 48000,
-                bit_depth: 24,
+                sample_rate: 44100,
+                bit_depth: 16,
                 channels: 2,
             },
             sampling: SamplingConfig {

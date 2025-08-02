@@ -321,6 +321,40 @@ This architecture change should be **prioritized immediately** because:
 - **Rust Audio Ecosystem**: CPAL, ringbuf, rtrb crates for real-time audio
 - **Real-World Applications**: lumos-rs, Tauri music players, audio visualization projects
 
+## AUDIO FORMAT STANDARDIZATION
+
+### **Problem: Device-Dependent Configuration**
+Using `device.default_input_config()` caused inconsistent behavior across audio interfaces. MiniFuse 2 defaulted to 48kHz/4-channel while built-in audio used different settings, breaking application consistency.
+
+### **Research: Professional DAW Patterns**
+Pro Tools, Logic Pro, and Ableton Live enforce project-level audio settings regardless of hardware capabilities. They define application standards and configure devices to match, rather than adapting to each device's preferences.
+
+### **Solution: Centralized Audio Standards**
+Created `get_standard_stream_config()` function returning consistent 44.1kHz/16-bit/stereo configuration. Replaced all `StreamConfig` creations with standardized calls throughout CPAL audio streams.
+
+### **Key Insight**
+Professional software should define its own audio standards and adapt devices to meet them, not the reverse. Consistency trumps theoretical quality improvements in practical applications.
+
+## TAURI AUDIO STATE MANAGEMENT
+
+### **Problem: Event-Based Recording Issues** 
+Event-based recording completion caused promise timeouts and UI state synchronization problems. Promises would never resolve, leaving UI in "RECORDING" state indefinitely.
+
+### **Solution: Synchronous Critical Operations**
+Use synchronous blocking for critical operations (recording completion) and events only for real-time data streams (level metering, visualization). Recording now blocks until complete and returns file path directly.
+
+### **Pattern: Operation Type Determines Communication Method**
+- **Critical operations**: Synchronous Tauri commands that block and return results
+- **Real-time streams**: Event-based with proper cleanup and error handling
+
+## CROSS-PLATFORM AUDIO TESTING
+
+### **Finding: Hardware Diversity Required**
+Audio compatibility issues only surface with diverse hardware configurations. Development machine testing is insufficient for professional audio applications.
+
+### **Requirement: Multiple Interface Testing**
+Test with various audio interface types (USB interfaces, built-in audio, professional gear) to catch device-specific configuration problems early.
+
 ---
 
 *This research provides the foundation for implementing professional-grade real-time waveform visualization that follows industry standards and leverages Tauri's strengths while avoiding its limitations.*

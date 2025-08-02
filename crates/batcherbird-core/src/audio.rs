@@ -1,5 +1,5 @@
 use crate::{Result, BatcherbirdError};
-use cpal::{Host, StreamConfig, SampleFormat, traits::{DeviceTrait, HostTrait, StreamTrait}};
+use cpal::{Host, StreamConfig, SampleFormat, SampleRate, traits::{DeviceTrait, HostTrait, StreamTrait}};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -11,6 +11,15 @@ impl AudioManager {
     pub fn new() -> Result<Self> {
         let host = cpal::default_host();
         Ok(Self { host })
+    }
+
+    /// Get our standard audio configuration (44.1kHz, stereo, 16-bit equivalent)
+    pub fn get_standard_stream_config() -> StreamConfig {
+        StreamConfig {
+            channels: 2,                           // Stereo
+            sample_rate: SampleRate(44100),        // Music industry standard
+            buffer_size: cpal::BufferSize::Default,
+        }
     }
 
     pub fn list_input_devices(&self) -> Result<Vec<String>> {
@@ -102,11 +111,7 @@ impl AudioManager {
 
         let stream = match config.sample_format() {
             SampleFormat::F32 => {
-                let stream_config = StreamConfig {
-                    channels: config.channels(),
-                    sample_rate: config.sample_rate(),
-                    buffer_size: cpal::BufferSize::Default,
-                };
+                let stream_config = Self::get_standard_stream_config();
 
                 device.build_input_stream(
                     &stream_config,
@@ -123,11 +128,7 @@ impl AudioManager {
                 ).map_err(|e| BatcherbirdError::Audio(format!("Failed to build input stream: {}", e)))?
             }
             SampleFormat::I16 => {
-                let stream_config = StreamConfig {
-                    channels: config.channels(),
-                    sample_rate: config.sample_rate(),
-                    buffer_size: cpal::BufferSize::Default,
-                };
+                let stream_config = Self::get_standard_stream_config();
 
                 device.build_input_stream(
                     &stream_config,
@@ -146,11 +147,7 @@ impl AudioManager {
                 ).map_err(|e| BatcherbirdError::Audio(format!("Failed to build input stream: {}", e)))?
             }
             SampleFormat::U16 => {
-                let stream_config = StreamConfig {
-                    channels: config.channels(),
-                    sample_rate: config.sample_rate(),
-                    buffer_size: cpal::BufferSize::Default,
-                };
+                let stream_config = Self::get_standard_stream_config();
 
                 device.build_input_stream(
                     &stream_config,

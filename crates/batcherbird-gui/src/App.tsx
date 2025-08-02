@@ -58,7 +58,7 @@ export default function App() {
   const [detectionThreshold, setDetectionThreshold] = useState([-35])
   const [sampleName, setSampleName] = useState("Roland-EM1018")
   const [outputDirectory, setOutputDirectory] = useState("/Users/dryan/Desktop/Batch")
-  const [exportFormat, setExportFormat] = useState("wav24")
+  const [exportFormat, setExportFormat] = useState("wav16")
   const [creatorName, setCreatorName] = useState("")
   const [instrumentDescription, setInstrumentDescription] = useState("")
   const [recordingMode, setRecordingMode] = useState("single")
@@ -71,7 +71,7 @@ export default function App() {
   
   // Tauri hooks
   const { recordSample, recordRange, previewNote, isRecording: backendRecording } = useRecording()
-  const { selectOutputDirectory, createDirectory } = useFileSystem()
+  const { selectOutputDirectory, selectAudioFile, createDirectory } = useFileSystem()
   
   // Device hooks
   const { devices: midiDevices, loadDevices: loadMidiDevices, isLoading: midiLoading } = useMidiDevices()
@@ -194,7 +194,7 @@ export default function App() {
     showError,
     showSuccess
   } = useNotifications()
-  const { waveformData, isLoading: waveformLoading, isTransitioning: waveformTransitioning, error: waveformError, clearWaveform, transitionToFilePlayback } = useWaveform()
+  const { waveformData, isLoading: waveformLoading, isTransitioning: waveformTransitioning, error: waveformError, loadWaveform, clearWaveform, transitionToFilePlayback } = useWaveform()
   const { getLastRecordedSamplePath } = useLoopDetection()
   const { 
     isPlaying, 
@@ -284,17 +284,24 @@ export default function App() {
     })
 
     if (recordingMode === "single") {
+      console.log('📝 App.tsx: Entering single recording mode')
       try {
+        console.log('📝 App.tsx: About to start recording state transition')
         startRecording() // Update state to recording
         setIsRecording(true)
+        console.log('📝 App.tsx: Recording state set to true')
         
         // Clear old waveform data
         clearWaveform()
+        console.log('📝 App.tsx: Waveform cleared')
         
         // Start real-time waveform visualization via Tauri channels
         console.log('🎤 Starting real-time visualization...')
         await startRealTimeVisualization()
         console.log('🎤 Real-time visualization started, isRealTimeRecording:', isRealTimeRecording)
+        
+        console.log('🚀 App.tsx: About to call recordSample hook function')
+        console.log('🚀 App.tsx: recordSample function type:', typeof recordSample)
         
         const result = await recordSample(
           parseInt(selectedNote),
@@ -306,7 +313,7 @@ export default function App() {
           capturedCreatorName,
           capturedInstrumentDescription
         )
-        console.log("Recording complete:", result)
+        console.log("🎉 App.tsx: Recording complete:", result)
         
         // Stop real-time visualization immediately after recording completes
         console.log("🔄 Transitioning from real-time to file-based waveform...")
@@ -320,13 +327,32 @@ export default function App() {
           console.log("Output directory:", capturedOutputDirectory)
           console.log("Sample name:", capturedSampleName)
           
+          // Add small delay to ensure file is fully written
+          console.log("⏱️ Adding delay to ensure file is fully written...")
+          await new Promise(resolve => setTimeout(resolve, 500))
+          
           setLastRecordedFile(lastSamplePath)
-          await transitionToFilePlayback(lastSamplePath)
-          console.log("🌊 Waveform transition completed successfully")
+          
+          console.log("🌊 Starting waveform transition...")
+          try {
+            await transitionToFilePlayback(lastSamplePath)
+            console.log("✅ Waveform transition completed successfully")
+          } catch (waveformErr) {
+            console.error("❌ Waveform transition failed:", waveformErr)
+            console.error("❌ Waveform transition error details:", JSON.stringify(waveformErr))
+            throw waveformErr
+          }
           
           // Also load the file for playback
-          await loadAudioFile(lastSamplePath)
-          console.log("Audio file loaded for playback")
+          console.log("🎵 Loading audio file for playback...")
+          try {
+            await loadAudioFile(lastSamplePath)
+            console.log("✅ Audio file loaded for playback")
+          } catch (audioErr) {
+            console.error("❌ Audio file loading failed:", audioErr)
+            // Don't throw - waveform is more important than playback
+          }
+          
           console.log("✅ Smooth transition to playback mode complete")
           
           // Show success notification
@@ -520,6 +546,36 @@ export default function App() {
       setOutputDirectory(directory)
     } catch (error) {
       console.error("Directory selection failed:", error)
+    }
+  }
+
+  const handleLoadFile = async () => {
+    try {
+      console.log("🎵 Opening file picker to load audio file...")
+      const filePath = await selectAudioFile()
+      console.log("📁 User selected file:", filePath)
+      
+      // Stop any current playback first
+      if (isPlaying) {
+        await togglePlayPause()
+      }
+      
+      // Load the file for playback
+      await loadAudioFile(filePath)
+      console.log("🎵 Audio file loaded for playback")
+      
+      // Load the waveform
+      await loadWaveform(filePath)
+      console.log("🌊 Waveform loaded successfully")
+      
+      // Update state to show the loaded file
+      setLastRecordedFile(filePath)
+      
+      showSuccess("File Loaded", `Successfully loaded: ${filePath.split('/').pop()}`)
+      
+    } catch (error) {
+      console.error("Failed to load audio file:", error)
+      showError("Load Failed", `Could not load audio file: ${error}`)
     }
   }
 
@@ -801,13 +857,24 @@ export default function App() {
                 <CardHeader>
                   <CardTitle className="flex items-center justify-between text-gray-100 text-xl">
                     <span>Sample Waveform</span>
-                    {waveformData && lastRecordedFile && (
-                      <div className="flex items-center space-x-2 text-sm text-gray-400">
-                        <span>Duration: {waveformData.duration.toFixed(2)}s</span>
-                        <span>•</span>
-                        <span>{lastRecordedFile.split('/').pop()}</span>
-                      </div>
-                    )}
+                    <div className="flex items-center space-x-3">
+                      <Button
+                        onClick={handleLoadFile}
+                        variant="outline"
+                        size="sm"
+                        className="border-gray-600 text-gray-100 hover:bg-gray-800 bg-transparent"
+                      >
+                        <FolderOpen className="w-4 h-4 mr-2" />
+                        Load File
+                      </Button>
+                      {waveformData && lastRecordedFile && (
+                        <div className="flex items-center space-x-2 text-sm text-gray-400">
+                          <span>Duration: {waveformData.duration.toFixed(2)}s</span>
+                          <span>•</span>
+                          <span>{lastRecordedFile.split('/').pop()}</span>
+                        </div>
+                      )}
+                    </div>
                   </CardTitle>
                 </CardHeader>
                 <CardContent>

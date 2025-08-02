@@ -43,8 +43,22 @@ export function WaveformDisplay({
       hasWaveformData: !!waveformData, 
       isRecording,
       isTransitioning,
+      isLoading,
       fileName,
-      peaksLength: waveformData?.peaks.positive.length 
+      peaksLength: waveformData?.peaks.positive.length,
+      waveformDataSummary: waveformData ? {
+        duration: waveformData.duration,
+        sampleRate: waveformData.sample_rate,
+        channels: waveformData.channels,
+        format: waveformData.format
+      } : null
+    })
+    
+    console.log('🔍 WaveformDisplay: State check', {
+      isTransitioning,
+      hasWaveformData: !!waveformData,
+      isRecording,
+      canvasExists: !!canvasRef.current
     })
     
     const canvas = canvasRef.current
@@ -79,6 +93,16 @@ export function WaveformDisplay({
     const numPeaks = peaks.positive.length
     const peakWidth = (rect.width * zoomLevel) / numPeaks
     const centerY = rect.height / 2
+    
+    console.log('🎨 WaveformDisplay: Drawing parameters', {
+      numPeaks,
+      peakWidth,
+      centerY,
+      canvasWidth: rect.width,
+      canvasHeight: rect.height,
+      firstFewPositivePeaks: peaks.positive.slice(0, 5),
+      firstFewNegativePeaks: peaks.negative.slice(0, 5)
+    })
 
     // Set styles
     ctx.strokeStyle = '#d1d5db' // gray-300

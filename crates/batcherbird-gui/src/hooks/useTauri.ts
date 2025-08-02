@@ -310,11 +310,17 @@ export function useRecording() {
     exportFormat?: string,
     creatorName?: string,
     instrumentDescription?: string
-  ) => {
+  ): Promise<string> => {
+    console.log('🎧 Frontend: Starting SYNCHRONOUS recording')
     setIsRecording(true)
     setError(null)
+    
     try {
-      const result = await invoke<string>('record_sample_with_viz', {
+      console.log('🚀 Frontend: Calling synchronous start_recording_with_viz', {
+        note, velocity, duration, outputDirectory, sampleName, exportFormat
+      })
+      
+      const filePath = await invoke<string>('start_recording_with_viz', {
         note,
         velocity,
         duration,
@@ -324,13 +330,16 @@ export function useRecording() {
         creatorName,
         instrumentDescription
       })
-      return result
-    } catch (err) {
-      setError(err as string)
-      console.error('Recording failed:', err)
-      throw err
-    } finally {
+      
+      console.log('✅ Frontend: SYNCHRONOUS recording completed:', filePath)
       setIsRecording(false)
+      return filePath
+      
+    } catch (err) {
+      console.error('❌ Frontend: SYNCHRONOUS recording failed:', err)
+      setError(err as string)
+      setIsRecording(false)
+      throw err
     }
   }, [])
 
@@ -476,6 +485,16 @@ export function useFileSystem() {
     }
   }, [])
 
+  const selectAudioFile = useCallback(async () => {
+    try {
+      const result = await invoke<string>('select_audio_file')
+      return result
+    } catch (err) {
+      console.error('Audio file selection failed:', err)
+      throw err
+    }
+  }, [])
+
   const showSamplesInFinder = useCallback(async () => {
     try {
       const result = await invoke<string>('show_samples_in_finder')
@@ -520,6 +539,7 @@ export function useFileSystem() {
 
   return {
     selectOutputDirectory,
+    selectAudioFile,
     showSamplesInFinder,
     generateInstrumentFiles,
     createDirectory
@@ -535,26 +555,34 @@ export function useWaveform() {
 
   const loadWaveform = useCallback(async (filePath: string, resolution?: number) => {
     console.log('🌊 Loading waveform for:', filePath)
+    console.log('📊 Resolution parameter:', resolution)
     setIsLoading(true)
     setError(null)
     try {
+      console.log('📡 Calling Tauri get_waveform_data command...')
       const data = await invoke<WaveformData>('get_waveform_data', {
         filePath,
         resolution
       })
+      console.log('✅ Tauri command completed successfully')
       console.log('🌊 Waveform loaded successfully:', { 
         duration: data.duration, 
         channels: data.channels, 
-        peaksLength: data.peaks.positive.length 
+        peaksLength: data.peaks.positive.length,
+        sampleRate: data.sample_rate,
+        format: data.format
       })
       setWaveformData(data)
+      console.log('✅ Waveform data set in React state')
       return data
     } catch (err) {
       setError(err as string)
       console.error('❌ Failed to load waveform:', err)
+      console.error('❌ Tauri command error details:', JSON.stringify(err))
       throw err
     } finally {
       setIsLoading(false)
+      console.log('🏁 loadWaveform completed, isLoading set to false')
     }
   }, [])
 
@@ -571,18 +599,35 @@ export function useWaveform() {
     
     try {
       // Clear any existing waveform data first
+      console.log('🧹 Clearing existing waveform data...')
       setWaveformData(null)
       
       // Small delay to ensure real-time visualization has stopped
+      console.log('⏱️ Waiting for real-time visualization to stop...')
       await new Promise(resolve => setTimeout(resolve, 100))
+      
+      // Verify file exists before attempting to load
+      console.log('📁 Attempting to load waveform from:', filePath)
+      console.log('📊 Using resolution:', resolution || 'default')
       
       // Load the file waveform
       const data = await loadWaveform(filePath, resolution)
       
-      console.log('✅ Transition to file playback complete')
+      console.log('✅ Transition to file playback complete:', {
+        peaksLength: data.peaks.positive.length,
+        duration: data.duration,
+        sampleRate: data.sample_rate
+      })
       return data
     } catch (err) {
       console.error('❌ Failed to transition to file playback:', err)
+      console.error('❌ Error type:', typeof err)
+      console.error('❌ Error string:', String(err))
+      if (err instanceof Error) {
+        console.error('❌ Error message:', err.message)
+        console.error('❌ Error stack:', err.stack)
+      }
+      setError(`Failed to load waveform: ${err}`)
       throw err
     } finally {
       setIsTransitioning(false)
