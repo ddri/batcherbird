@@ -12,8 +12,42 @@ use midir::MidiOutputConnection;
 use std::sync::{Mutex, Arc};
 use std::time::Duration;
 use std::process::Command;
+use std::path::{Path, PathBuf};
 use serde::{Serialize, Deserialize};
 use tauri::Emitter;
+
+/// Validates and secures file paths for desktop app usage
+fn validate_file_path(path: &str) -> Result<PathBuf, String> {
+    let path_buf = Path::new(path);
+    
+    // Basic validation - reject obviously malicious patterns
+    if path.contains("..") || path.starts_with('/') && !path.starts_with("/Users/") {
+        return Err("Invalid path pattern".to_string());
+    }
+    
+    // For macOS desktop app, allow reasonable user directories
+    let allowed_prefixes = [
+        "/Users/",
+        "/tmp/",
+        "/var/folders/", // macOS temp files
+    ];
+    
+    let absolute_path = if path_buf.is_absolute() {
+        path_buf.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|_| "Cannot get current directory")?
+            .join(path_buf)
+    };
+    
+    // Allow common user directories for a desktop app
+    let path_str = absolute_path.to_string_lossy();
+    if allowed_prefixes.iter().any(|prefix| path_str.starts_with(prefix)) {
+        Ok(absolute_path)
+    } else {
+        Err("Path outside allowed directories".to_string())
+    }
+}
 
 /// Serializable version of LoopCandidate for JSON responses
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -675,9 +709,8 @@ async fn preview_note(note: u8, velocity: u8, duration: u32) -> Result<String, S
 fn create_directory(path: String) -> Result<bool, String> {
     println!("📁 Creating directory: {}", path);
     
-    use std::path::Path;
-    
-    let dir_path = Path::new(&path);
+    // Validate path for security
+    let dir_path = validate_file_path(&path)?;
     
     if dir_path.exists() {
         println!("✅ Directory already exists: {}", path);
@@ -1350,11 +1383,10 @@ fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, outpu
 fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_length: Option<f32>, correlation_threshold: Option<f32>) -> Result<String, String> {
     println!("🔄 GUI: Detecting loop points for: {}", file_path);
     
-    use std::path::Path;
     use batcherbird_core::sampler::Sample;
     
-    // Load the audio file
-    let path = Path::new(&file_path);
+    // Validate and load the audio file
+    let path = validate_file_path(&file_path)?;
     if !path.exists() {
         let response = LoopDetectionResponse {
             success: false,
@@ -1545,9 +1577,8 @@ fn apply_loop_metadata(file_path: String, start_sample: usize, end_sample: usize
     println!("🔄 GUI: Applying loop metadata to: {}", file_path);
     println!("   Loop: samples {}-{} (rate: {}Hz)", start_sample, end_sample, sample_rate);
     
-    use std::path::Path;
-    
-    let path = Path::new(&file_path);
+    // Validate path for security
+    let path = validate_file_path(&file_path)?;
     if !path.exists() {
         return Err(format!("File not found: {}", file_path));
     }
@@ -1752,13 +1783,12 @@ async fn get_waveform_data(file_path: String, resolution: Option<u32>) -> Result
     println!("🌊 GUI: Extracting waveform data from: {}", file_path);
     
     use hound::WavReader;
-    use std::path::Path;
     
     // Default resolution: 800 points (matches UI width)
     let target_resolution = resolution.unwrap_or(800);
     
-    // Verify file exists
-    let path = Path::new(&file_path);
+    // Validate and verify file exists
+    let path = validate_file_path(&file_path)?;
     if !path.exists() {
         return Err(format!("File not found: {}", file_path));
     }
@@ -1865,6 +1895,9 @@ async fn get_waveform_data(file_path: String, resolution: Option<u32>) -> Result
 async fn load_sample_for_playback(file_path: String) -> Result<String, String> {
     println!("🎵 GUI: Loading sample for playback: {}", file_path);
     
+    // Validate file path for security
+    let validated_path = validate_file_path(&file_path)?;
+    
     // Initialize playback engine if needed
     let mut playback_guard = AUDIO_PLAYBACK.lock().unwrap();
     if playback_guard.is_none() {
@@ -1885,7 +1918,7 @@ async fn load_sample_for_playback(file_path: String) -> Result<String, String> {
     
     // Load the sample
     if let Some(playback) = playback_guard.as_ref() {
-        playback.load_sample(&file_path)
+        playback.load_sample(&validated_path.to_string_lossy())
             .map_err(|e| format!("Failed to load sample: {}", e))
     } else {
         Err("Playback engine not initialized".to_string())

@@ -18,10 +18,16 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self' tauri:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: tauri: asset: https:",
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": [
+          "$DESKTOP/*",
+          "$DOCUMENT/*", 
+          "$HOME/Documents/BatcherBird Projects/*",
+          "$APPDATA/*",
+          "$RESOURCE/*"
+        ]
       }
     },
     "withGlobalTauri": true

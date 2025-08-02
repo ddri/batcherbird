@@ -6,11 +6,9 @@
     "main"
   ],
   "permissions": [
-    "core:default",
     "core:window:default",
-    "core:event:default",
+    "core:event:default", 
     "core:app:default",
-    "core:image:default",
     "core:resources:default",
     "dialog:default"
   ]
