@@ -355,6 +355,26 @@ Audio compatibility issues only surface with diverse hardware configurations. De
 ### **Requirement: Multiple Interface Testing**
 Test with various audio interface types (USB interfaces, built-in audio, professional gear) to catch device-specific configuration problems early.
 
+## DESKTOP APPLICATION SECURITY
+
+### **Problem: Web Security Model Doesn't Apply**
+Initial security configuration used overly broad permissions (`["**"]` asset scope, disabled CSP) inappropriate for desktop apps. Desktop apps need file system access but with proper boundaries.
+
+### **Research: Desktop vs Web Threat Models**
+Desktop audio applications face different threats than web apps: file system traversal, hardware access control, user data protection. Users expect desktop apps to access files and hardware, unlike web applications.
+
+### **Solution: Layered Desktop Security**
+- **Content Security Policy**: Strict CSP allowing necessary desktop app resources (self, tauri, inline styles for React)
+- **Asset Protocol Scoping**: Restrict to user directories ($DESKTOP, $DOCUMENT, $HOME/Documents/BatcherBird Projects)
+- **Path Validation**: Centralized `validate_file_path()` function preventing directory traversal while allowing legitimate user file access
+- **Capability Minimization**: Use only required Tauri permissions (window, event, app, resources, dialog)
+
+### **Key Insight: Security Boundaries, Not Walls**
+Desktop app security is about establishing safe boundaries for legitimate access, not preventing all file system interaction. Users install the app specifically to access audio hardware and files.
+
+### **Performance Consideration**
+Security validation must not impact real-time audio performance. Path validation happens before audio threads start, validated data flows through lock-free structures.
+
 ---
 
 *This research provides the foundation for implementing professional-grade real-time waveform visualization that follows industry standards and leverages Tauri's strengths while avoiding its limitations.*

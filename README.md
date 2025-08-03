@@ -49,23 +49,91 @@ Batcherbird is an open-source hardware sampling tool built with Rust and Tauri. 
 - Session-safe MIDI state management
 - Comprehensive error handling and graceful recovery
 
-## 🔧 Installation
+## 🔧 Installation & Setup
 
 ### Prerequisites
 - macOS 10.15+ (Catalina or later)
 - Audio interface connected to your synthesizer
 - MIDI connection to your synthesizer
+- Node.js 18+ and Rust 1.70+ (for development)
 
 ### Download
 1. Download the latest release from [Releases](https://github.com/yourusername/batcherbird/releases)
 2. Open the `.dmg` file and drag Batcherbird to Applications
 3. Grant microphone and MIDI permissions when prompted
 
-### Build from Source
+### Development Setup
+
+#### Prerequisites
+```bash
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install Node.js (via Homebrew)
+brew install node
+
+# Install Tauri CLI
+cargo install tauri-cli --version "^2.0"
+```
+
+#### Clone & Setup
 ```bash
 git clone https://github.com/yourusername/batcherbird.git
 cd batcherbird
-cargo install tauri-cli --version "^2.0"
+cd crates/batcherbird-gui
+npm install
+```
+
+#### Starting the Application
+
+**🚀 Quick Start (Recommended):**
+```bash
+cd crates/batcherbird-gui
+npm run dev
+```
+This starts both the Tauri backend and frontend development server in one command.
+
+**🔧 Alternative: Separate Processes**
+
+If you need to start them separately:
+
+*Backend only:*
+```bash
+cd crates/batcherbird-gui
+npm run tauri dev
+```
+
+*Frontend only:*
+```bash
+cd crates/batcherbird-gui  
+npm run dev:frontend
+```
+
+#### What Each Process Does
+
+**Tauri Process (Backend)**: 
+- Rust backend with professional audio processing
+- MIDI device management and real-time communication
+- File system operations and sample export
+- Native desktop window and system integration
+
+**Vite Process (Frontend)**:
+- React TypeScript UI with professional meter displays
+- Real-time waveform visualization and audio monitoring
+- User interface controls and device configuration
+- Hot reload for development
+
+#### Hardware Setup
+Make sure you have:
+- ✅ Audio interface connected (or built-in audio)
+- ✅ MIDI device connected (like your Korg DW-6000)
+- ✅ Audio cables properly routed (synth → interface → Mac)
+- ✅ MIDI cables connected (Mac → MIDI interface → synth)
+
+The app will auto-detect available MIDI and audio devices on startup.
+
+#### Production Build
+```bash
 cd crates/batcherbird-gui
 cargo tauri build
 ```

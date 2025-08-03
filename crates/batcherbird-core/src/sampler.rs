@@ -3,6 +3,7 @@ use crate::midi::MidiManager;
 use crate::audio::AudioManager;
 use crate::detection::{SampleDetector, DetectionConfig, DetectionResult};
 use crate::loop_detection::{LoopDetector, LoopDetectionConfig, LoopDetectionResult};
+use crate::professional_meters::{ProfessionalMeterEngine, ProfessionalMeterReadings};
 use midir::MidiOutputConnection;
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
@@ -43,6 +44,8 @@ pub struct AudioLevelDetector {
     rms_window_size: usize,
     #[allow(dead_code)] // Reserved for future advanced RMS windowing
     rms_window_samples: f32,
+    // Epic 3.1.1: Professional meter engine integration
+    professional_meters: ProfessionalMeterEngine,
 }
 
 impl AudioLevelDetector {
@@ -55,6 +58,8 @@ impl AudioLevelDetector {
             rms_sample_count: 0,
             rms_window_size,
             rms_window_samples: 0.0,
+            // Epic 3.1.1: Initialize professional meter engine
+            professional_meters: ProfessionalMeterEngine::new(sample_rate as f32),
         }
     }
     
@@ -85,12 +90,20 @@ impl AudioLevelDetector {
             self.rms_sample_count = 0;
         }
         
+        // Epic 3.1.1: Process through professional meters for enhanced readings
+        let _professional_readings = self.professional_meters.process_samples(samples);
+        
         AudioLevels {
             peak: self.peak_level,
             rms: rms_level,
             peak_db: if self.peak_level > 0.0 { 20.0 * self.peak_level.log10() } else { -60.0 },
             rms_db: if rms_level > 0.0 { 20.0 * rms_level.log10() } else { -60.0 },
         }
+    }
+    
+    /// Get professional meter readings (Epic 3.1.1 - Professional Meter Engine)
+    pub fn get_professional_readings(&mut self, samples: &[f32]) -> ProfessionalMeterReadings {
+        self.professional_meters.process_samples(samples)
     }
     
     /// Reset peak level (called periodically for peak hold behavior)

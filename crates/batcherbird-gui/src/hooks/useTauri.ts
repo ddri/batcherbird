@@ -10,6 +10,62 @@ export interface AudioLevels {
   rms_db: number
 }
 
+// Professional meter types (Epic 3.1.3)
+export interface ProfessionalMeterReadings {
+  vu_db: number
+  ppm_db: number
+  peak_db: number
+  peak_hold_db: number
+  lufs: number
+  gain_staging: GainStagingStatus
+}
+
+export enum GainStagingStatus {
+  Optimal = "Optimal",
+  TooQuiet = "TooQuiet", 
+  TooLoud = "TooLoud",
+  Acceptable = "Acceptable",
+  Clipping = "Clipping"
+}
+
+export enum RecommendationUrgency {
+  Low = "Low",
+  Medium = "Medium",
+  High = "High",
+  Critical = "Critical"
+}
+
+export enum HeadroomStatus {
+  SafeHeadroom = "SafeHeadroom",
+  LowHeadroom = "LowHeadroom",
+  Clipping = "Clipping"
+}
+
+export enum LevelTrend {
+  Rising = "Rising",
+  Falling = "Falling",
+  Stable = "Stable"
+}
+
+export interface GainRecommendation {
+  adjustment_db: number
+  confidence: number
+  urgency: RecommendationUrgency
+  description: string
+}
+
+export interface GainStagingAnalysis {
+  current_level_db: number
+  target_level_db: number
+  target_distance_db: number
+  is_optimal: boolean
+  trend: LevelTrend
+  recommendation: GainRecommendation
+  headroom_status: HeadroomStatus
+  peak_db: number
+  headroom_db: number
+}
+
 export interface LoopCandidate {
   start_sample: number
   end_sample: number
@@ -293,6 +349,93 @@ export function useAudioMonitoring() {
     levels,
     startMonitoring,
     stopMonitoring
+  }
+}
+
+// Professional meter monitoring (Epic 3.1.3)
+export function useProfessionalMeters() {
+  const [readings, setReadings] = useState<ProfessionalMeterReadings>({
+    vu_db: -60.0,
+    ppm_db: -60.0,
+    peak_db: -60.0,
+    peak_hold_db: -60.0,
+    lufs: -70.0,
+    gain_staging: GainStagingStatus.TooQuiet
+  })
+  const [isMonitoring, setIsMonitoring] = useState(false)
+
+  const startProfessionalMetering = useCallback(() => {
+    setIsMonitoring(true)
+  }, [])
+
+  const stopProfessionalMetering = useCallback(() => {
+    setIsMonitoring(false)
+  }, [])
+
+  // Poll for professional meter readings when monitoring
+  useEffect(() => {
+    if (!isMonitoring) return
+
+    const interval = setInterval(async () => {
+      try {
+        const newReadings = await invoke<ProfessionalMeterReadings>('get_professional_meter_readings')
+        setReadings(newReadings)
+      } catch (err) {
+        console.error('Failed to get professional meter readings:', err)
+      }
+    }, 50) // 20fps updates for smooth meter ballistics
+
+    return () => clearInterval(interval)
+  }, [isMonitoring])
+
+  return {
+    readings,
+    isMonitoring,
+    startProfessionalMetering,
+    stopProfessionalMetering
+  }
+}
+
+// Gain staging analysis (Epic 3.1.3)
+export function useGainStaging() {
+  const [analysis, setAnalysis] = useState<GainStagingAnalysis | null>(null)
+  const [isMonitoring, setIsMonitoring] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const startGainStagingAnalysis = useCallback(() => {
+    setIsMonitoring(true)
+    setError(null)
+  }, [])
+
+  const stopGainStagingAnalysis = useCallback(() => {
+    setIsMonitoring(false)
+    setAnalysis(null)
+  }, [])
+
+  // Poll for gain staging analysis when monitoring
+  useEffect(() => {
+    if (!isMonitoring) return
+
+    const interval = setInterval(async () => {
+      try {
+        const newAnalysis = await invoke<GainStagingAnalysis>('get_gain_staging_analysis')
+        setAnalysis(newAnalysis)
+        setError(null)
+      } catch (err) {
+        console.error('Failed to get gain staging analysis:', err)
+        setError(err as string)
+      }
+    }, 200) // 5fps updates - slower for analysis
+
+    return () => clearInterval(interval)
+  }, [isMonitoring])
+
+  return {
+    analysis,
+    isMonitoring,
+    error,
+    startGainStagingAnalysis,
+    stopGainStagingAnalysis
   }
 }
 

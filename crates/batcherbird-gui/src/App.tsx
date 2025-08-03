@@ -11,8 +11,7 @@ import { Progress } from "@/components/ui/progress"
 import { DeviceStatusBar } from "@/components/DeviceStatusBar"
 import { SetupModal } from "@/components/SetupModal"
 import { WaveformDisplay } from "@/components/WaveformDisplay"
-import { LevelMeter } from "@/components/LevelMeter"
-import { GainStagingHelper } from "@/components/GainStagingHelper"
+import { ProfessionalMeters } from "@/components/ProfessionalMeters"
 import { useRecording, useFileSystem, useWaveform, useLoopDetection, useAudioPlayback, useMidiDevices, useAudioInputDevices, useAudioOutputDevices, useDeviceConnection, useRealTimeVisualization } from "@/hooks/useTauri"
 import { useRecordingState } from "@/hooks/useRecordingState"
 import { useRecordingCountdown } from "@/hooks/useRecordingCountdown"
@@ -898,15 +897,16 @@ export default function App() {
               {/* Recording Controls */}
               <Card className="bg-gray-900 border-gray-700">
                 <CardContent className="pt-8">
-                  {/* ARM State and Level Meter */}
+                  {/* Professional Audio Monitoring */}
                   {showLevelMeter && (
-                    <div className="mb-6 space-y-4">
-                      <div className="p-4 bg-gray-800 rounded-lg border border-yellow-600/30">
-                        <LevelMeter isVisible={showLevelMeter} />
+                    <div className="mb-6">
+                      <div className="p-4 bg-gray-800 rounded-lg border border-blue-600/30">
+                        <div className="mb-2">
+                          <h3 className="text-sm font-semibold text-blue-200">PROFESSIONAL AUDIO MONITORING</h3>
+                          <p className="text-xs text-gray-400">Industry-standard VU, PPM, and Digital Peak meters with professional gain staging</p>
+                        </div>
+                        <ProfessionalMeters isVisible={showLevelMeter} />
                       </div>
-                      
-                      {/* Professional Gain Staging Helper */}
-                      <GainStagingHelper isVisible={showLevelMeter} />
                     </div>
                   )}
 

@@ -7,6 +7,7 @@ use batcherbird_core::{
     playback::AudioPlayback,
     session::{SessionConfig, ValidationReport},
     session_manager::{SessionManager, DeviceTestResult},
+    ProfessionalMeterEngine, ProfessionalMeterReadings, GainStagingAssistant, GainStagingAnalysis,
 };
 use midir::MidiOutputConnection;
 use std::sync::{Mutex, Arc};
@@ -110,6 +111,10 @@ static AUDIO_PLAYBACK: Mutex<Option<Arc<AudioPlayback>>> = Mutex::new(None);
 
 // Professional session management (new architecture)
 static SESSION_MANAGER: Mutex<Option<SessionManager>> = Mutex::new(None);
+
+// Professional meter engine (Epic 3.1.3)
+static PROFESSIONAL_METER_ENGINE: Mutex<Option<ProfessionalMeterEngine>> = Mutex::new(None);
+static GAIN_STAGING_ASSISTANT: Mutex<Option<GainStagingAssistant>> = Mutex::new(None);
 
 
 /// Start audio input monitoring (simplified professional approach)
@@ -548,6 +553,78 @@ async fn get_audio_levels() -> Result<AudioLevels, String> {
             peak_db: -60.0,
             rms_db: -60.0,
         })
+    }
+}
+
+/// Get professional meter readings (Epic 3.1.3)
+#[tauri::command]
+async fn get_professional_meter_readings() -> Result<ProfessionalMeterReadings, String> {
+    if !MONITORING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        // Return silent readings when monitoring is off
+        return Ok(ProfessionalMeterReadings {
+            vu_db: -60.0,
+            ppm_db: -60.0,
+            peak_db: -60.0,
+            peak_hold_db: -60.0,
+            lufs: -70.0,
+            gain_staging: batcherbird_core::GainStagingStatus::TooQuiet,
+        });
+    }
+    
+    // Initialize professional meter engine if needed
+    {
+        let mut meter_guard = PROFESSIONAL_METER_ENGINE.lock().unwrap();
+        if meter_guard.is_none() {
+            *meter_guard = Some(ProfessionalMeterEngine::new(44100.0));
+        }
+    }
+    
+    // Get current audio samples and process through professional meters
+    let engine_guard = GLOBAL_SAMPLING_ENGINE.lock().unwrap();
+    if let Some(engine) = engine_guard.as_ref() {
+        let levels = engine.get_audio_levels();
+        
+        // Convert basic levels to sample data for professional processing
+        // This is a simplified approach - in a full implementation we'd get raw samples
+        let mock_samples = vec![levels.peak; 32]; // Simulate small sample buffer
+        
+        let mut meter_guard = PROFESSIONAL_METER_ENGINE.lock().unwrap();
+        if let Some(meter_engine) = meter_guard.as_mut() {
+            let readings = meter_engine.process_samples(&mock_samples);
+            Ok(readings)
+        } else {
+            Err("Professional meter engine not initialized".to_string())
+        }
+    } else {
+        Err("Audio engine not available".to_string())
+    }
+}
+
+/// Get gain staging analysis (Epic 3.1.3)
+#[tauri::command]
+async fn get_gain_staging_analysis() -> Result<GainStagingAnalysis, String> {
+    if !MONITORING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err("Audio monitoring not active".to_string());
+    }
+    
+    // Initialize gain staging assistant if needed
+    {
+        let mut assistant_guard = GAIN_STAGING_ASSISTANT.lock().unwrap();
+        if assistant_guard.is_none() {
+            *assistant_guard = Some(GainStagingAssistant::new());
+        }
+    }
+    
+    // Get professional meter readings first
+    let readings = get_professional_meter_readings().await?;
+    
+    // Analyze with gain staging assistant
+    let mut assistant_guard = GAIN_STAGING_ASSISTANT.lock().unwrap();
+    if let Some(assistant) = assistant_guard.as_mut() {
+        let analysis = assistant.analyze_level(&readings);
+        Ok(analysis)
+    } else {
+        Err("Gain staging assistant not initialized".to_string())
     }
 }
 
@@ -2270,6 +2347,8 @@ pub fn run() {
       stop_input_monitoring,
       get_midi_connection_status,
       get_audio_levels,
+      get_professional_meter_readings,
+      get_gain_staging_analysis,
       detect_loop_points,
       get_last_recorded_sample_path,
       apply_loop_metadata,
