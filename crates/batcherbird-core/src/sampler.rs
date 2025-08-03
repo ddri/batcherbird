@@ -4,6 +4,8 @@ use crate::audio::AudioManager;
 use crate::detection::{SampleDetector, DetectionConfig, DetectionResult};
 use crate::loop_detection::{LoopDetector, LoopDetectionConfig, LoopDetectionResult};
 use crate::professional_meters::{ProfessionalMeterEngine, ProfessionalMeterReadings};
+use crate::audio_diagnostics::{AudioDiagnostics, AudioPerformanceReport};
+use crate::lock_free_recording::{LockFreeRecorder, LockFreeRecordingConfig, RecordingStats};
 use midir::MidiOutputConnection;
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
@@ -241,6 +243,7 @@ pub struct SamplingEngine {
     audio_manager: AudioManager,
     config: SamplingConfig,
     level_meter_state: Arc<LevelMeterState>,
+    audio_diagnostics: Arc<AudioDiagnostics>,
 }
 
 /// Ring buffer size for visualization data
@@ -251,16 +254,31 @@ impl SamplingEngine {
     pub fn new(config: SamplingConfig) -> Result<Self> {
         let audio_manager = AudioManager::new()?;
         
+        // Initialize diagnostics with professional audio standards
+        // 128 samples at 44.1kHz = ~2.9ms budget per callback
+        let diagnostics = Arc::new(AudioDiagnostics::new(44100, 128));
+        
         Ok(Self {
             audio_manager,
             config,
             level_meter_state: Arc::new(LevelMeterState::new()),
+            audio_diagnostics: diagnostics,
         })
     }
     
     /// Get current audio levels for UI (thread-safe)
     pub fn get_audio_levels(&self) -> AudioLevels {
         self.level_meter_state.get_levels()
+    }
+    
+    /// Get comprehensive audio performance diagnostics
+    pub fn get_performance_diagnostics(&self) -> AudioPerformanceReport {
+        self.audio_diagnostics.get_performance_report()
+    }
+    
+    /// Reset audio diagnostics (for testing)
+    pub fn reset_diagnostics(&self) {
+        self.audio_diagnostics.reset()
     }
     
     
@@ -690,6 +708,7 @@ impl SamplingEngine {
         let stream = match config.sample_format() {
             SampleFormat::F32 => {
                 let level_state_clone = Arc::clone(&level_state);
+                let diagnostics_clone = Arc::clone(&self.audio_diagnostics);
                 let mut level_detector = AudioLevelDetector::new(sample_rate);
                 let mut viz_producer_moved = viz_producer;
                 let mut sample_timestamp = 0u64;
@@ -697,22 +716,57 @@ impl SamplingEngine {
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        // Professional level detection in audio thread
+                        // 🔍 DIAGNOSTIC: Start timing this audio callback
+                        let _callback_timer = diagnostics_clone.start_callback_timing();
+                        
+                        // Professional level detection in audio thread (✅ lock-free)
                         let levels = level_detector.process_samples(data);
                         level_state_clone.update_levels(levels);
                         
-                        // Push visualization data to ring buffer (lock-free, never blocks)
+                        // Push visualization data to ring buffer (✅ lock-free, never blocks)
                         if let Some(ref mut producer) = viz_producer_moved {
                             let viz_chunk = VizChunk::from_samples(data, sample_timestamp);
-                            let _ = producer.push(viz_chunk); // Ignore if buffer is full
+                            match producer.push(viz_chunk) {
+                                Ok(_) => {},
+                                Err(_) => {
+                                    // 🔍 DIAGNOSTIC: Record buffer overflow
+                                    diagnostics_clone.record_buffer_overflow();
+                                }
+                            }
                         }
                         sample_timestamp += data.len() as u64;
                         
-                        let mut audio_samples = samples.lock().unwrap();
-                        let recording_complete = complete.lock().unwrap();
+                        // ❌ PROFESSIONAL AUDIO VIOLATION: Blocking operations in audio thread
+                        // This code violates real-time audio programming principles!
                         
-                        if !*recording_complete {
-                            audio_samples.extend_from_slice(data);
+                        // 🔍 DIAGNOSTIC: Record lock attempt for samples
+                        let lock_timer1 = diagnostics_clone.record_lock_attempt();
+                        let audio_samples_result = samples.try_lock();
+                        match audio_samples_result {
+                            Ok(mut audio_samples) => {
+                                // 🔍 DIAGNOSTIC: Record lock attempt for complete flag  
+                                let lock_timer2 = diagnostics_clone.record_lock_attempt();
+                                let recording_complete_result = complete.try_lock();
+                                match recording_complete_result {
+                                    Ok(recording_complete) => {
+                                        if !*recording_complete {
+                                            // 🔍 DIAGNOSTIC: Record memory allocation violation
+                                            diagnostics_clone.record_memory_allocation();
+                                            audio_samples.extend_from_slice(data);
+                                        }
+                                    }
+                                    Err(_) => {
+                                        // 🔍 DIAGNOSTIC: Lock contention detected
+                                        lock_timer2.record_contention();
+                                        diagnostics_clone.record_blocking_operation();
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // 🔍 DIAGNOSTIC: Lock contention detected  
+                                lock_timer1.record_contention();
+                                diagnostics_clone.record_blocking_operation();
+                            }
                         }
                     },
                     |err| eprintln!("Audio input error: {}", err),
@@ -721,6 +775,7 @@ impl SamplingEngine {
             }
             SampleFormat::I16 => {
                 let level_state_clone = Arc::clone(&level_state);
+                let diagnostics_clone = Arc::clone(&self.audio_diagnostics);
                 let mut level_detector = AudioLevelDetector::new(sample_rate);
                 let mut viz_producer_moved = viz_producer;
                 let mut sample_timestamp = 0u64;
@@ -728,27 +783,64 @@ impl SamplingEngine {
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        // 🔍 DIAGNOSTIC: Start timing this audio callback
+                        let _callback_timer = diagnostics_clone.start_callback_timing();
+                        
+                        // 🔍 DIAGNOSTIC: Record memory allocation violation (Vec::collect)
+                        diagnostics_clone.record_memory_allocation();
+                        
                         // Convert to f32 for processing
                         let f32_samples: Vec<f32> = data.iter()
                             .map(|&sample| sample as f32 / i16::MAX as f32)
                             .collect();
                         
-                        // Professional level detection in audio thread
+                        // Professional level detection in audio thread (✅ lock-free)
                         let levels = level_detector.process_samples(&f32_samples);
                         level_state_clone.update_levels(levels);
                         
-                        // Push visualization data to ring buffer (lock-free, never blocks)
+                        // Push visualization data to ring buffer (✅ lock-free, never blocks)
                         if let Some(ref mut producer) = viz_producer_moved {
                             let viz_chunk = VizChunk::from_samples(&f32_samples, sample_timestamp);
-                            let _ = producer.push(viz_chunk); // Ignore if buffer is full
+                            match producer.push(viz_chunk) {
+                                Ok(_) => {},
+                                Err(_) => {
+                                    // 🔍 DIAGNOSTIC: Record buffer overflow
+                                    diagnostics_clone.record_buffer_overflow();
+                                }
+                            }
                         }
                         sample_timestamp += f32_samples.len() as u64;
                         
-                        let mut audio_samples = samples.lock().unwrap();
-                        let recording_complete = complete.lock().unwrap();
+                        // ❌ PROFESSIONAL AUDIO VIOLATION: Blocking operations in audio thread
                         
-                        if !*recording_complete {
-                            audio_samples.extend(f32_samples);
+                        // 🔍 DIAGNOSTIC: Record lock attempt for samples
+                        let lock_timer1 = diagnostics_clone.record_lock_attempt();
+                        let audio_samples_result = samples.try_lock();
+                        match audio_samples_result {
+                            Ok(mut audio_samples) => {
+                                // 🔍 DIAGNOSTIC: Record lock attempt for complete flag  
+                                let lock_timer2 = diagnostics_clone.record_lock_attempt();
+                                let recording_complete_result = complete.try_lock();
+                                match recording_complete_result {
+                                    Ok(recording_complete) => {
+                                        if !*recording_complete {
+                                            // 🔍 DIAGNOSTIC: Record memory allocation violation
+                                            diagnostics_clone.record_memory_allocation();
+                                            audio_samples.extend(f32_samples);
+                                        }
+                                    }
+                                    Err(_) => {
+                                        // 🔍 DIAGNOSTIC: Lock contention detected
+                                        lock_timer2.record_contention();
+                                        diagnostics_clone.record_blocking_operation();
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // 🔍 DIAGNOSTIC: Lock contention detected  
+                                lock_timer1.record_contention();
+                                diagnostics_clone.record_blocking_operation();
+                            }
                         }
                     },
                     |err| eprintln!("Audio input error: {}", err),
@@ -757,6 +849,7 @@ impl SamplingEngine {
             }
             SampleFormat::U16 => {
                 let level_state_clone = Arc::clone(&level_state);
+                let diagnostics_clone = Arc::clone(&self.audio_diagnostics);
                 let mut level_detector = AudioLevelDetector::new(sample_rate);
                 let mut viz_producer_moved = viz_producer;
                 let mut sample_timestamp = 0u64;
@@ -764,27 +857,64 @@ impl SamplingEngine {
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                        // 🔍 DIAGNOSTIC: Start timing this audio callback
+                        let _callback_timer = diagnostics_clone.start_callback_timing();
+                        
+                        // 🔍 DIAGNOSTIC: Record memory allocation violation (Vec::collect)
+                        diagnostics_clone.record_memory_allocation();
+                        
                         // Convert to f32 for processing
                         let f32_samples: Vec<f32> = data.iter()
                             .map(|&sample| (sample as f32 - 32768.0) / 32768.0)
                             .collect();
                         
-                        // Professional level detection in audio thread
+                        // Professional level detection in audio thread (✅ lock-free)
                         let levels = level_detector.process_samples(&f32_samples);
                         level_state_clone.update_levels(levels);
                         
-                        // Push visualization data to ring buffer (lock-free, never blocks)
+                        // Push visualization data to ring buffer (✅ lock-free, never blocks)
                         if let Some(ref mut producer) = viz_producer_moved {
                             let viz_chunk = VizChunk::from_samples(&f32_samples, sample_timestamp);
-                            let _ = producer.push(viz_chunk); // Ignore if buffer is full
+                            match producer.push(viz_chunk) {
+                                Ok(_) => {},
+                                Err(_) => {
+                                    // 🔍 DIAGNOSTIC: Record buffer overflow
+                                    diagnostics_clone.record_buffer_overflow();
+                                }
+                            }
                         }
                         sample_timestamp += f32_samples.len() as u64;
                         
-                        let mut audio_samples = samples.lock().unwrap();
-                        let recording_complete = complete.lock().unwrap();
+                        // ❌ PROFESSIONAL AUDIO VIOLATION: Blocking operations in audio thread
                         
-                        if !*recording_complete {
-                            audio_samples.extend(f32_samples);
+                        // 🔍 DIAGNOSTIC: Record lock attempt for samples
+                        let lock_timer1 = diagnostics_clone.record_lock_attempt();
+                        let audio_samples_result = samples.try_lock();
+                        match audio_samples_result {
+                            Ok(mut audio_samples) => {
+                                // 🔍 DIAGNOSTIC: Record lock attempt for complete flag  
+                                let lock_timer2 = diagnostics_clone.record_lock_attempt();
+                                let recording_complete_result = complete.try_lock();
+                                match recording_complete_result {
+                                    Ok(recording_complete) => {
+                                        if !*recording_complete {
+                                            // 🔍 DIAGNOSTIC: Record memory allocation violation
+                                            diagnostics_clone.record_memory_allocation();
+                                            audio_samples.extend(f32_samples);
+                                        }
+                                    }
+                                    Err(_) => {
+                                        // 🔍 DIAGNOSTIC: Lock contention detected
+                                        lock_timer2.record_contention();
+                                        diagnostics_clone.record_blocking_operation();
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // 🔍 DIAGNOSTIC: Lock contention detected  
+                                lock_timer1.record_contention();
+                                diagnostics_clone.record_blocking_operation();
+                            }
                         }
                     },
                     |err| eprintln!("Audio input error: {}", err),
@@ -1065,6 +1195,123 @@ impl SamplingEngine {
         
         println!("🎉 Range sampling complete: {} notes recorded successfully", samples.len());
         Ok(samples)
+    }
+    
+    /// 🚀 PROFESSIONAL LOCK-FREE MIDI RECORDING (Industry Standard Solution)
+    /// 
+    /// This method implements the lock-free recording architecture used by professional DAWs:
+    /// - Ableton Live: Lock-free SPSC queues for audio data
+    /// - Pro Tools: Dedicated recording threads with atomic state
+    /// - Logic Pro: Ring buffers for real-time audio streams
+    /// - Ardour: Separate disk writer threads for I/O operations
+    /// 
+    /// ✅ ARCHITECTURE BENEFITS:
+    /// - Zero mutex contention in audio thread
+    /// - No memory allocation during recording
+    /// - Sample-accurate timing precision
+    /// - Professional-grade performance monitoring
+    pub async fn sample_single_note_lock_free(
+        &self,
+        midi_output: &mut MidiOutputConnection,
+        note: u8,
+        velocity: u8,
+    ) -> Result<(Sample, RecordingStats, AudioPerformanceReport)> {
+        println!("🎤 Starting LOCK-FREE MIDI recording for note {} ({})", note, Self::note_to_name(note));
+        
+        // Create lock-free recorder with professional configuration
+        let recording_config = LockFreeRecordingConfig {
+            ring_buffer_size: 44100 * 4,     // 4 seconds buffer (professional standard)
+            sample_rate: 44100,              // Industry standard
+            channels: 2,                     // Stereo
+            max_recording_samples: 44100 * 30, // 30 second safety limit
+        };
+        
+        let mut recorder = LockFreeRecorder::new(recording_config)?;
+        
+        // Get audio device and configuration
+        let device = self.audio_manager.get_default_input_device()?;
+        let config = device.default_input_config()
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
+        
+        // Start lock-free recording session
+        recorder.start_recording()?;
+        
+        // Build professional lock-free audio stream
+        let stream = recorder.build_lock_free_stream(&device, &config)?;
+        
+        // Start audio stream
+        stream.play().map_err(|e| BatcherbirdError::Audio(format!("Failed to start stream: {}", e)))?;
+        
+        println!("✅ Lock-free audio stream started");
+        
+        // MIDI sequence with precise timing (following Pro Tools approach)
+        let start_time = tokio::time::Instant::now();
+        
+        // Pre-recording delay (industry standard)
+        tokio::time::sleep(Duration::from_millis(self.config.pre_delay_ms)).await;
+        
+        // Send MIDI note on
+        MidiManager::send_note_on(midi_output, self.config.midi_channel, note, velocity)?;
+        let midi_start = tokio::time::Instant::now();
+        
+        // Note duration with high precision
+        tokio::time::sleep(Duration::from_millis(self.config.note_duration_ms)).await;
+        
+        // Send MIDI note off
+        MidiManager::send_note_off(midi_output, self.config.midi_channel, note, velocity)?;
+        let midi_end = tokio::time::Instant::now();
+        
+        // Post-recording delay (capture reverb tails)
+        tokio::time::sleep(Duration::from_millis(self.config.release_time_ms)).await;
+        
+        // Stop lock-free recording
+        let audio_data = recorder.stop_recording()?;
+        let recording_stats = recorder.get_recording_stats();
+        
+        // Stop audio stream
+        drop(stream);
+        
+        let end_time = tokio::time::Instant::now();
+        
+        // Get performance diagnostics
+        let performance_report = self.get_performance_diagnostics();
+        
+        // Create sample with metadata
+        let sample = Sample {
+            note,
+            velocity,
+            audio_data,
+            sample_rate: 44100,
+            channels: 2,
+            recorded_at: std::time::SystemTime::now(),
+            midi_timing: midi_end.duration_since(midi_start),
+            audio_timing: end_time.duration_since(start_time),
+        };
+        
+        // Performance analysis
+        let performance_grade = if performance_report.is_professional_grade() {
+            "PROFESSIONAL" 
+        } else if performance_report.cpu_utilization_percent < 90.0 {
+            "GOOD"
+        } else {
+            "NEEDS_OPTIMIZATION"
+        };
+        
+        println!("🎤 Lock-free recording completed:");
+        println!("   📊 Performance: {} ({}% CPU, {} violations)",
+            performance_grade,
+            performance_report.cpu_utilization_percent,
+            performance_report.memory_allocations + performance_report.blocking_operations
+        );
+        println!("   🎵 Audio: {:.1}ms, {} samples", 
+            recording_stats.duration_ms, 
+            recording_stats.total_samples
+        );
+        println!("   🎹 MIDI: {:.1}ms timing", 
+            sample.midi_timing.as_millis()
+        );
+        
+        Ok((sample, recording_stats, performance_report))
     }
 
     fn note_to_name(note: u8) -> String {

@@ -1,7 +1,7 @@
 use crate::{Result, BatcherbirdError};
 
 /// Sample detection configuration for automatic trimming
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DetectionConfig {
     /// Threshold in dB below which audio is considered silence (-60dB to -10dB)
     pub threshold_db: f32,
@@ -74,7 +74,7 @@ impl DetectionConfig {
 }
 
 /// Result of sample detection analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DetectionResult {
     /// Start sample index (after applying pre-trigger)
     pub start_sample: usize,

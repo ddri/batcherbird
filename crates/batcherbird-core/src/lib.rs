@@ -22,6 +22,8 @@ pub mod advanced_sampler_formats;
 pub mod quality_validation;
 pub mod playback;
 pub mod professional_meters;
+pub mod audio_diagnostics;
+pub mod lock_free_recording;
 
 pub use error::{BatcherbirdError, Result};
 pub use sampler::{AudioLevels, LevelMeterState};
@@ -54,6 +56,12 @@ pub use advanced_sampler_formats::{
 pub use quality_validation::{
     ProfessionalQualityValidator, QualityValidationConfig, QualityThresholds, ValidationResult,
     ValidationStatus, AudioQualityMetrics, QualityRecommendation, RecommendationSeverity
+};
+pub use audio_diagnostics::{
+    AudioDiagnostics, AudioPerformanceReport, CallbackTimer, LockTimer, PerformanceStatus
+};
+pub use lock_free_recording::{
+    LockFreeRecorder, LockFreeRecordingConfig, RecordingStats, RecordingPerformanceGrade
 };
 
 #[cfg(test)]

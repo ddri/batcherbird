@@ -12,7 +12,7 @@ use crate::detection::{DetectionConfig, DetectionResult};
 use std::collections::VecDeque;
 
 /// Advanced detection algorithms for different types of synthesizer content
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DetectionAlgorithm {
     /// Enhanced RMS with adaptive windowing
     AdaptiveRMS,
@@ -25,7 +25,7 @@ pub enum DetectionAlgorithm {
 }
 
 /// Synthesizer-specific detection profiles based on Epic 3.2 research
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SynthesizerProfile {
     /// Pads/Strings: Slow attack, long decay, requires spectral flux
     Pads,
@@ -40,7 +40,7 @@ pub enum SynthesizerProfile {
 }
 
 /// Enhanced detection configuration with multi-algorithm support
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IntelligentDetectionConfig {
     /// Base detection configuration (compatibility with existing system)
     pub base_config: DetectionConfig,
@@ -297,7 +297,7 @@ impl AdaptiveThreshold {
 }
 
 /// Enhanced detection result with multi-algorithm confidence scores
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IntelligentDetectionResult {
     /// Base detection result (compatible with existing system)
     pub base_result: DetectionResult,
