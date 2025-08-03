@@ -22,6 +22,7 @@ rtrb = "0.3"
 dirs = "5.0"
 wide = "0.7"  # SIMD optimization for professional meter calculations
 rustfft = "6.0"  # FFT-based loop detection using Wiener-Khinchin theorem
+rayon = "1.8"  # Parallel batch processing for 4-8x speedup
 
 [features]
 default = []

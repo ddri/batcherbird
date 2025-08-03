@@ -17,6 +17,9 @@ pub mod loop_detection;
 pub mod advanced_loop_detection;
 pub mod professional_metadata;
 pub mod crossfading;
+pub mod batch_processing;
+pub mod advanced_sampler_formats;
+pub mod quality_validation;
 pub mod playback;
 pub mod professional_meters;
 
@@ -38,6 +41,19 @@ pub use professional_metadata::{
 };
 pub use crossfading::{
     EqualPowerCrossfader, CrossfadeConfig, CrossfadeResult, CrossfadeQuality, CrossfadeCurve, PhaseAlignment
+};
+pub use batch_processing::{
+    BatchProcessor, BatchConfig, BatchResult, BatchProgress, SampleData, BatchPerformanceMetrics,
+    StreamingProcessor, StreamConfig, MemoryManager
+};
+pub use advanced_sampler_formats::{
+    AdvancedInstrument, AdvancedSamplerExporter, VelocityLayer, VelocityLayerEngine, 
+    RoundRobinGroup, RoundRobinProcessor, ReleaseSample, Articulation, ArticulationTrigger,
+    LoopPoints, SampleInfo, InstrumentSettings, ADSREnvelope, FilterSettings
+};
+pub use quality_validation::{
+    ProfessionalQualityValidator, QualityValidationConfig, QualityThresholds, ValidationResult,
+    ValidationStatus, AudioQualityMetrics, QualityRecommendation, RecommendationSeverity
 };
 
 #[cfg(test)]
