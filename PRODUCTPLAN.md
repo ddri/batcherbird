@@ -143,14 +143,116 @@ Musicians with hardware synthesizers (like Korg DW-6000) who want to:
 - `spectrum-analyzer` for real-time spectral analysis
 - `wide` for SIMD optimization
 
-### Epic 4: Advanced Sampling Features (FUTURE)
-**Goal**: Power-user features for advanced sampling workflows.
+### Epic 4: Advanced Sampling Features 
+**Goal**: Transform BatcherBird into a complete professional sampling suite with automated multi-sampling workflows, comprehensive template management, and professional export capabilities that match commercial sampling software.
 
-#### Potential Milestones:
-- Velocity layer recording automation
-- Note range recording with progress tracking
-- Template saving/loading
-- Batch processing capabilities
+**Duration**: 8-12 weeks | **Priority**: High | **Technical Research**: See EPIC-4-COMPREHENSIVE-RESEARCH.md
+
+**User Story**: As a professional musician creating sample libraries, I want automated multi-sampling workflows, comprehensive template management, and professional export capabilities that match the efficiency and quality of commercial sampling software, enabling me to create complete instrument libraries with velocity layers, chromatic ranges, and professional metadata.
+
+**Technical Foundation**: 
+- Professional-grade velocity layer recording (4, 6, 8, 16 layers)
+- Chromatic range automation (88-note support)
+- Advanced template and session management
+- Multi-format export engine (Kontakt, EXS24, SoundFont, HALion)
+
+#### Epic 4.1: Intelligent Velocity Layer Recording System
+**Duration**: 3 weeks | **Priority**: High | **Complexity**: High
+
+**Goal**: Implement professional-grade automated velocity layer recording with industry-standard layer configurations and quality validation.
+
+**Milestones**:
+- **M4.1.1**: Velocity Layer Engine & Configuration System (Week 1)
+  - Velocity layer templates (4, 6, 8, 16 layers) with professional curves
+  - Custom velocity mapping and crossfade zones
+  - MIDI automation for velocity sequence generation
+  - Quality validation for consistency across layers
+
+- **M4.1.2**: Automated Recording Workflow (Week 2)  
+  - MIDI sequence generation with configurable timing
+  - Professional state management for multi-layer recording
+  - Progress tracking with layer completion visualization
+  - Error recovery for missed notes and interruptions
+
+- **M4.1.3**: Professional Crossfade & Export Integration (Week 3)
+  - Equal-power crossfading algorithms
+  - Automatic gain compensation between layers
+  - Velocity layer metadata for sampler formats
+  - Template saving for reusable configurations
+
+#### Epic 4.2: Professional Note Range & Batch Recording System
+**Duration**: 3 weeks | **Priority**: High | **Complexity**: High
+
+**Goal**: Implement comprehensive chromatic range recording with intelligent batch processing and session management.
+
+**Milestones**:
+- **M4.2.1**: Chromatic Range Recording Engine (Week 1)
+  - 88-note range support (C0-C8) with customizable ranges
+  - Interval patterns (every note, every 3rd note, octave sampling)
+  - Automatic transposition with quality preservation
+  - MIDI sequence generation for chromatic automation
+
+- **M4.2.2**: Intelligent Batch Processing & Session Management (Week 2)
+  - Session recovery for interrupted recordings
+  - Progress persistence and restoration
+  - Memory management for large batch operations
+  - Real-time quality control during batch recording
+
+- **M4.2.3**: Advanced Batch Operations & Optimization (Week 3)
+  - Parallel processing with rayon (4-8x speedup)
+  - Background operations without blocking UI
+  - Memory optimization with streaming processing
+  - Automated export pipeline after batch completion
+
+#### Epic 4.3: Advanced Template & Session Management System
+**Duration**: 2.5 weeks | **Priority**: Medium | **Complexity**: Medium
+
+**Goal**: Implement comprehensive project management with templates, sessions, and collaborative workflows.
+
+**Milestones**:
+- **M4.3.1**: Template System & Project Structure (Week 1)
+  - Reusable templates for different sampling scenarios
+  - Organized project hierarchy with automatic organization
+  - Template import/export and sharing capabilities
+  - Version control for templates and configurations
+
+- **M4.3.2**: Session Management & Collaboration Features (Week 1.5)
+  - Complete session persistence and restoration
+  - Project package export/import for collaboration
+  - Multi-user project management support
+  - Automatic backup systems and recovery
+
+#### Epic 4.4: Professional Export Engine & Format Support
+**Duration**: 2.5 weeks | **Priority**: Medium | **Complexity**: High
+
+**Goal**: Implement comprehensive export capabilities with professional sampler format support and batch optimization.
+
+**Milestones**:
+- **M4.4.1**: Multi-Format Export Engine (Week 1)
+  - Support for Kontakt (.nki), EXS24 (.exs), SoundFont (.sf2), HALion (.vstpreset)
+  - Metadata translation to format-specific requirements
+  - Quality validation of exported instruments
+  - Parallel processing for batch export operations
+
+- **M4.4.2**: Advanced Metadata & Professional Standards Integration (Week 1.5)
+  - SMPL chunk support for industry-standard loop points
+  - Broadcast WAV metadata with professional standards
+  - Cross-platform testing across major DAWs
+  - Format-specific optimizations for best compatibility
+
+**Success Criteria**:
+- Automated recording of complete velocity layer sets (4-16 layers) for any note
+- Chromatic range recording (88 notes) completed in under 30 minutes
+- Session recovery capability for interrupted multi-hour recording sessions
+- Export to 4+ professional sampler formats with 100% DAW compatibility
+- Memory-efficient processing of 500+ samples (<200MB peak usage)
+- 4-8x speedup for batch operations on multi-core systems
+
+**Technical Dependencies**:
+- Advanced state machine for complex recording workflows
+- Enhanced database schema for sample metadata and relationships
+- Parallel processing architecture with rayon
+- Professional sampler format libraries and metadata standards
 
 ## Development Workflow
 
