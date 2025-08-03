@@ -12,6 +12,8 @@ import { DeviceStatusBar } from "@/components/DeviceStatusBar"
 import { SetupModal } from "@/components/SetupModal"
 import { WaveformDisplay } from "@/components/WaveformDisplay"
 import { ProfessionalMeters } from "@/components/ProfessionalMeters"
+import { IntelligentDetectionControls } from "@/components/IntelligentDetectionControls"
+import { QualityValidationDashboard } from "@/components/QualityValidationDashboard"
 import { useRecording, useFileSystem, useWaveform, useLoopDetection, useAudioPlayback, useMidiDevices, useAudioInputDevices, useAudioOutputDevices, useDeviceConnection, useRealTimeVisualization } from "@/hooks/useTauri"
 import { useRecordingState } from "@/hooks/useRecordingState"
 import { useRecordingCountdown } from "@/hooks/useRecordingCountdown"
@@ -894,6 +896,37 @@ export default function App() {
                 </CardContent>
               </Card>
 
+              {/* Intelligent Detection Controls */}
+              {lastRecordedFile && (
+                <IntelligentDetectionControls
+                  audioFilePath={lastRecordedFile}
+                  onTrimmingComplete={(trimmedPath) => {
+                    console.log('✅ Trimming completed:', trimmedPath)
+                    // Optionally load the trimmed file into the waveform display
+                    transitionToFilePlayback(trimmedPath, 500)
+                  }}
+                  isVisible={!!lastRecordedFile}
+                />
+              )}
+
+              {/* Quality Validation Dashboard */}
+              {lastRecordedFile && (
+                <QualityValidationDashboard
+                  audioFilePath={lastRecordedFile}
+                  onValidationComplete={(result) => {
+                    console.log('✅ Quality validation completed:', result)
+                    // Show notification for quality score
+                    const scoreMessage = `Quality score: ${result.metrics.overall_score.toFixed(1)}/10.0`
+                    if (result.metrics.overall_score >= 7.0) {
+                      showSuccess('Quality Analysis Complete', scoreMessage)
+                    } else {
+                      showError('Quality Analysis Complete', scoreMessage)
+                    }
+                  }}
+                  isVisible={!!lastRecordedFile}
+                />
+              )}
+              
               {/* Recording Controls */}
               <Card className="bg-gray-900 border-gray-700">
                 <CardContent className="pt-8">

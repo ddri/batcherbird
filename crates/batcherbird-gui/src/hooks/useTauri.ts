@@ -112,6 +112,46 @@ export interface VizChunk {
   chunk_size: number  // Number of samples in this chunk
 }
 
+// Intelligent Detection Types (Epic 3.2)
+export interface IntelligentDetectionConfig {
+  profile: string
+  rms_threshold: number
+  spectral_flux_threshold: number
+  phase_deviation_threshold: number
+  min_length_ms: number
+  pre_attack_ms: number
+  post_release_ms: number
+  fft_size: number
+  overlap_factor: number
+}
+
+export interface IntelligentDetectionResult {
+  start_sample: number
+  end_sample: number
+  confidence_score: number
+  algorithm_results: AlgorithmResult[]
+  profile_used: string
+  processing_time_ms: number
+}
+
+export interface AlgorithmResult {
+  algorithm: string
+  start_sample: number
+  end_sample: number
+  confidence: number
+  metadata: Record<string, any>
+}
+
+export interface TrimmingResult {
+  trimmed_audio: number[]
+  original_length: number
+  trimmed_length: number
+  removed_start_samples: number
+  removed_end_samples: number
+  fade_in_samples: number
+  fade_out_samples: number
+}
+
 // Device Management Hooks
 export function useMidiDevices() {
   const [devices, setDevices] = useState<string[]>([])
@@ -1017,6 +1057,93 @@ export function useRealTimeVisualization() {
     error,
     startRecording,
     stopRecording
+  }
+}
+
+// Intelligent Detection Hook (Epic 3.2)
+export function useIntelligentDetection() {
+  const [isDetecting, setIsDetecting] = useState(false)
+  const [isTrimming, setIsTrimming] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const getSynthesizerProfiles = useCallback(async () => {
+    try {
+      const profiles = await invoke<string[]>('get_synthesizer_profiles')
+      return profiles
+    } catch (err) {
+      console.error('Failed to get synthesizer profiles:', err)
+      throw err
+    }
+  }, [])
+
+  const getDetectionConfig = useCallback(async (profile: string) => {
+    try {
+      const configJson = await invoke<string>('get_detection_config', { profile })
+      const config: IntelligentDetectionConfig = JSON.parse(configJson)
+      return config
+    } catch (err) {
+      console.error('Failed to get detection config:', err)
+      throw err
+    }
+  }, [])
+
+  const detectSampleBoundaries = useCallback(async (
+    filePath: string,
+    profile: string,
+    customConfig?: IntelligentDetectionConfig
+  ) => {
+    setIsDetecting(true)
+    setError(null)
+    try {
+      const customConfigJson = customConfig ? JSON.stringify(customConfig) : undefined
+      const resultJson = await invoke<string>('detect_sample_boundaries', {
+        filePath,
+        profile,
+        customConfig: customConfigJson
+      })
+      const result: IntelligentDetectionResult = JSON.parse(resultJson)
+      return result
+    } catch (err) {
+      setError(err as string)
+      console.error('Failed to detect sample boundaries:', err)
+      throw err
+    } finally {
+      setIsDetecting(false)
+    }
+  }, [])
+
+  const applyProfessionalTrimming = useCallback(async (
+    filePath: string,
+    detectionResult: IntelligentDetectionResult,
+    outputPath?: string
+  ) => {
+    setIsTrimming(true)
+    setError(null)
+    try {
+      const detectionJson = JSON.stringify(detectionResult)
+      const trimmedPath = await invoke<string>('apply_professional_trimming', {
+        filePath,
+        detectionResult: detectionJson,
+        outputPath
+      })
+      return trimmedPath
+    } catch (err) {
+      setError(err as string)
+      console.error('Failed to apply professional trimming:', err)
+      throw err
+    } finally {
+      setIsTrimming(false)
+    }
+  }, [])
+
+  return {
+    isDetecting,
+    isTrimming,
+    error,
+    getSynthesizerProfiles,
+    getDetectionConfig,
+    detectSampleBoundaries,
+    applyProfessionalTrimming
   }
 }
 
