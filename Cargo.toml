@@ -8,8 +8,8 @@ resolver = "2"
 
 [workspace.dependencies]
 # Audio/MIDI core dependencies
-midir = "0.10"
-cpal = "0.15"
+midir = "0.10.1"
+cpal = "0.16.0"
 hound = "3.5"
 
 # Async runtime

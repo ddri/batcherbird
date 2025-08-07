@@ -465,6 +465,7 @@ impl SamplingEngine {
     
 
     /// Blocking interface for Tauri GUI layer (follows TAURI_AUDIO_ARCHITECTURE.md)
+    /// Uses professional lock-free recording architecture
     pub fn sample_single_note_blocking(
         &self,
         midi_conn: &mut MidiOutputConnection,
@@ -474,11 +475,19 @@ impl SamplingEngine {
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {}", e)))?;
         
-        // Execute the async operation in blocking context
-        rt.block_on(self.sample_single_note_async(midi_conn, note))
+        // Execute the professional lock-free method in blocking context
+        rt.block_on(async {
+            let (sample, _stats, _performance) = self.sample_single_note_lock_free(
+                midi_conn, 
+                note, 
+                self.config.velocity
+            ).await?;
+            Ok(sample)
+        })
     }
     
     /// Blocking interface with real-time visualization support
+    /// Uses professional lock-free recording with visualization
     pub fn sample_single_note_with_viz_blocking(
         &self,
         midi_conn: &mut MidiOutputConnection,
@@ -488,11 +497,55 @@ impl SamplingEngine {
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {}", e)))?;
         
-        // Execute the async operation in blocking context
-        rt.block_on(self.sample_single_note_with_viz_async(midi_conn, note))
+        // Execute the lock-free method and create visualization from audio data
+        rt.block_on(async {
+            let (sample, _stats, _performance) = self.sample_single_note_lock_free(
+                midi_conn, 
+                note, 
+                self.config.velocity
+            ).await?;
+            
+            // Create visualization data from the recorded audio
+            let viz_consumer = self.create_visualization_from_audio(&sample.audio_data, sample.sample_rate)?;
+            
+            Ok((sample, viz_consumer))
+        })
     }
 
-    /// Internal async implementation (Core Audio Engine)
+    /// Create visualization data from recorded audio (post-processing approach)
+    /// This provides compatibility with existing visualization while using lock-free recording
+    fn create_visualization_from_audio(
+        &self,
+        audio_data: &[f32],
+        sample_rate: u32,
+    ) -> Result<Consumer<VizChunk>> {
+        let (mut viz_producer, viz_consumer) = RingBuffer::<VizChunk>::new(VIZ_RING_BUFFER_SIZE);
+        
+        // Process audio data in chunks to simulate real-time visualization
+        let chunk_size = (sample_rate as f32 * 0.016) as usize; // ~16ms chunks for 60fps
+        let mut timestamp = 0u64;
+        
+        for chunk in audio_data.chunks(chunk_size) {
+            let viz_chunk = VizChunk::from_samples(chunk, timestamp);
+            
+            // Push to ring buffer (ignore if full - consumer responsibility)
+            if viz_producer.push(viz_chunk).is_err() {
+                // Ring buffer full - this is expected behavior
+                break;
+            }
+            
+            timestamp += chunk.len() as u64;
+        }
+        
+        println!("✅ Created visualization data: {} chunks from {} samples", 
+            audio_data.len() / chunk_size, audio_data.len());
+        
+        Ok(viz_consumer)
+    }
+
+    /// DEPRECATED: Legacy mutex-based implementation (violates real-time audio principles)
+    /// Use sample_single_note_lock_free() instead for professional-grade recording
+    #[deprecated(since = "0.3.0", note = "Use sample_single_note_lock_free() for professional audio quality")]
     async fn sample_single_note_async(
         &self,
         midi_conn: &mut MidiOutputConnection,
@@ -589,7 +642,9 @@ impl SamplingEngine {
         })
     }
 
-    /// Internal async implementation with real-time visualization support
+    /// DEPRECATED: Legacy mutex-based implementation with visualization (violates real-time audio principles)
+    /// Use sample_single_note_with_viz_blocking() which uses lock-free recording internally
+    #[deprecated(since = "0.3.0", note = "Use lock-free visualization approach in blocking method")]
     async fn sample_single_note_with_viz_async(
         &self,
         midi_conn: &mut MidiOutputConnection,
@@ -691,6 +746,8 @@ impl SamplingEngine {
         Ok((sample, viz_consumer))
     }
 
+    /// DEPRECATED: Legacy mutex-based stream builder (violates real-time audio principles)
+    #[deprecated(since = "0.3.0", note = "Use LockFreeRecorder.build_lock_free_stream() for professional audio")]
     fn build_recording_stream(
         &self,
         device: &cpal::Device,
@@ -929,8 +986,8 @@ impl SamplingEngine {
         Ok(stream)
     }
 
-    /// Build a persistent recording stream for range sampling (Ableton-style)
-    /// Unlike build_recording_stream, this uses recording_active flag instead of recording_complete
+    /// DEPRECATED: Legacy persistent stream builder (violates real-time audio principles)  
+    #[deprecated(since = "0.3.0", note = "Use LockFreeRecorder for professional range sampling")]
     fn build_persistent_recording_stream(
         &self,
         device: &cpal::Device,
