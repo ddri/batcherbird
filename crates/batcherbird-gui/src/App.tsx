@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react"
+import { listen } from "@tauri-apps/api/event"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -7,11 +8,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Progress } from "@/components/ui/progress"
 import { DeviceStatusBar } from "@/components/DeviceStatusBar"
 import { SetupModal } from "@/components/SetupModal"
 import { WaveformDisplay } from "@/components/WaveformDisplay"
 import { ProfessionalMeters } from "@/components/ProfessionalMeters"
+import { RealtimeMeters } from "@/components/RealtimeMeters"
 import { IntelligentDetectionControls } from "@/components/IntelligentDetectionControls"
 import { QualityValidationDashboard } from "@/components/QualityValidationDashboard"
 import { useRecording, useFileSystem, useWaveform, useLoopDetection, useAudioPlayback, useMidiDevices, useAudioInputDevices, useAudioOutputDevices, useDeviceConnection, useRealTimeVisualization } from "@/hooks/useTauri"
@@ -29,6 +30,7 @@ import {
   Layers,
   FolderOpen,
   Volume2,
+  X
 } from "lucide-react"
 
 
@@ -48,7 +50,6 @@ export default function App() {
   
   // Recording state
   const [isRecording, setIsRecording] = useState(false)
-  const [recordingProgress] = useState(0)
   const [velocityLayers, setVelocityLayers] = useState([127, 100, 80, 60, 40, 20])
   
   // Form state
@@ -65,13 +66,27 @@ export default function App() {
   const [recordingMode, setRecordingMode] = useState("single")
   const [startNote, setStartNote] = useState("36") // C2
   const [endNote, setEndNote] = useState("84") // C6
+  const [noteToNoteDelay, setNoteToNoteDelay] = useState(200) // ms between notes
+  const [layerToLayerDelay, setLayerToLayerDelay] = useState(500) // ms between velocity layers
+  
+  // Recording progress state for Epic 4
+  const [recordingProgress, setRecordingProgress] = useState<{
+    current: number
+    total: number
+    percent: number
+    note?: number
+    velocity?: number
+    layer?: number
+    totalLayers?: number
+    noteName?: string
+  } | null>(null)
   
   // Modal state
   const [setupModalOpen, setSetupModalOpen] = useState(false)
   const [setupModalTab, setSetupModalTab] = useState("midi")
   
   // Tauri hooks
-  const { recordSample, recordRange, previewNote, isRecording: backendRecording } = useRecording()
+  const { recordSample, recordRange, recordRangeWithVelocityLayers, previewNote, cancelRecording, isRecording: backendRecording } = useRecording()
   const { selectOutputDirectory, selectAudioFile, createDirectory } = useFileSystem()
   
   // Device hooks
@@ -91,6 +106,17 @@ export default function App() {
     loadAudioInputDevices()
     loadAudioOutputDevices()
   }, [loadMidiDevices, loadAudioInputDevices, loadAudioOutputDevices])
+  
+  // Listen for recording progress events (Epic 4)
+  useEffect(() => {
+    const unlisten = listen('recording_progress', (event) => {
+      setRecordingProgress(event.payload as any)
+    })
+    
+    return () => {
+      unlisten.then(fn => fn())
+    }
+  }, [])
 
   // Check if session initialization is needed
   useEffect(() => {
@@ -403,17 +429,44 @@ export default function App() {
         // Start real-time waveform visualization via Tauri channels
         await startRealTimeVisualization()
         
-        const result = await recordRange(
-          parseInt(startNote),
-          parseInt(endNote),
-          selectedVelocity[0],
-          selectedDuration[0],
-          capturedOutputDirectory,
-          capturedSampleName,
-          capturedExportFormat,
-          capturedCreatorName,
-          capturedInstrumentDescription
-        )
+        // Clear any previous progress
+        setRecordingProgress(null)
+        
+        // Check if velocity layers are enabled (more than 1 velocity)
+        const useVelocityLayers = velocityLayers.length > 1
+        
+        let result
+        if (useVelocityLayers) {
+          console.log("🎹 Recording range with velocity layers:", velocityLayers)
+          // Use the new Epic 4 command for velocity layers
+          result = await recordRangeWithVelocityLayers(
+            parseInt(startNote),
+            parseInt(endNote),
+            velocityLayers,  // Pass all velocity layers
+            selectedDuration[0],
+            capturedOutputDirectory,
+            capturedSampleName,
+            capturedExportFormat,
+            capturedCreatorName,
+            capturedInstrumentDescription,
+            noteToNoteDelay,
+            layerToLayerDelay
+          )
+        } else {
+          console.log("🎵 Recording range with single velocity:", velocityLayers[0] || selectedVelocity[0])
+          // Use the original command for single velocity
+          result = await recordRange(
+            parseInt(startNote),
+            parseInt(endNote),
+            velocityLayers[0] || selectedVelocity[0],  // Use first velocity layer if set
+            selectedDuration[0],
+            capturedOutputDirectory,
+            capturedSampleName,
+            capturedExportFormat,
+            capturedCreatorName,
+            capturedInstrumentDescription
+          )
+        }
         console.log("Range recording complete:", result)
         
         // Stop real-time visualization immediately after range recording completes
@@ -851,6 +904,56 @@ export default function App() {
                     </div>
                   </CardContent>
                 </Card>
+
+                {/* Recording Delays Configuration (Epic 4) */}
+                {recordingMode === "range" && velocityLayers.length > 1 && (
+                  <Card className="bg-gray-900 border-gray-700">
+                    <CardHeader>
+                      <CardTitle className="flex items-center space-x-2 text-gray-100 text-lg">
+                        <Clock className="w-5 h-5 text-gray-300" />
+                        <span>Recording Delays</span>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-4">
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <Label className="text-gray-200 text-sm">Note-to-Note Delay</Label>
+                            <span className="text-sm font-mono text-gray-300">{noteToNoteDelay}ms</span>
+                          </div>
+                          <Slider
+                            value={[noteToNoteDelay]}
+                            onValueChange={(value) => setNoteToNoteDelay(value[0])}
+                            min={50}
+                            max={1000}
+                            step={50}
+                            className="w-full"
+                          />
+                          <p className="text-xs text-gray-400 mt-1">
+                            Delay between recording each note
+                          </p>
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <Label className="text-gray-200 text-sm">Layer-to-Layer Delay</Label>
+                            <span className="text-sm font-mono text-gray-300">{layerToLayerDelay}ms</span>
+                          </div>
+                          <Slider
+                            value={[layerToLayerDelay]}
+                            onValueChange={(value) => setLayerToLayerDelay(value[0])}
+                            min={100}
+                            max={2000}
+                            step={100}
+                            className="w-full"
+                          />
+                          <p className="text-xs text-gray-400 mt-1">
+                            Delay between velocity layers
+                          </p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
               </div>
 
               {/* Waveform Display */}
@@ -943,6 +1046,17 @@ export default function App() {
                     </div>
                   )}
 
+                  {/* Real-time Lock-Free Meters */}
+                  {(showLevelMeter || isRecording) && (
+                    <div className="mt-4">
+                      <div className="mb-2">
+                        <h3 className="text-sm font-semibold">Real-time Level Meters (Lock-Free)</h3>
+                        <p className="text-xs text-gray-400">Professional 60fps meters with zero audio dropouts</p>
+                      </div>
+                      <RealtimeMeters isActive={showLevelMeter || isRecording} />
+                    </div>
+                  )}
+
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-4">
                       <div className="flex items-center space-x-4">
@@ -1001,11 +1115,56 @@ export default function App() {
                           )}
                         </Button>
                         {actuallyRecording && (
-                          <div className="flex items-center space-x-2">
-                            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                            <span className="text-sm text-gray-400">
-                              {recordingMode === "range" ? "Recording range..." : "Recording..."}
-                            </span>
+                          <div className="flex flex-col space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-2">
+                                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                                <span className="text-sm text-gray-400">
+                                  {recordingMode === "range" ? "Recording range..." : "Recording..."}
+                                </span>
+                              </div>
+                              {recordingMode === "range" && (
+                                <Button
+                                  onClick={async () => {
+                                    try {
+                                      await cancelRecording()
+                                      setRecordingProgress(null)
+                                      showSuccess('Recording Cancelled', 'The range recording has been cancelled')
+                                    } catch (err) {
+                                      console.error('Failed to cancel recording:', err)
+                                      showError('Cancellation Failed', 'Unable to cancel the recording')
+                                    }
+                                  }}
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-red-400 hover:text-red-300 hover:bg-red-950"
+                                >
+                                  <X className="w-4 h-4 mr-1" />
+                                  Cancel
+                                </Button>
+                              )}
+                            </div>
+                            {recordingProgress && recordingMode === "range" && (
+                              <div className="space-y-1">
+                                <div className="flex justify-between text-xs text-gray-400">
+                                  <span>
+                                    Note {recordingProgress.noteName || recordingProgress.note} 
+                                    {recordingProgress.velocity && ` • Velocity ${recordingProgress.velocity}`}
+                                    {recordingProgress.layer && ` • Layer ${recordingProgress.layer}/${recordingProgress.totalLayers}`}
+                                  </span>
+                                  <span>{recordingProgress.current}/{recordingProgress.total} samples</span>
+                                </div>
+                                <div className="w-full bg-gray-700 rounded-full h-2">
+                                  <div 
+                                    className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                                    style={{ width: `${recordingProgress.percent}%` }}
+                                  />
+                                </div>
+                                <div className="text-xs text-gray-500 text-center">
+                                  {recordingProgress.percent.toFixed(1)}% complete
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1021,15 +1180,6 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                  {isRecording && (
-                    <div className="mt-4">
-                      <div className="flex items-center justify-between text-sm mb-2 text-gray-300">
-                        <span>Progress</span>
-                        <span>{recordingProgress}%</span>
-                      </div>
-                      <Progress value={recordingProgress} className="w-full" />
-                    </div>
-                  )}
                 </CardContent>
               </Card>
             </div>

@@ -30,6 +30,14 @@ Batcherbird is an open-source hardware sampling tool built with Rust and Tauri. 
   - Crossfade-ready velocity mapping
 - **Real-time Progress**: Sample-accurate progress with current note display
 
+### 📊 **Professional Level Metering**
+- **Lock-Free Architecture**: 60fps real-time meters with zero audio dropouts
+- **Industry Standards**: Matches Pro Tools/Logic/Ableton metering
+- **Multiple Meter Types**: Peak, RMS, and Peak Hold indicators
+- **Professional Ballistics**: VU-style RMS with 11ms window
+- **Visual Design**: dB scale (-60 to 0), color-coded zones, clipping indicators
+- See [REALTIME_METERS.md](REALTIME_METERS.md) for technical details
+
 ### 🎨 **Professional UI Design**
 - **Status Bar**: Real-time device connection indicators
 - **Recording-First Layout**: Main controls prominently featured

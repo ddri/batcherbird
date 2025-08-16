@@ -7,6 +7,17 @@ use std::time::{Duration, Instant};
 use cpal::traits::DeviceTrait;
 use cpal::{SampleFormat, Stream, SupportedStreamConfig};
 
+/// Real-time meter data for lock-free streaming to UI
+#[derive(Debug, Clone, Copy)]
+pub struct RealtimeMeterData {
+    pub peak_left: f32,
+    pub peak_right: f32,
+    pub rms_left: f32,
+    pub rms_right: f32,
+    pub timestamp_ms: u64,
+    pub is_clipping: bool,
+}
+
 /// Professional lock-free audio recording architecture following DAW industry standards
 /// 
 /// Based on research from Ableton Live, Pro Tools, Logic Pro, and Ardour:
@@ -20,6 +31,10 @@ pub struct LockFreeRecorder {
     // Audio sample ring buffer (Single Producer, Single Consumer)
     sample_producer: Arc<std::sync::Mutex<Option<Producer<f32>>>>,
     sample_consumer: Option<Consumer<f32>>,
+    
+    // Meter data ring buffer for real-time UI streaming (NEW)
+    meter_producer: Arc<std::sync::Mutex<Option<Producer<RealtimeMeterData>>>>,
+    meter_consumer: Option<Consumer<RealtimeMeterData>>,
     
     // Recording state (lock-free atomic)
     is_recording: Arc<AtomicBool>,
@@ -72,9 +87,14 @@ impl LockFreeRecorder {
         // Create lock-free SPSC ring buffer for audio samples
         let (sample_producer, sample_consumer) = RingBuffer::<f32>::new(config.ring_buffer_size);
         
+        // Create lock-free ring buffer for meter data (60fps = 60 updates/sec)
+        let (meter_producer, meter_consumer) = RingBuffer::<RealtimeMeterData>::new(128);
+        
         Ok(Self {
             sample_producer: Arc::new(std::sync::Mutex::new(Some(sample_producer))),
             sample_consumer: Some(sample_consumer),
+            meter_producer: Arc::new(std::sync::Mutex::new(Some(meter_producer))),
+            meter_consumer: Some(meter_consumer),
             is_recording: Arc::new(AtomicBool::new(false)),
             samples_recorded: Arc::new(AtomicUsize::new(0)),
             sample_rate: config.sample_rate,
@@ -82,6 +102,11 @@ impl LockFreeRecorder {
             buffer_size: config.ring_buffer_size,
             consumer_thread: None,
         })
+    }
+    
+    /// Get meter data consumer for real-time UI streaming
+    pub fn take_meter_consumer(&mut self) -> Option<Consumer<RealtimeMeterData>> {
+        self.meter_consumer.take()
     }
     
     /// Start lock-free recording session
@@ -178,8 +203,16 @@ impl LockFreeRecorder {
                 .ok_or_else(|| BatcherbirdError::Audio("Producer already taken".to_string()))?
         };
         
+        // Get meter producer for real-time UI updates
+        let meter_producer = {
+            let mut meter_guard = self.meter_producer.lock().unwrap();
+            meter_guard.take()
+                .ok_or_else(|| BatcherbirdError::Audio("Meter producer already taken".to_string()))?
+        };
+        
         let is_recording = Arc::clone(&self.is_recording);
         let sample_rate = self.sample_rate;
+        let channels = self.channels;
         
         // Create standard audio configuration
         let stream_config = cpal::StreamConfig {
@@ -190,13 +223,13 @@ impl LockFreeRecorder {
         
         let stream = match config.sample_format() {
             SampleFormat::F32 => {
-                self.build_f32_stream(device, &stream_config, producer, is_recording)?
+                self.build_f32_stream(device, &stream_config, producer, meter_producer, is_recording, channels)?
             }
             SampleFormat::I16 => {
-                self.build_i16_stream(device, &stream_config, producer, is_recording)?
+                self.build_i16_stream(device, &stream_config, producer, meter_producer, is_recording, channels)?
             }
             SampleFormat::U16 => {
-                self.build_u16_stream(device, &stream_config, producer, is_recording)?
+                self.build_u16_stream(device, &stream_config, producer, meter_producer, is_recording, channels)?
             }
             _ => return Err(BatcherbirdError::Audio("Unsupported sample format".to_string())),
         };
@@ -210,8 +243,16 @@ impl LockFreeRecorder {
         device: &cpal::Device,
         config: &cpal::StreamConfig,
         mut producer: Producer<f32>,
+        mut meter_producer: Producer<RealtimeMeterData>,
         is_recording: Arc<AtomicBool>,
+        channels: u16,
     ) -> Result<Stream> {
+        let mut sample_count = 0u64;
+        let mut rms_accumulator_left = 0.0f32;
+        let mut rms_accumulator_right = 0.0f32;
+        let mut rms_window_samples = 0usize;
+        let rms_window_size = 512; // ~11ms at 44.1kHz for smooth meters
+        
         let stream = device.build_input_stream(
             config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
@@ -226,6 +267,73 @@ impl LockFreeRecorder {
                         }
                     }
                 }
+                
+                // Calculate real-time meter data (always, even when not recording)
+                let mut peak_left = 0.0f32;
+                let mut peak_right = 0.0f32;
+                let mut is_clipping = false;
+                
+                // Process samples based on channel configuration
+                if channels == 2 {
+                    // Stereo: interleaved L/R samples
+                    for chunk in data.chunks(2) {
+                        if let [left, right] = chunk {
+                            // Peak detection
+                            peak_left = peak_left.max(left.abs());
+                            peak_right = peak_right.max(right.abs());
+                            
+                            // RMS accumulation
+                            rms_accumulator_left += left * left;
+                            rms_accumulator_right += right * right;
+                            rms_window_samples += 1;
+                            
+                            // Clipping detection
+                            if left.abs() >= 0.999 || right.abs() >= 0.999 {
+                                is_clipping = true;
+                            }
+                        }
+                    }
+                } else {
+                    // Mono: all samples to both channels
+                    for &sample in data {
+                        peak_left = peak_left.max(sample.abs());
+                        peak_right = peak_left; // Same for mono
+                        
+                        rms_accumulator_left += sample * sample;
+                        rms_accumulator_right = rms_accumulator_left;
+                        rms_window_samples += 1;
+                        
+                        if sample.abs() >= 0.999 {
+                            is_clipping = true;
+                        }
+                    }
+                }
+                
+                // Calculate RMS when window is full
+                if rms_window_samples >= rms_window_size {
+                    let rms_left = (rms_accumulator_left / rms_window_samples as f32).sqrt();
+                    let rms_right = (rms_accumulator_right / rms_window_samples as f32).sqrt();
+                    
+                    // Create meter data
+                    let meter_data = RealtimeMeterData {
+                        peak_left,
+                        peak_right,
+                        rms_left,
+                        rms_right,
+                        timestamp_ms: sample_count * 1000 / 44100, // Convert to ms
+                        is_clipping,
+                    };
+                    
+                    // Push to meter ring buffer (non-blocking)
+                    let _ = meter_producer.push(meter_data);
+                    
+                    // Reset RMS accumulators
+                    rms_accumulator_left = 0.0;
+                    rms_accumulator_right = 0.0;
+                    rms_window_samples = 0;
+                }
+                
+                sample_count += data.len() as u64;
                 // ✅ No mutex locks, no memory allocation, no blocking operations
             },
             |err| eprintln!("🚨 Audio input error: {}", err),
@@ -241,7 +349,9 @@ impl LockFreeRecorder {
         device: &cpal::Device,
         config: &cpal::StreamConfig,
         mut producer: Producer<f32>,
+        mut meter_producer: Producer<RealtimeMeterData>,
         is_recording: Arc<AtomicBool>,
+        channels: u16,
     ) -> Result<Stream> {
         let stream = device.build_input_stream(
             config,
@@ -270,7 +380,9 @@ impl LockFreeRecorder {
         device: &cpal::Device,
         config: &cpal::StreamConfig,
         mut producer: Producer<f32>,
+        mut meter_producer: Producer<RealtimeMeterData>,
         is_recording: Arc<AtomicBool>,
+        channels: u16,
     ) -> Result<Stream> {
         let stream = device.build_input_stream(
             config,

@@ -61,7 +61,8 @@ pub use audio_diagnostics::{
     AudioDiagnostics, AudioPerformanceReport, CallbackTimer, LockTimer, PerformanceStatus
 };
 pub use lock_free_recording::{
-    LockFreeRecorder, LockFreeRecordingConfig, RecordingStats, RecordingPerformanceGrade
+    LockFreeRecorder, LockFreeRecordingConfig, RecordingStats, RecordingPerformanceGrade,
+    RealtimeMeterData
 };
 
 #[cfg(test)]

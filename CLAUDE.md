@@ -54,6 +54,13 @@ Before writing any interactive component, ask:
    callback and visualization
   - KEEP audio thread work minimal (only peak/RMS
   calculation, never blocking operations)
+  
+  ## Real-Time Metering Implementation
+  - IMPLEMENTED: Professional lock-free metering system
+  - See REALTIME_METERS.md for complete architecture docs
+  - RealtimeMeterData streams at 60fps via Tauri channels
+  - Zero audio dropouts with lock-free ring buffers
+  - Matches Pro Tools/Logic/Ableton standards
 
   ## Audio Thread Safety
   - NEVER allocate memory in audio callbacks

@@ -561,6 +561,45 @@ export function useRecording() {
     }
   }, [])
 
+  const recordRangeWithVelocityLayers = useCallback(async (
+    startNote: number,
+    endNote: number,
+    velocityLayers: number[],
+    duration: number,
+    outputDirectory?: string,
+    sampleName?: string,
+    exportFormat?: string,
+    creatorName?: string,
+    instrumentDescription?: string,
+    noteToNoteDelay?: number,
+    layerToLayerDelay?: number
+  ) => {
+    setIsRecording(true)
+    setError(null)
+    try {
+      const result = await invoke<string>('record_range_with_velocity_layers', {
+        startNote,
+        endNote,
+        velocityLayers,
+        duration,
+        outputDirectory,
+        sampleName,
+        exportFormat,
+        creatorName,
+        instrumentDescription,
+        noteToNoteDelay,
+        layerToLayerDelay
+      })
+      return result
+    } catch (err) {
+      setError(err as string)
+      console.error('Multi-velocity range recording failed:', err)
+      throw err
+    } finally {
+      setIsRecording(false)
+    }
+  }, [])
+
   const previewNote = useCallback(async (note: number, velocity: number, duration: number) => {
     try {
       const result = await invoke<string>('preview_note', { note, velocity, duration })
@@ -571,12 +610,24 @@ export function useRecording() {
     }
   }, [])
 
+  const cancelRecording = useCallback(async () => {
+    try {
+      const result = await invoke<string>('cancel_recording')
+      return result
+    } catch (err) {
+      console.error('Cancel recording failed:', err)
+      throw err
+    }
+  }, [])
+
   return {
     isRecording,
     error,
     recordSample,
     recordRange,
-    previewNote
+    recordRangeWithVelocityLayers,
+    previewNote,
+    cancelRecording
   }
 }
 
