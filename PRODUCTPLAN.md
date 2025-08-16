@@ -143,116 +143,111 @@ Musicians with hardware synthesizers (like Korg DW-6000) who want to:
 - `spectrum-analyzer` for real-time spectral analysis
 - `wide` for SIMD optimization
 
-### Epic 4: Advanced Sampling Features 
-**Goal**: Transform BatcherBird into a complete professional sampling suite with automated multi-sampling workflows, comprehensive template management, and professional export capabilities that match commercial sampling software.
+### Epic 4: Professional Sampling Features (Focused) 
+**Goal**: Deliver rock-solid automated sampling with intelligent velocity layers, flexible note range recording, and open-format export that actually works without the bugs plaguing commercial tools.
 
-**Duration**: 8-12 weeks | **Priority**: High | **Technical Research**: See EPIC-4-COMPREHENSIVE-RESEARCH.md
+**Duration**: 6 weeks total (was 8-12 weeks) | **Priority**: High | **Market Research**: Validated against SampleRobot/Samplit user pain points
 
-**User Story**: As a professional musician creating sample libraries, I want automated multi-sampling workflows, comprehensive template management, and professional export capabilities that match the efficiency and quality of commercial sampling software, enabling me to create complete instrument libraries with velocity layers, chromatic ranges, and professional metadata.
+**User Story**: As a musician sampling hardware synthesizers, I want reliable velocity layer recording (up to 4 layers), simple note range options, and bulletproof auto-loop detection, so I can create professional sample libraries without crashes or "hair-pulling moments."
 
 **Technical Foundation**: 
-- Professional-grade velocity layer recording (4, 6, 8, 16 layers)
-- Chromatic range automation (88-note support)
-- Advanced template and session management
-- Multi-format export engine (Kontakt, EXS24, SoundFont, HALion)
+- Velocity layer recording (2, 3, 4 layers) with smart defaults
+- High-quality FFT-based auto-loop detection (5-10x faster than competitors)
+- Simple note range recording (every note or every 3rd note)
+- Open format exports (DecentSampler, SFZ) with perfect compatibility
 
-#### Epic 4.1: Intelligent Velocity Layer Recording System
-**Duration**: 3 weeks | **Priority**: High | **Complexity**: High
+#### Epic 4.1: Smart Velocity Layer Recording & Auto-Loop Detection
+**Duration**: 2 weeks | **Priority**: Critical | **Complexity**: Medium
 
-**Goal**: Implement professional-grade automated velocity layer recording with industry-standard layer configurations and quality validation.
-
-**Milestones**:
-- **M4.1.1**: Velocity Layer Engine & Configuration System (Week 1)
-  - Velocity layer templates (4, 6, 8, 16 layers) with professional curves
-  - Custom velocity mapping and crossfade zones
-  - MIDI automation for velocity sequence generation
-  - Quality validation for consistency across layers
-
-- **M4.1.2**: Automated Recording Workflow (Week 2)  
-  - MIDI sequence generation with configurable timing
-  - Professional state management for multi-layer recording
-  - Progress tracking with layer completion visualization
-  - Error recovery for missed notes and interruptions
-
-- **M4.1.3**: Professional Crossfade & Export Integration (Week 3)
-  - Equal-power crossfading algorithms
-  - Automatic gain compensation between layers
-  - Velocity layer metadata for sampler formats
-  - Template saving for reusable configurations
-
-#### Epic 4.2: Professional Note Range & Batch Recording System
-**Duration**: 3 weeks | **Priority**: High | **Complexity**: High
-
-**Goal**: Implement comprehensive chromatic range recording with intelligent batch processing and session management.
+**Goal**: Implement reliable velocity layer recording (2-4 layers) with industry-leading auto-loop detection that "just works."
 
 **Milestones**:
-- **M4.2.1**: Chromatic Range Recording Engine (Week 1)
-  - 88-note range support (C0-C8) with customizable ranges
-  - Interval patterns (every note, every 3rd note, octave sampling)
-  - Automatic transposition with quality preservation
-  - MIDI sequence generation for chromatic automation
+- **M4.1.1**: Velocity Layer System (Week 1)
+  - Simple presets: 2 layers (Soft/Loud), 3 layers (Soft/Med/Loud), 4 layers (PP/P/F/FF)
+  - Smart velocity defaults: 2L=[64,127], 3L=[48,96,127], 4L=[32,64,96,127]
+  - Reliable MIDI velocity sequencing with proper timing
+  - Visual progress tracking for each layer
 
-- **M4.2.2**: Intelligent Batch Processing & Session Management (Week 2)
-  - Session recovery for interrupted recordings
-  - Progress persistence and restoration
-  - Memory management for large batch operations
-  - Real-time quality control during batch recording
+- **M4.1.2**: Professional Auto-Loop Detection (Week 1)
+  - FFT-based autocorrelation for 5-10x speed improvement
+  - Intelligent loop length detection (power-of-2 optimization)
+  - Zero-crossing detection for click-free loops
+  - Visual loop point editor with waveform display
 
-- **M4.2.3**: Advanced Batch Operations & Optimization (Week 3)
-  - Parallel processing with rayon (4-8x speedup)
-  - Background operations without blocking UI
-  - Memory optimization with streaming processing
-  - Automated export pipeline after batch completion
+- **M4.1.3**: Integration & Polish (Week 2)
+  - Automatic gain normalization between layers
+  - Loop metadata embedded in WAV (SMPL chunk)
+  - One-click "Test Loop" playback
+  - Save/load loop presets for different synth types
 
-#### Epic 4.3: Advanced Template & Session Management System
-**Duration**: 2.5 weeks | **Priority**: Medium | **Complexity**: Medium
+#### Epic 4.2: Flexible Note Range Recording
+**Duration**: 2 weeks | **Priority**: High | **Complexity**: Low
 
-**Goal**: Implement comprehensive project management with templates, sessions, and collaborative workflows.
-
-**Milestones**:
-- **M4.3.1**: Template System & Project Structure (Week 1)
-  - Reusable templates for different sampling scenarios
-  - Organized project hierarchy with automatic organization
-  - Template import/export and sharing capabilities
-  - Version control for templates and configurations
-
-- **M4.3.2**: Session Management & Collaboration Features (Week 1.5)
-  - Complete session persistence and restoration
-  - Project package export/import for collaboration
-  - Multi-user project management support
-  - Automatic backup systems and recovery
-
-#### Epic 4.4: Professional Export Engine & Format Support
-**Duration**: 2.5 weeks | **Priority**: Medium | **Complexity**: High
-
-**Goal**: Implement comprehensive export capabilities with professional sampler format support and batch optimization.
+**Goal**: Simple, reliable multi-note recording with user-selectable ranges and intervals.
 
 **Milestones**:
-- **M4.4.1**: Multi-Format Export Engine (Week 1)
-  - Support for Kontakt (.nki), EXS24 (.exs), SoundFont (.sf2), HALion (.vstpreset)
-  - Metadata translation to format-specific requirements
-  - Quality validation of exported instruments
-  - Parallel processing for batch export operations
+- **M4.2.1**: Note Range Engine (Week 1)
+  - User-selectable octave ranges (1-4 octaves typical for synths)
+  - Two interval modes: "Every Note" or "Every 3rd Note"
+  - Clear time estimates before recording starts
+  - MIDI note sequencing with configurable delays
 
-- **M4.4.2**: Advanced Metadata & Professional Standards Integration (Week 1.5)
-  - SMPL chunk support for industry-standard loop points
-  - Broadcast WAV metadata with professional standards
-  - Cross-platform testing across major DAWs
-  - Format-specific optimizations for best compatibility
+- **M4.2.2**: Batch Recording Workflow (Week 2)
+  - Visual progress with current note display
+  - Pause/resume capability for long sessions
+  - Auto-save after each successful sample
+  - Simple error recovery (retry failed notes)
+
+#### Epic 4.3: Simple Templates & Batch Processing
+**Duration**: 1 week | **Priority**: Low | **Complexity**: Low
+
+**Goal**: Basic template presets for common tasks and batch sample processing.
+
+**Milestones**:
+- **M4.3.1**: Template Presets (3 days)
+  - Quick presets: "Pad", "Lead", "Bass", "Percussion"
+  - Each preset configures: velocity layers, note range, loop settings
+  - Save custom presets for repeated workflows
+  - Simple JSON-based storage
+
+- **M4.3.2**: Batch Sample Processing (4 days)
+  - Process folders of existing WAV files
+  - Batch auto-trim with intelligent detection
+  - Batch loop detection and embedding
+  - Batch normalize and export
+
+#### Epic 4.4: Open Format Export Engine
+**Duration**: 1 week | **Priority**: High | **Complexity**: Medium
+
+**Goal**: Perfect export to open formats with all metadata preserved.
+
+**Milestones**:
+- **M4.4.1**: DecentSampler Export (3 days)
+  - Generate .dslibrary files with proper XML structure
+  - Velocity layer mapping with crossfades
+  - Loop points and ADSR envelope defaults
+  - Basic UI generation for the instrument
+
+- **M4.4.2**: SFZ Export (4 days)
+  - Complete SFZ 2.0 compliance
+  - Velocity layers with lovel/hivel opcodes
+  - Loop points and sample metadata
+  - Round-robin support for variations
 
 **Success Criteria**:
-- Automated recording of complete velocity layer sets (4-16 layers) for any note
-- Chromatic range recording (88 notes) completed in under 30 minutes
-- Session recovery capability for interrupted multi-hour recording sessions
-- Export to 4+ professional sampler formats with 100% DAW compatibility
-- Memory-efficient processing of 500+ samples (<200MB peak usage)
-- 4-8x speedup for batch operations on multi-core systems
+- ✅ Reliable velocity layer recording (2-4 layers) without crashes or bugs
+- ✅ Auto-loop detection that works 95%+ of the time (better than SampleRobot)
+- ✅ Note range recording (1-4 octaves) with clear progress tracking
+- ✅ Perfect DecentSampler and SFZ export with all metadata preserved
+- ✅ Batch processing of existing samples with auto-trim and loop detection
+- ✅ Zero "hair-pulling moments" - everything just works
 
 **Technical Dependencies**:
-- Advanced state machine for complex recording workflows
-- Enhanced database schema for sample metadata and relationships
-- Parallel processing architecture with rayon
-- Professional sampler format libraries and metadata standards
+- FFT-based loop detection using `rustfft` (already implemented in Epic 3)
+- Simple state machine for recording workflows
+- XML generation for DecentSampler format
+- SFZ text format generation
+- Existing lock-free architecture ensures reliability
 
 ## Development Workflow
 

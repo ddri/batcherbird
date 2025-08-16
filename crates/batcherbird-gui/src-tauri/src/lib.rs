@@ -31,22 +31,16 @@ fn note_to_name(note: u8) -> String {
     format!("{}{}", note_names[note_index], octave)
 }
 
-/// Validates and secures file paths for desktop app usage
+/// Validates and secures file paths for cross-platform desktop app usage
 fn validate_file_path(path: &str) -> Result<PathBuf, String> {
     let path_buf = Path::new(path);
     
-    // Basic validation - reject obviously malicious patterns
-    if path.contains("..") || path.starts_with('/') && !path.starts_with("/Users/") {
-        return Err("Invalid path pattern".to_string());
+    // Reject directory traversal attempts
+    if path.contains("..") || path.contains("~") {
+        return Err("Directory traversal not allowed".to_string());
     }
     
-    // For macOS desktop app, allow reasonable user directories
-    let allowed_prefixes = [
-        "/Users/",
-        "/tmp/",
-        "/var/folders/", // macOS temp files
-    ];
-    
+    // Convert to canonical absolute path
     let absolute_path = if path_buf.is_absolute() {
         path_buf.to_path_buf()
     } else {
@@ -55,13 +49,32 @@ fn validate_file_path(path: &str) -> Result<PathBuf, String> {
             .join(path_buf)
     };
     
-    // Allow common user directories for a desktop app
-    let path_str = absolute_path.to_string_lossy();
-    if allowed_prefixes.iter().any(|prefix| path_str.starts_with(prefix)) {
-        Ok(absolute_path)
-    } else {
-        Err("Path outside allowed directories".to_string())
+    // Get standard user directories (cross-platform)
+    let allowed_dirs = [
+        dirs::home_dir(),
+        dirs::desktop_dir(),
+        dirs::document_dir(),
+        dirs::download_dir(),
+        dirs::audio_dir(),
+        dirs::cache_dir(),
+        std::env::temp_dir().into(), // Allow temp directory
+    ];
+    
+    // Check if path is within allowed directories
+    for allowed_dir in allowed_dirs.iter().flatten() {
+        if absolute_path.starts_with(allowed_dir) {
+            return Ok(absolute_path);
+        }
     }
+    
+    // Allow current working directory and subdirectories (for development)
+    if let Ok(cwd) = std::env::current_dir() {
+        if absolute_path.starts_with(&cwd) {
+            return Ok(absolute_path);
+        }
+    }
+    
+    Err(format!("Path '{}' is outside allowed user directories", absolute_path.display()))
 }
 
 /// Serializable version of LoopCandidate for JSON responses

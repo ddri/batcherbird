@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import { listen } from "@tauri-apps/api/event"
+import { desktopDir } from "@tauri-apps/api/path"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -59,7 +60,7 @@ export default function App() {
   const [autoDetectSilence, setAutoDetectSilence] = useState(true)
   const [detectionThreshold, setDetectionThreshold] = useState([-35])
   const [sampleName, setSampleName] = useState("Roland-EM1018")
-  const [outputDirectory, setOutputDirectory] = useState("/Users/dryan/Desktop/Batch")
+  const [outputDirectory, setOutputDirectory] = useState("")
   const [exportFormat, setExportFormat] = useState("wav16")
   const [creatorName, setCreatorName] = useState("")
   const [instrumentDescription, setInstrumentDescription] = useState("")
@@ -106,6 +107,22 @@ export default function App() {
     loadAudioInputDevices()
     loadAudioOutputDevices()
   }, [loadMidiDevices, loadAudioInputDevices, loadAudioOutputDevices])
+  
+  // Initialize default output directory
+  useEffect(() => {
+    const initOutputDirectory = async () => {
+      if (!outputDirectory) {
+        try {
+          const desktop = await desktopDir()
+          setOutputDirectory(`${desktop}Batcherbird Samples`)
+        } catch (error) {
+          console.error('Failed to get desktop directory:', error)
+          setOutputDirectory('Batcherbird Samples') // Fallback
+        }
+      }
+    }
+    initOutputDirectory()
+  }, [outputDirectory])
   
   // Listen for recording progress events (Epic 4)
   useEffect(() => {

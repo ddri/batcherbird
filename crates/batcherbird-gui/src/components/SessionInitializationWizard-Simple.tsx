@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/label'
 import { CheckCircle, Play, FolderOpen } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
 import { useFileSystem } from '@/hooks/useTauri'
+import { desktopDir } from '@tauri-apps/api/path'
 
 interface SessionInitializationWizardProps {
   isOpen: boolean
@@ -14,9 +15,25 @@ interface SessionInitializationWizardProps {
 
 export function SessionInitializationWizard({ isOpen, onClose, onComplete }: SessionInitializationWizardProps) {
   const [projectName, setProjectName] = useState('')
-  const [outputDirectory, setOutputDirectory] = useState('/Users/dryan/Desktop')
+  const [outputDirectory, setOutputDirectory] = useState('')
   const projectNameRef = useRef<HTMLInputElement>(null)
   const { selectOutputDirectory } = useFileSystem()
+
+  // Initialize default output directory
+  useEffect(() => {
+    const initOutputDirectory = async () => {
+      if (!outputDirectory) {
+        try {
+          const desktop = await desktopDir()
+          setOutputDirectory(desktop)
+        } catch (error) {
+          console.error('Failed to get desktop directory:', error)
+          setOutputDirectory('') // Will show as empty, user can select
+        }
+      }
+    }
+    initOutputDirectory()
+  }, [outputDirectory])
 
   // Auto-focus project name input when wizard opens
   useEffect(() => {
