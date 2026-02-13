@@ -148,37 +148,8 @@ impl MidiManager {
         let msg_type = status & 0xF0;
         let channel = (status & 0x0F) + 1;
 
-        match msg_type {
-            0x90 if message.len() >= 3 && message[2] > 0 => {
-                let note = message[1];
-                let velocity = message[2];
-                let note_name = Self::note_to_name(note);
-                println!("[{}] Note On  Ch:{} Note:{}({}) Vel:{}", 
-                    time_str, channel, note, note_name, velocity);
-            }
-            0x80 | 0x90 if message.len() >= 3 => { // Note off or note on with vel 0
-                let note = message[1];
-                let velocity = message[2];
-                let note_name = Self::note_to_name(note);
-                println!("[{}] Note Off Ch:{} Note:{}({}) Vel:{}", 
-                    time_str, channel, note, note_name, velocity);
-            }
-            0xB0 if message.len() >= 3 => {
-                let controller = message[1];
-                let value = message[2];
-                println!("[{}] CC       Ch:{} CC:{} Val:{}", 
-                    time_str, channel, controller, value);
-            }
-            0xC0 if message.len() >= 2 => {
-                let program = message[1];
-                println!("[{}] Program  Ch:{} Prog:{}", 
-                    time_str, channel, program);
-            }
-            _ => {
-                let hex_msg: Vec<String> = message.iter().map(|b| format!("{:02X}", b)).collect();
-                println!("[{}] Raw      {}", time_str, hex_msg.join(" "));
-            }
-        }
+        // Suppress unused variables - MIDI monitoring disabled for release
+        let _ = (time_str, msg_type, channel, message);
     }
 
     fn note_to_name(note: u8) -> String {
@@ -192,8 +163,6 @@ impl MidiManager {
     /// Professional standard for handling stuck notes (like Logic/Ableton's panic button)
     /// Enhanced for vintage synths like DW6000 that need specific timing
     pub fn send_midi_panic(conn: &mut MidiOutputConnection) -> Result<()> {
-        println!("🚨 MIDI Panic: Enhanced panic for vintage synths...");
-        
         let mut notes_sent = 0;
         
         // PHASE 1: Quick emergency stop (most reliable for stuck notes)
@@ -235,16 +204,15 @@ impl MidiManager {
             let all_notes_off = [0xB0 | channel, 123, 0];
             let _ = conn.send(&all_notes_off);
         }
-        
-        println!("✅ Enhanced MIDI Panic complete: {} individual note-offs + CC messages", notes_sent);
+
+        let _ = notes_sent; // Suppress unused warning
         Ok(())
     }
 
     /// Send a quick MIDI panic for a specific channel
     pub fn send_channel_panic(conn: &mut MidiOutputConnection, channel: u8) -> Result<()> {
         let channel = channel & 0x0F;
-        println!("🚨 Channel {} Panic: Sending All Notes Off...", channel + 1);
-        
+
         // Send All Notes Off CC
         let all_notes_off = [0xB0 | channel, 123, 0];
         conn.send(&all_notes_off)
@@ -254,8 +222,7 @@ impl MidiManager {
         let reset_controllers = [0xB0 | channel, 121, 0];
         conn.send(&reset_controllers)
             .map_err(|e| BatcherbirdError::Session(format!("Failed to send Reset Controllers: {:?}", e)))?;
-        
-        println!("✅ Channel {} panic complete", channel + 1);
+
         Ok(())
     }
 }

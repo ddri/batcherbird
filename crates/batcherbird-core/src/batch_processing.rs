@@ -298,12 +298,7 @@ impl BatchProcessor {
     {
         let start_time = Instant::now();
         let progress = Arc::new(BatchProgress::new(samples.len()));
-        
-        println!("🚀 Starting batch processing: {} samples with {} threads", 
-            samples.len(), 
-            self.config.max_threads.unwrap_or_else(|| rayon::current_num_threads())
-        );
-        
+
         progress.set_phase("Processing samples");
         
         // Execute in custom thread pool if available
@@ -317,12 +312,7 @@ impl BatchProcessor {
         
         // Calculate performance metrics
         let performance_metrics = self.calculate_performance_metrics(&results, processing_time)?;
-        
-        println!("✅ Batch processing complete: {:.2}s, {:.1}x speedup", 
-            processing_time.as_secs_f32(),
-            performance_metrics.speedup_factor.unwrap_or(1.0)
-        );
-        
+
         // Split results into successes and failures
         let mut successes = Vec::new();
         let mut failures = Vec::new();
@@ -360,17 +350,12 @@ impl BatchProcessor {
         
         for (chunk_index, chunk) in chunks.iter().enumerate() {
             if progress.is_cancelled() {
-                println!("⚠️ Batch processing cancelled by user");
                 break;
             }
-            
-            println!("📦 Processing chunk {}/{} ({} samples)", 
-                chunk_index + 1, chunks.len(), chunk.len());
-            
+
             // Check memory before processing chunk
             let chunk_memory: usize = chunk.iter().map(|s| s.memory_usage()).sum();
             if !self.memory_manager.allocate(chunk_memory) {
-                println!("⚠️ Memory limit exceeded, processing smaller chunks");
                 // Fall back to individual processing for this chunk
                 for sample in *chunk {
                     if let Ok(result) = self.process_single_sample(sample, &operation, &progress) {
@@ -493,7 +478,6 @@ impl BatchProcessor {
     /// Cancel all ongoing operations
     pub fn cancel_all(&self) {
         // In a full implementation, this would signal all active operations to stop
-        println!("🛑 Cancelling all batch operations");
     }
 }
 
@@ -669,7 +653,7 @@ mod tests {
         // Operation that fails on even-numbered samples
         let operation = |sample: &SampleData| -> Result<f32> {
             let id_num: usize = sample.id.split('_').nth(1).unwrap().parse().unwrap();
-            if id_num % 2 == 0 {
+            if id_num.is_multiple_of(2) {
                 Err(BatcherbirdError::Audio("Even sample error".to_string()))
             } else {
                 Ok(sample.audio_data.iter().sum())

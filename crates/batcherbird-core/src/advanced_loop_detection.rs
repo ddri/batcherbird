@@ -1,4 +1,4 @@
-use crate::{Result, BatcherbirdError};
+use crate::Result;
 use rustfft::{FftPlanner, num_complex::Complex};
 use std::collections::HashMap;
 
@@ -107,6 +107,12 @@ pub struct FftCorrelator {
     cache: HashMap<usize, (Vec<Complex<f32>>, Vec<Complex<f32>>)>,
 }
 
+impl Default for FftCorrelator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FftCorrelator {
     pub fn new() -> Self {
         Self {
@@ -147,7 +153,7 @@ impl FftCorrelator {
         
         // Multiply by complex conjugate (power spectrum)
         for bin in spectrum.iter_mut() {
-            *bin = *bin * bin.conj();
+            *bin *= bin.conj();
         }
         
         // Inverse FFT to get autocorrelation
@@ -310,8 +316,6 @@ impl AdvancedLoopDetector {
             });
         }
         
-        println!("🔄 Starting advanced loop detection on {} samples at {}Hz", audio_data.len(), sample_rate);
-        
         // Multi-scale analysis if enabled
         let candidates = if self.config.multi_scale {
             self.detect_multiscale_loops(audio_data, sample_rate)?
@@ -330,16 +334,7 @@ impl AdvancedLoopDetector {
         let success = best_loop.is_some();
         
         let processing_time = start_time.elapsed().as_millis() as f32;
-        
-        if success {
-            let best = best_loop.as_ref().unwrap();
-            println!("✅ Loop detected: {:.2}s length, {:.1}% quality", 
-                best.length_seconds, best.quality.overall_score * 100.0);
-        } else {
-            println!("❌ No suitable loop found (best score: {:.1}%)", 
-                sorted_candidates.first().map(|c| c.quality.overall_score * 100.0).unwrap_or(0.0));
-        }
-        
+
         Ok(AdvancedLoopResult {
             best_loop,
             candidates: sorted_candidates,

@@ -1,6 +1,5 @@
-use crate::{Result, BatcherbirdError, AdvancedInstrument, SampleData, BatchResult, ProfessionalMetadata};
+use crate::{Result, SampleData};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 
@@ -224,6 +223,7 @@ pub struct MetadataValidationResult {
 
 /// Format compatibility test result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct FormatCompatibilityResult {
     /// File format validation
     pub file_format_valid: bool,
@@ -323,9 +323,7 @@ impl ProfessionalQualityValidator {
     /// Validate a single sample
     pub fn validate_sample(&mut self, sample: &SampleData) -> Result<ValidationResult> {
         let start_time = Instant::now();
-        
-        println!("🔍 Validating sample: {}", sample.id);
-        
+
         let mut result = ValidationResult {
             sample_id: sample.id.clone(),
             status: ValidationStatus::Passed,
@@ -361,10 +359,7 @@ impl ProfessionalQualityValidator {
         result.recommendations = self.generate_recommendations(&result);
         
         result.processing_time = start_time.elapsed();
-        
-        println!("✅ Validation complete: {:.1}% quality, {:?} status", 
-            result.overall_score * 100.0, result.status);
-        
+
         Ok(result)
     }
     
@@ -376,7 +371,6 @@ impl ProfessionalQualityValidator {
             match self.validate_sample(sample) {
                 Ok(result) => results.push(result),
                 Err(error) => {
-                    println!("⚠️ Validation failed for {}: {}", sample.id, error);
                     // Create error result
                     let error_result = ValidationResult {
                         sample_id: sample.id.clone(),
@@ -809,18 +803,6 @@ impl Default for MetadataValidationResult {
     }
 }
 
-impl Default for FormatCompatibilityResult {
-    fn default() -> Self {
-        Self {
-            file_format_valid: false,
-            sample_rate_compatible: false,
-            bit_depth_compatible: false,
-            channel_count_compatible: false,
-            metadata_format_compatible: false,
-            format_scores: HashMap::new(),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -891,9 +873,6 @@ mod tests {
         assert!(metrics.thd_n_percent < 5.0); // Reasonable distortion for test
         assert!(metrics.dynamic_range_db > 0.0); // Should have some dynamic range
         assert!(metrics.peak_level_dbfs > -20.0); // Reasonable level
-        
-        println!("Test metrics: SNR={:.1}dB, THD+N={:.2}%, DR={:.1}dB, Peak={:.1}dBFS", 
-            metrics.snr_db, metrics.thd_n_percent, metrics.dynamic_range_db, metrics.peak_level_dbfs);
     }
     
     #[test]

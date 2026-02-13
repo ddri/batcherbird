@@ -29,10 +29,8 @@ export function useSessionManager() {
       await invoke<string>('initialize_session_manager')
       setIsInitialized(true)
       setError(null)
-      console.log('✅ Session manager initialized')
     } catch (err) {
       setError(err as string)
-      console.error('❌ Failed to initialize session manager:', err)
       throw err
     }
   }, [isInitialized])
@@ -45,7 +43,7 @@ export function useSessionManager() {
       const state = await invoke<string>('get_session_state')
       setSessionState(state as SessionState)
     } catch (err) {
-      console.error('Failed to get session state:', err)
+      // Silently ignore session state polling errors
     }
   }, [isInitialized])
 
@@ -56,14 +54,15 @@ export function useSessionManager() {
     try {
       return await invoke<boolean>('can_record')
     } catch (err) {
-      console.error('Failed to check recording state:', err)
       return false
     }
   }, [isInitialized])
 
   // Initialize on first render
   useEffect(() => {
-    initializeManager().catch(console.error)
+    initializeManager().catch(() => {
+      // Initialization errors are handled in initializeManager
+    })
   }, [initializeManager])
 
   // Poll session state
@@ -96,7 +95,6 @@ export function useSessionValidation() {
       setValidationReport(report)
       return report
     } catch (err) {
-      console.error('Validation failed:', err)
       throw err
     } finally {
       setIsValidating(false)
@@ -121,7 +119,6 @@ export function useDeviceTesting() {
       setTestResults(results)
       return results
     } catch (err) {
-      console.error('Device testing failed:', err)
       throw err
     } finally {
       setIsTesting(false)
@@ -146,12 +143,10 @@ export function useSessionInitialization() {
     setInitializationError(null)
     
     try {
-      const result = await invoke<string>('initialize_session', { config: sessionConfig })
-      console.log('✅ Session initialized:', result)
+      await invoke<string>('initialize_session', { config: sessionConfig })
       setWizardStep('ready')
     } catch (err) {
       setInitializationError(err as string)
-      console.error('❌ Session initialization failed:', err)
       throw err
     } finally {
       setIsInitializing(false)
@@ -240,7 +235,7 @@ export function useSessionTemplates() {
       const templateList = await invoke<string[]>('list_session_templates')
       setTemplates(templateList)
     } catch (err) {
-      console.error('Failed to load templates:', err)
+      // Silently ignore template loading errors
     } finally {
       setIsLoading(false)
     }
@@ -251,7 +246,6 @@ export function useSessionTemplates() {
       await invoke<string>('save_session_template', { name, config })
       await loadTemplates() // Refresh list
     } catch (err) {
-      console.error('Failed to save template:', err)
       throw err
     }
   }, [loadTemplates])
@@ -260,7 +254,6 @@ export function useSessionTemplates() {
     try {
       return await invoke<SessionConfig>('load_session_template', { name })
     } catch (err) {
-      console.error('Failed to load template:', err)
       throw err
     }
   }, [])
@@ -300,7 +293,6 @@ export async function getDefaultSessionConfig(): Promise<SessionConfig> {
   try {
     return await invoke<SessionConfig>('get_default_session_config')
   } catch (err) {
-    console.error('Failed to get default config from backend:', err)
     return getDefaultConfig() // Fallback to frontend default
   }
 }

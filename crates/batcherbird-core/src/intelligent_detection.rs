@@ -387,9 +387,6 @@ impl ProfessionalTrimmer {
             return Err(BatcherbirdError::Audio("Invalid detection boundaries".to_string()));
         }
 
-        println!("🎯 Professional trimming: samples {}-{} (length: {})", 
-                start_idx, end_idx, end_idx - start_idx);
-
         // Apply zero-crossing alignment if enabled
         let (aligned_start, aligned_end, zero_crossing_applied) = if self.config.enable_zero_crossing {
             let aligned_start = self.find_zero_crossing(audio_data, start_idx, true);
@@ -422,11 +419,6 @@ impl ProfessionalTrimmer {
         } else {
             (1.0, vec![])
         };
-
-        println!("   Zero-crossing: {}, Fades: {}, Quality: {:.2}", 
-                zero_crossing_applied, fades_applied, quality_score);
-        println!("   Attack preserved: {:.1}ms, Decay preserved: {:.1}ms", 
-                attack_preserved_ms, decay_preserved_ms);
 
         Ok(TrimmingResult {
             audio_data: trimmed_audio,
@@ -664,9 +656,6 @@ impl IntelligentSampleDetector {
             });
         }
 
-        println!("🧠 Starting intelligent detection with profile: {:?}, algorithm: {:?}", 
-                self.config.profile, self.config.algorithm);
-
         // Reset detectors
         self.spectral_flux.reset();
         self.phase_deviation.reset();
@@ -752,12 +741,6 @@ impl IntelligentSampleDetector {
         } else {
             DetectionAlgorithm::PhaseDeviation
         };
-
-        println!("   Detected boundaries: samples {}-{} (windows {}-{})", 
-                final_start, final_end, start_window, end_window);
-        println!("   Algorithm confidence: RMS={:.2}, Spectral={:.2}, Phase={:.2}", 
-                confidence[0], confidence[1], confidence[2]);
-        println!("   Overall confidence: {:.2}, Primary: {:?}", overall_confidence, primary_algorithm);
 
         let base_result = DetectionResult {
             start_sample: final_start,
@@ -1036,14 +1019,12 @@ mod tests {
         };
         
         let (quality_score, notes) = trimmer.validate_quality(&good_audio, &detection_result, 44100);
-        println!("Quality score: {:.2}, Notes: {:?}", quality_score, notes);
         assert!(quality_score > 0.5); // Should be decent quality (adjusted threshold)
         assert!(!notes.is_empty()); // Should have some feedback
         
         // Poor quality audio (very short and noisy)
         let poor_audio = vec![0.9, -0.8, 0.7]; // Very short with sudden changes
         let (poor_quality, poor_notes) = trimmer.validate_quality(&poor_audio, &detection_result, 44100);
-        println!("Poor quality score: {:.2}, Notes: {:?}", poor_quality, poor_notes);
         assert!(poor_quality < 0.8); // Should be lower quality than good audio
         assert!(poor_notes.iter().any(|note| note.contains("short")));
     }

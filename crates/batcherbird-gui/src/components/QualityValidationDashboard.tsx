@@ -137,7 +137,6 @@ export function QualityValidationDashboard({
       
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Validation failed')
-      console.error('Quality validation failed:', err)
     } finally {
       setIsValidating(false)
     }
@@ -149,7 +148,7 @@ export function QualityValidationDashboard({
         const selectedFile = await selectAudioFile()
         await validateQuality(selectedFile)
       } catch (err) {
-        console.log('File selection cancelled')
+        // File selection cancelled
       }
     } else {
       await validateQuality(audioFilePath)

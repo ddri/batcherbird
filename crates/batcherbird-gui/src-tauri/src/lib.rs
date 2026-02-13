@@ -150,8 +150,6 @@ static GAIN_STAGING_ASSISTANT: Mutex<Option<GainStagingAssistant>> = Mutex::new(
 /// Start audio input monitoring (simplified professional approach)
 #[tauri::command]
 async fn start_input_monitoring() -> Result<String, String> {
-    println!("🎛️ Starting audio input monitoring (professional approach)");
-    
     // Check if already monitoring
     if MONITORING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
         return Ok("Audio monitoring already active".to_string());
@@ -164,8 +162,6 @@ async fn start_input_monitoring() -> Result<String, String> {
     // Note: Can't clone AtomicBool, but we can access the static directly from the thread
     
     let handle = std::thread::spawn(move || {
-        println!("🧵 Monitoring thread started (using SamplingEngine)");
-        
         // Create SamplingEngine in this thread
         let config = SamplingConfig {
             note_duration_ms: 0,     // Not used for monitoring
@@ -178,12 +174,9 @@ async fn start_input_monitoring() -> Result<String, String> {
         };
         
         let sampling_engine = match SamplingEngine::new(config) {
-            Ok(engine) => {
-                println!("✅ SamplingEngine created for monitoring");
-                Arc::new(engine)
-            },
+            Ok(engine) => Arc::new(engine),
             Err(e) => {
-                println!("❌ Failed to create SamplingEngine: {}", e);
+                eprintln!("Failed to create SamplingEngine: {}", e);
                 MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
                 return;
             }
@@ -199,21 +192,19 @@ async fn start_input_monitoring() -> Result<String, String> {
         let stream = match sampling_engine.start_monitoring_stream() {
             Ok(s) => s,
             Err(e) => {
-                println!("❌ Failed to create monitoring stream: {}", e);
+                eprintln!("Failed to create monitoring stream: {}", e);
                 MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
                 return;
             }
         };
-        
+
         // Start the stream
         use cpal::traits::StreamTrait;
         if let Err(e) = stream.play() {
-            println!("❌ Failed to start monitoring stream: {}", e);
+            eprintln!("Failed to start monitoring stream: {}", e);
             MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
             return;
         }
-        
-        println!("✅ SamplingEngine monitoring stream started and playing");
         
         // Keep the stream alive while monitoring is active
         while MONITORING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
@@ -221,11 +212,7 @@ async fn start_input_monitoring() -> Result<String, String> {
         }
         
         // Stop the stream
-        if let Err(e) = stream.pause() {
-            println!("⚠️ Warning: Failed to pause monitoring stream: {}", e);
-        }
-        
-        println!("✅ SamplingEngine monitoring thread finished");
+        let _ = stream.pause();
     });
     
     // Store the thread handle
@@ -234,14 +221,11 @@ async fn start_input_monitoring() -> Result<String, String> {
         *thread_guard = Some(handle);
     }
     
-    println!("✅ Audio input monitoring started (using SamplingEngine infrastructure)");
     Ok("Audio input monitoring started".to_string())
 }
 
 #[tauri::command]
 async fn start_input_monitoring_with_playthrough(enable_playthrough: bool) -> Result<String, String> {
-    println!("🎛️ Starting audio input monitoring with playthrough: {}", enable_playthrough);
-    
     // Check if already monitoring
     if MONITORING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
         return Ok("Audio monitoring already active".to_string());
@@ -252,8 +236,6 @@ async fn start_input_monitoring_with_playthrough(enable_playthrough: bool) -> Re
     
     // Create monitoring with playthrough in a separate thread
     let handle = std::thread::spawn(move || {
-        println!("🧵 Monitoring thread started (with playthrough: {})", enable_playthrough);
-        
         // Create SamplingEngine in this thread
         let config = SamplingConfig {
             note_duration_ms: 0,     // Not used for monitoring
@@ -266,17 +248,14 @@ async fn start_input_monitoring_with_playthrough(enable_playthrough: bool) -> Re
         };
         
         let sampling_engine = match SamplingEngine::new(config) {
-            Ok(engine) => {
-                println!("✅ SamplingEngine created for monitoring with playthrough");
-                Arc::new(engine)
-            },
+            Ok(engine) => Arc::new(engine),
             Err(e) => {
-                println!("❌ Failed to create SamplingEngine: {}", e);
+                eprintln!("Failed to create SamplingEngine: {}", e);
                 MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
                 return;
             }
         };
-        
+
         // Store the engine globally for level access
         {
             let mut global_engine = GLOBAL_SAMPLING_ENGINE.lock().unwrap();
@@ -287,30 +266,28 @@ async fn start_input_monitoring_with_playthrough(enable_playthrough: bool) -> Re
         let (input_stream, output_stream) = match sampling_engine.start_monitoring_stream_with_playthrough(enable_playthrough) {
             Ok(streams) => streams,
             Err(e) => {
-                println!("❌ Failed to create monitoring streams: {}", e);
+                eprintln!("Failed to create monitoring streams: {}", e);
                 MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
                 return;
             }
         };
-        
+
         // Start input stream
         use cpal::traits::StreamTrait;
         if let Err(e) = input_stream.play() {
-            println!("❌ Failed to start input stream: {}", e);
+            eprintln!("Failed to start input stream: {}", e);
             MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
             return;
         }
-        
+
         // Start output stream if playthrough enabled
         if let Some(ref output) = output_stream {
             if let Err(e) = output.play() {
-                println!("❌ Failed to start output stream: {}", e);
+                eprintln!("Failed to start output stream: {}", e);
                 MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
                 return;
             }
         }
-        
-        println!("✅ Audio monitoring streams started (playthrough: {})", enable_playthrough);
         
         // Keep streams alive while monitoring is active
         while MONITORING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
@@ -318,16 +295,10 @@ async fn start_input_monitoring_with_playthrough(enable_playthrough: bool) -> Re
         }
         
         // Stop streams
-        if let Err(e) = input_stream.pause() {
-            println!("⚠️ Warning: Failed to stop input stream: {}", e);
-        }
+        let _ = input_stream.pause();
         if let Some(ref output) = output_stream {
-            if let Err(e) = output.pause() {
-                println!("⚠️ Warning: Failed to stop output stream: {}", e);
-            }
+            let _ = output.pause();
         }
-        
-        println!("✅ Audio monitoring streams stopped");
     });
     
     // Store the thread handle for cleanup
@@ -342,18 +313,13 @@ async fn start_input_monitoring_with_playthrough(enable_playthrough: bool) -> Re
 #[tauri::command]
 async fn get_midi_connection_status() -> Result<bool, String> {
     let connection_guard = MIDI_CONNECTION.lock().unwrap();
-    let is_connected = connection_guard.is_some();
-    println!("🔍 MIDI connection status query: {}", if is_connected { "Connected" } else { "Disconnected" });
-    Ok(is_connected)
+    Ok(connection_guard.is_some())
 }
 
 
 /// Generate instrument files from existing WAV samples in a directory
 #[tauri::command]
 fn generate_instrument_files(directory: String, export_format: String, sample_name: Option<String>, creator_name: Option<String>, instrument_description: Option<String>) -> Result<String, String> {
-    println!("🎹 GUI: Generating instrument files from directory: {}", directory);
-    println!("   Format: {}, Sample name: {:?}", export_format, sample_name);
-    
     use std::path::PathBuf;
     use std::collections::HashMap;
     use batcherbird_core::sampler::Sample;
@@ -385,8 +351,6 @@ fn generate_instrument_files(directory: String, export_format: String, sample_na
         return Err("No WAV files found in directory".to_string());
     }
     
-    println!("   📁 Found {} WAV files", wav_files.len());
-    
     // Parse WAV filenames to extract note and velocity information
     // Expected format: {prefix}_{note_name}_{note_number}_{velocity}.wav
     let mut samples = Vec::new();
@@ -412,28 +376,25 @@ fn generate_instrument_files(directory: String, export_format: String, sample_na
                 note_number = note;
                 velocity = vel;
             } else {
-                println!("   ⚠️ Could not parse note/velocity from: {}", filename);
                 continue;
             }
         }
-        // Try pattern 2: "Batcherbird_F4_v127_rk65"  
+        // Try pattern 2: "Batcherbird_F4_v127_rk65"
         else if let Some(captures) = regex::Regex::new(r".*_([A-G][#b]?\d+)_v(\d+)_rk(\d+)$")
             .unwrap()
             .captures(filename) {
-            
+
             let velocity_str = &captures[2];
             let note_str = &captures[3];
-            
+
             if let (Ok(note), Ok(vel)) = (note_str.parse::<u8>(), velocity_str.parse::<u8>()) {
                 note_number = note;
                 velocity = vel;
             } else {
-                println!("   ⚠️ Could not parse note/velocity from: {}", filename);
                 continue;
             }
         }
         else {
-            println!("   ⚠️ Filename format not recognized: {}", filename);
             continue;
         }
         
@@ -450,7 +411,6 @@ fn generate_instrument_files(directory: String, export_format: String, sample_na
         };
         
         samples.push(sample);
-        println!("   📄 Parsed: {} -> Note {}, Velocity {}", filename, note_number, velocity);
     }
     
     if samples.is_empty() {
@@ -491,8 +451,6 @@ fn generate_instrument_files(directory: String, export_format: String, sample_na
     })?;
     
     // Generate instrument files using existing sample generation logic
-    println!("🎼 Generating {} instrument file...", export_format);
-    
     match sample_format {
         AudioFormat::DecentSampler => {
             // Group samples by velocity
@@ -508,15 +466,13 @@ fn generate_instrument_files(directory: String, export_format: String, sample_na
             let _preset_name = sample_name.unwrap_or_else(|| "Batcherbird_Instrument".to_string());
             let dspreset_path = exporter.generate_dspreset_file(&samples, &wav_files)
                 .map_err(|e| format!("Failed to generate Decent Sampler file: {}", e))?;
-            
-            println!("   ✅ Generated: {}", dspreset_path.display());
+
             Ok(format!("Generated Decent Sampler file: {}", dspreset_path.display()))
         },
         AudioFormat::SFZ => {
             let sfz_path = exporter.generate_sfz_file(&samples, &wav_files)
                 .map_err(|e| format!("Failed to generate SFZ file: {}", e))?;
-            
-            println!("   ✅ Generated: {}", sfz_path.display());
+
             Ok(format!("Generated SFZ file: {}", sfz_path.display()))
         },
         _ => Err("Invalid format for instrument file generation".to_string())
@@ -526,8 +482,6 @@ fn generate_instrument_files(directory: String, export_format: String, sample_na
 /// Stop audio input monitoring
 #[tauri::command]
 async fn stop_input_monitoring() -> Result<String, String> {
-    println!("🎛️ Stopping audio input monitoring");
-    
     // Clear monitoring flag - this will cause the monitoring thread to exit
     MONITORING_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
     
@@ -538,11 +492,7 @@ async fn stop_input_monitoring() -> Result<String, String> {
             // Drop the lock before joining to avoid deadlock
             drop(thread_guard);
             
-            if let Err(e) = handle.join() {
-                println!("⚠️ Warning: SamplingEngine monitoring thread did not exit cleanly: {:?}", e);
-            } else {
-                println!("✅ SamplingEngine monitoring thread joined successfully");
-            }
+            let _ = handle.join();
         }
     }
     
@@ -551,8 +501,7 @@ async fn stop_input_monitoring() -> Result<String, String> {
         let mut engine_guard = GLOBAL_SAMPLING_ENGINE.lock().unwrap();
         *engine_guard = None;
     }
-    
-    println!("✅ Audio input monitoring stopped");
+
     Ok("Audio input monitoring stopped".to_string())
 }
 
@@ -562,7 +511,7 @@ async fn stop_input_monitoring() -> Result<String, String> {
 async fn start_realtime_meter_stream(app: tauri::AppHandle) -> Result<(), String> {
     use std::thread;
     use std::time::Duration;
-    use rtrb::Consumer;
+    
     
     // TODO: Get meter consumer from active recording/monitoring session
     // For now, return a placeholder implementation
@@ -720,97 +669,45 @@ async fn get_gain_staging_analysis() -> Result<GainStagingAnalysis, String> {
 
 #[tauri::command]
 async fn list_midi_devices() -> Result<Vec<String>, String> {
-    println!("🎹 Listing MIDI devices...");
-    
     let mut manager_guard = MIDI_MANAGER.lock().unwrap();
     let midi_manager = match manager_guard.as_mut() {
         Some(manager) => manager,
         None => {
-            let new_manager = MidiManager::new().map_err(|e| {
-                println!("❌ Failed to create MIDI manager: {}", e);
-                e.to_string()
-            })?;
+            let new_manager = MidiManager::new().map_err(|e| e.to_string())?;
             *manager_guard = Some(new_manager);
             manager_guard.as_mut().unwrap()
         }
     };
-    
-    let devices = midi_manager.list_output_devices().map_err(|e| {
-        println!("❌ Failed to list MIDI devices: {}", e);
-        e.to_string()
-    })?;
-    
-    println!("🎹 Found {} MIDI devices:", devices.len());
-    for (i, device) in devices.iter().enumerate() {
-        println!("  {}: {}", i, device);
-    }
-    
-    Ok(devices)
+
+    midi_manager.list_output_devices().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn list_audio_input_devices() -> Result<Vec<String>, String> {
-    println!("🎤 Listing audio input devices...");
-    let audio_manager = AudioManager::new().map_err(|e| {
-        println!("❌ Failed to create audio manager: {}", e);
-        e.to_string()
-    })?;
-    
-    let devices = audio_manager.list_input_devices().map_err(|e| {
-        println!("❌ Failed to list audio input devices: {}", e);
-        e.to_string()
-    })?;
-    
-    println!("🎤 Found {} audio input devices:", devices.len());
-    for (i, device) in devices.iter().enumerate() {
-        println!("  {}: {}", i, device);
-    }
-    
-    Ok(devices)
+    let audio_manager = AudioManager::new().map_err(|e| e.to_string())?;
+    audio_manager.list_input_devices().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn list_audio_output_devices() -> Result<Vec<String>, String> {
-    println!("🔊 Listing audio output devices...");
-    let audio_manager = AudioManager::new().map_err(|e| {
-        println!("❌ Failed to create audio manager: {}", e);
-        e.to_string()
-    })?;
-    
-    let devices = audio_manager.list_output_devices().map_err(|e| {
-        println!("❌ Failed to list audio output devices: {}", e);
-        e.to_string()
-    })?;
-    
-    println!("🔊 Found {} audio output devices:", devices.len());
-    for (i, device) in devices.iter().enumerate() {
-        println!("  {}: {}", i, device);
-    }
-    
-    Ok(devices)
+    let audio_manager = AudioManager::new().map_err(|e| e.to_string())?;
+    audio_manager.list_output_devices().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn connect_midi_device(device_index: usize) -> Result<String, String> {
-    println!("🔌 Connecting to MIDI device index: {}", device_index);
-    
     let mut manager_guard = MIDI_MANAGER.lock().unwrap();
     let midi_manager = match manager_guard.as_mut() {
         Some(manager) => manager,
         None => {
-            println!("❌ No MIDI manager available - list devices first");
             return Err("MIDI manager not initialized. Please refresh MIDI devices first.".to_string());
         }
     };
-    
-    let connection = midi_manager.connect_output(device_index).map_err(|e| {
-        println!("❌ Failed to connect to MIDI device {}: {}", device_index, e);
-        e.to_string()
-    })?;
-    
+
+    let connection = midi_manager.connect_output(device_index).map_err(|e| e.to_string())?;
+
     drop(manager_guard); // Release the manager lock before taking connection lock
     *MIDI_CONNECTION.lock().unwrap() = Some(connection);
-    println!("✅ MIDI device {} connected successfully", device_index);
     Ok("MIDI device connected successfully".to_string())
 }
 
@@ -841,8 +738,6 @@ async fn test_midi_connection() -> Result<String, String> {
 
 #[tauri::command]
 async fn preview_note(note: u8, velocity: u8, duration: u32) -> Result<String, String> {
-    println!("🎵 Preview note: {} (velocity: {}, duration: {}ms)", note, velocity, duration);
-    
     // Extract the connection from the mutex and drop the guard
     let mut connection = {
         let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
@@ -874,25 +769,16 @@ async fn preview_note(note: u8, velocity: u8, duration: u32) -> Result<String, S
 
 #[tauri::command]
 fn create_directory(path: String) -> Result<bool, String> {
-    println!("📁 Creating directory: {}", path);
-    
     // Validate path for security
     let dir_path = validate_file_path(&path)?;
-    
+
     if dir_path.exists() {
-        println!("✅ Directory already exists: {}", path);
         return Ok(true);
     }
-    
+
     match std::fs::create_dir_all(dir_path) {
-        Ok(_) => {
-            println!("✅ Successfully created directory: {}", path);
-            Ok(true)
-        },
-        Err(e) => {
-            println!("❌ Failed to create directory: {} - Error: {}", path, e);
-            Err(format!("Failed to create directory '{}': {}", path, e))
-        }
+        Ok(_) => Ok(true),
+        Err(e) => Err(format!("Failed to create directory '{}': {}", path, e))
     }
 }
 
@@ -900,32 +786,20 @@ fn create_directory(path: String) -> Result<bool, String> {
 async fn select_output_directory(app: tauri::AppHandle) -> Result<String, String> {
     use tauri_plugin_dialog::DialogExt;
     use std::sync::mpsc;
-    
-    println!("📁 Opening native macOS directory picker...");
-    
+
     let (tx, rx) = mpsc::channel();
-    
+
     app.dialog()
         .file()
         .set_title("Select Sample Output Directory")
         .pick_folder(move |file_path| {
             let _ = tx.send(file_path);
         });
-    
+
     match rx.recv() {
-        Ok(Some(path)) => {
-            let path_str = path.to_string();
-            println!("✅ User selected directory: {}", path_str);
-            Ok(path_str)
-        },
-        Ok(None) => {
-            println!("❌ User cancelled directory selection");
-            Err("Directory selection cancelled".to_string())
-        },
-        Err(e) => {
-            println!("❌ Directory picker error: {}", e);
-            Err(format!("Directory picker failed: {}", e))
-        }
+        Ok(Some(path)) => Ok(path.to_string()),
+        Ok(None) => Err("Directory selection cancelled".to_string()),
+        Err(e) => Err(format!("Directory picker failed: {}", e))
     }
 }
 
@@ -933,9 +807,7 @@ async fn select_output_directory(app: tauri::AppHandle) -> Result<String, String
 /// Uses dedicated thread + channels pattern for thread safety
 #[tauri::command]  // BLOCKING command (no async) - this is correct for audio
 fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option<String>, sample_name: Option<String>, _export_format: Option<String>, _creator_name: Option<String>, _instrument_description: Option<String>) -> Result<String, String> {
-    println!("🎛️ GUI: Recording sample (note: {}, velocity: {}, duration: {}ms)", note, velocity, duration);
-    
-    // Step 1: Get MIDI connection (GUI responsibility)
+    // Get MIDI connection
     let mut connection = {
         let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
         match connection_guard.take() {
@@ -943,50 +815,29 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
             None => return Err("No MIDI connection established. Please select a MIDI device first.".to_string()),
         }
     };
-    
-    // Step 2: Audio processing in dedicated thread (follows architecture pattern)
-    println!("📡 GUI: Delegating to Core Audio Engine in dedicated thread...");
-    
+
+    // Audio processing in dedicated thread
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        println!("🧵 Audio thread started");
-        
-        // Configure Core Audio Engine
-        println!("🔧 Configuring sampling engine...");
         let sampling_config = SamplingConfig {
             note_duration_ms: duration as u64,
-            release_time_ms: 500,  // Professional standard: 500ms release capture
-            pre_delay_ms: 100,     // Professional standard: 100ms pre-roll  
-            post_delay_ms: 100,    // Clean buffer flush
-            midi_channel: 0,       // Channel 1 (0-indexed)
+            release_time_ms: 500,
+            pre_delay_ms: 100,
+            post_delay_ms: 100,
+            midi_channel: 0,
             velocity,
-            ..SamplingConfig::default() // Use defaults for input_mode and input_channels
+            ..SamplingConfig::default()
         };
-        
-        println!("🎛️ Creating SamplingEngine with config: {:?}", sampling_config);
+
         let sampling_engine = match SamplingEngine::new(sampling_config) {
-            Ok(engine) => {
-                println!("✅ SamplingEngine created successfully");
-                engine
-            },
+            Ok(engine) => engine,
             Err(e) => {
-                println!("❌ Failed to create SamplingEngine: {}", e);
                 let _ = tx.send((Err(e), connection));
                 return;
             }
         };
-        
-        // Use blocking method from Core Audio Engine
-        println!("🎵 Starting sample recording for note {}", note);
+
         let result = sampling_engine.sample_single_note_blocking(&mut connection, note);
-        
-        match &result {
-            Ok(sample) => println!("✅ Recording completed: {} samples", sample.audio_data.len()),
-            Err(e) => println!("❌ Recording failed: {}", e),
-        }
-        
-        // Send result back via channel
-        println!("📡 Sending result back to main thread");
         let _ = tx.send((result, connection));
     });
     
@@ -999,10 +850,7 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
     
     match recording_result {
         Ok(recorded_sample) => {
-            println!("✅ GUI: Core Audio Engine completed recording successfully");
-            println!("📊 GUI: Received {} samples from Core Engine", recorded_sample.audio_data.len());
-            
-            // Step 4: Handle export (GUI orchestration)
+            // Handle export
             let output_dir = if let Some(dir) = output_directory {
                 if dir.trim().is_empty() {
                     // Use Desktop/Batcherbird Samples when field is empty
@@ -1025,19 +873,15 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
             
             let mut output_path = std::path::PathBuf::from(&output_dir);
             
-            // Create subfolder if sample name is provided (professional organization)
+            // Create subfolder if sample name is provided
             if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
                 output_path = output_path.join(name.trim());
-                println!("📁 GUI: Creating subfolder for sample: {}", name.trim());
             }
-            
-            // Ensure output directory exists (including subfolder)
+
+            // Ensure output directory exists
             if let Err(e) = std::fs::create_dir_all(&output_path) {
-                println!("❌ GUI: Failed to create output directory: {}", e);
                 return Err(format!("Failed to create output directory '{}': {}", output_path.display(), e));
             }
-            
-            println!("📁 GUI: Using output directory: {}", output_path.display());
             
             // Build naming pattern with optional sample name prefix
             let naming_pattern = if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
@@ -1062,37 +906,24 @@ fn record_sample(note: u8, velocity: u8, duration: u32, output_directory: Option
                 instrument_description: None, // No metadata needed for individual WAV files
             };
             
-            println!("🔧 GUI: Creating sample exporter...");
             let exporter = SampleExporter::new(export_config).map_err(|e| {
-                println!("❌ GUI: Failed to create exporter: {}", e);
                 format!("Failed to create sample exporter: {}", e)
             })?;
-            
-            println!("💾 GUI: Exporting sample (WAV only)...");
+
             let file_path = exporter.export_sample(&recorded_sample).map_err(|e| {
-                println!("❌ GUI: Export failed: {}", e);
                 format!("Failed to export sample: {}", e)
             })?;
-            
-            println!("💾 GUI: Sample exported: {}", file_path.display());
-            println!("   📂 Full path: {:?}", file_path);
-            println!("   📂 Parent directory: {:?}", file_path.parent());
-            
-            // Step 5: Return success to UI
+
             let filename = file_path.file_name()
                 .map(|name| name.to_string_lossy().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            
-            let success_message = format!("Recording saved: {} ({} samples)\nLocation: {}", 
+
+            let success_message = format!("Recording saved: {} ({} samples)\nLocation: {}",
                 filename, recorded_sample.audio_data.len(), file_path.display());
-            
-            println!("✅ GUI: {}", success_message);
+
             Ok(success_message)
         }
-        Err(e) => {
-            println!("❌ GUI: Core Audio Engine reported error: {}", e);
-            Err(format!("Core Audio Engine error: {}", e))
-        }
+        Err(e) => Err(format!("Core Audio Engine error: {}", e))
     }
 }
 
@@ -1109,9 +940,7 @@ fn start_recording_with_viz(
     creator_name: Option<String>, 
     instrument_description: Option<String>
 ) -> Result<String, String> {
-    println!("🎛️ GUI: Starting SYNCHRONOUS recording (note: {}, velocity: {}, duration: {}ms)", note, velocity, duration);
-    
-    // Step 1: Get MIDI connection
+    // Get MIDI connection
     let mut connection = {
         let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
         match connection_guard.take() {
@@ -1119,9 +948,8 @@ fn start_recording_with_viz(
             None => return Err("No MIDI connection established. Please select a MIDI device first.".to_string()),
         }
     };
-    
-    // Step 2: Configure and create sampling engine
-    println!("🔧 Configuring sampling engine...");
+
+    // Configure and create sampling engine
     let sampling_config = SamplingConfig {
         note_duration_ms: duration as u64,
         release_time_ms: 500,
@@ -1140,13 +968,9 @@ fn start_recording_with_viz(
         }
     };
     
-    // Step 3: Record synchronously (blocks until complete)
-    println!("🎵 Recording note {} synchronously...", note);
+    // Record synchronously (blocks until complete)
     let recorded_sample = match sampling_engine.sample_single_note_blocking(&mut connection, note) {
-        Ok(sample) => {
-            println!("✅ Recording completed: {} samples", sample.audio_data.len());
-            sample
-        },
+        Ok(sample) => sample,
         Err(e) => {
             *MIDI_CONNECTION.lock().unwrap() = Some(connection);
             return Err(format!("Recording failed: {}", e));
@@ -1165,8 +989,7 @@ fn start_recording_with_viz(
     
     // Put connection back
     *MIDI_CONNECTION.lock().unwrap() = Some(connection);
-    
-    println!("✅ SYNCHRONOUS recording complete: {}", file_path);
+
     Ok(file_path)
 }
 
@@ -1179,26 +1002,18 @@ fn export_sample_synchronously(
     creator_name: Option<String>, 
     instrument_description: Option<String>
 ) -> Result<String, String> {
-    println!("✅ GUI: Core Audio Engine completed recording successfully");
-    println!("📊 GUI: Received {} samples from Core Engine", recorded_sample.audio_data.len());
-    
     // Handle export with metadata support
     let output_dir = if let Some(dir) = output_directory {
         if dir.trim().is_empty() {
-            // Use Desktop/Batcherbird Samples when field is empty
-            println!("⚠️ Empty output directory provided, using fallback");
             dirs::desktop_dir()
                 .map(|desktop| desktop.join("Batcherbird Samples"))
                 .unwrap_or_else(|| std::path::PathBuf::from("samples"))
                 .to_string_lossy()
                 .to_string()
         } else {
-            println!("✅ Using session-initialized directory: {}", dir);
             dir
         }
     } else {
-        // Default to Desktop/Batcherbird Samples
-        println!("⚠️ No output directory provided, using fallback");
         dirs::desktop_dir()
             .map(|desktop| desktop.join("Batcherbird Samples"))
             .unwrap_or_else(|| std::path::PathBuf::from("samples"))
@@ -1208,29 +1023,25 @@ fn export_sample_synchronously(
     
     let mut output_path = std::path::PathBuf::from(&output_dir);
     
-    // Create subfolder if sample name is provided (professional organization)
+    // Create subfolder if sample name is provided
     if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
         output_path = output_path.join(name.trim());
-        println!("📁 GUI: Creating subfolder for sample: {}", name.trim());
     }
-    
-    // Ensure output directory exists (including subfolder)
+
+    // Ensure output directory exists
     if let Err(e) = std::fs::create_dir_all(&output_path) {
-        println!("❌ GUI: Failed to create output directory: {}", e);
         return Err(format!("Failed to create output directory '{}': {}", output_path.display(), e));
     }
             
-            println!("📁 GUI: Using output directory: {}", output_path.display());
-            
             // Build naming pattern with optional sample name prefix
-            let naming_pattern = if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
+            let _naming_pattern = if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
                 format!("{}_{{note_name}}_{{note}}_vel{{velocity:03}}.wav", name.trim())
             } else {
                 "{note_name}_{note}_vel{velocity:03}.wav".to_string()
             };
             
             // Determine export format based on user selection
-            let sample_format = match export_format.as_deref() {
+            let _sample_format = match export_format.as_deref() {
                 Some("wav16") => AudioFormat::Wav16Bit,
                 Some("wav24") => AudioFormat::Wav24Bit,
                 Some("wav32") => AudioFormat::Wav32BitFloat,
@@ -1239,8 +1050,6 @@ fn export_sample_synchronously(
                 Some("all") => AudioFormat::Wav24Bit, // All formats - start with 24-bit WAV, additional formats generated later
                 _ => AudioFormat::Wav24Bit, // Default to 24-bit WAV
             };
-    
-    println!("📁 GUI: Using output directory: {}", output_path.display());
     
     // Build naming pattern with optional sample name prefix
     let naming_pattern = if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
@@ -1273,94 +1082,79 @@ fn export_sample_synchronously(
         instrument_description: instrument_description.clone(),
     };
     
-    println!("🔧 GUI: Creating sample exporter...");
     let exporter = match SampleExporter::new(export_config) {
         Ok(exporter) => exporter,
         Err(e) => {
-            println!("❌ GUI: Failed to create exporter: {}", e);
             return Err(format!("Failed to create sample exporter: {}", e));
         }
     };
-    
-    println!("💾 GUI: Exporting sample (WAV only)...");
+
     let file_path = match exporter.export_sample(&recorded_sample) {
         Ok(path) => path,
         Err(e) => {
-            println!("❌ GUI: Export failed: {}", e);
             return Err(format!("Failed to export sample: {}", e));
         }
     };
-    
+
     let file_path_str = file_path.to_string_lossy().to_string();
-    println!("✅ GUI: Sample recorded and saved to: {}", file_path_str);
-    
+
     Ok(file_path_str)
 }
 
 /// Test command to verify Tauri channel throughput at 60fps
 #[tauri::command]
 fn test_viz_throughput(app_handle: tauri::AppHandle) -> Result<String, String> {
-    println!("🧪 Testing visualization throughput at 60fps...");
-    
     // Create a test ring buffer
     let (mut producer, mut consumer) = rtrb::RingBuffer::<VizChunk>::new(64);
-    
+
     // Producer thread (simulates audio thread)
     let producer_handle = std::thread::spawn(move || {
         for i in 0..600 { // 10 seconds worth of 60fps data
             let test_samples = vec![0.1 * (i as f32), -0.1 * (i as f32)];
             let chunk = VizChunk::from_samples(&test_samples, i * 2);
-            
+
             // Try to push (never block)
-            if producer.push(chunk).is_err() {
-                println!("⚠️ Buffer full at chunk {}", i);
-            }
-            
+            let _ = producer.push(chunk);
+
             // Simulate audio callback timing (roughly 1ms chunks)
             std::thread::sleep(Duration::from_millis(1));
         }
-        println!("✅ Producer finished sending 600 chunks");
     });
-    
+
     // Consumer thread (simulates visualization thread)
     let app_clone = app_handle.clone();
     let consumer_handle = std::thread::spawn(move || {
         let mut chunks_sent = 0;
         let start_time = std::time::Instant::now();
-        
+
         for _ in 0..600 { // 10 seconds at 60fps = 600 iterations
             // Try to consume available chunks
             while let Ok(chunk) = consumer.pop() {
                 // Send via Tauri channel
-                if let Err(e) = app_clone.emit("viz_test_chunk", &chunk) {
-                    println!("⚠️ Failed to emit chunk: {}", e);
-                } else {
+                if app_clone.emit("viz_test_chunk", &chunk).is_ok() {
                     chunks_sent += 1;
                 }
             }
-            
+
             // 60fps timing
             std::thread::sleep(Duration::from_millis(16));
         }
-        
-        let elapsed = start_time.elapsed();
-        println!("✅ Consumer finished: {} chunks sent in {:.2}s", chunks_sent, elapsed.as_secs_f32());
+
+        let _elapsed = start_time.elapsed();
         chunks_sent
     });
-    
+
     // Wait for both threads
     producer_handle.join().unwrap();
     let chunks_sent = consumer_handle.join().unwrap();
-    
+
     let result = format!("Throughput test completed: {} chunks sent via Tauri channels", chunks_sent);
-    println!("🧪 {}", result);
     Ok(result)
 }
 
 /// Cancel an ongoing recording
 #[tauri::command]
 fn cancel_recording() -> Result<String, String> {
-    println!("🛑 Cancelling recording...");
     RECORDING_CANCELLED.store(true, std::sync::atomic::Ordering::Relaxed);
     Ok("Recording cancelled".to_string())
 }
@@ -1456,9 +1250,6 @@ async fn record_range_with_velocity_layers(
     use batcherbird_core::export::{SampleExporter, ExportConfig, AudioFormat};
     use batcherbird_core::detection::DetectionConfig;
     
-    println!("🎹 GUI: Recording range with velocity layers");
-    println!("   Notes: {}-{}, Velocities: {:?}, Duration: {}ms", start_note, end_note, velocity_layers, duration);
-    
     // Validate inputs
     if velocity_layers.is_empty() {
         return Err("No velocity layers specified".to_string());
@@ -1480,11 +1271,7 @@ async fn record_range_with_velocity_layers(
     let note_count = (end_note - start_note + 1) as usize;
     let velocity_count = velocity_layers.len();
     let total_samples = note_count * velocity_count;
-    println!("📊 Total samples to record: {} notes × {} velocities = {}", note_count, velocity_count, total_samples);
-    
-    // Range sampling with velocity layers in dedicated thread
-    println!("📡 GUI: Starting multi-velocity range recording...");
-    
+
     // Reset cancellation flag
     RECORDING_CANCELLED.store(false, std::sync::atomic::Ordering::Relaxed);
     
@@ -1493,8 +1280,6 @@ async fn record_range_with_velocity_layers(
     
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        println!("🧵 Multi-velocity range thread started");
-        
         // Create sampling engine
         let sampling_config = SamplingConfig {
             note_duration_ms: duration as u64,
@@ -1507,12 +1292,8 @@ async fn record_range_with_velocity_layers(
         };
         
         let mut sampling_engine = match SamplingEngine::new(sampling_config) {
-            Ok(engine) => {
-                println!("✅ SamplingEngine created for multi-velocity recording");
-                engine
-            },
+            Ok(engine) => engine,
             Err(e) => {
-                println!("❌ Failed to create SamplingEngine: {}", e);
                 let _ = tx.send((Err(e), connection));
                 return;
             }
@@ -1526,11 +1307,8 @@ async fn record_range_with_velocity_layers(
         for (layer_idx, &velocity) in velocity_layers.iter().enumerate() {
             // Check for cancellation
             if RECORDING_CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
-                println!("⚠️ Recording cancelled by user");
                 break;
             }
-            
-            println!("🎼 Recording velocity layer {} of {} (velocity: {})", layer_idx + 1, velocity_count, velocity);
             
             // Create new config with updated velocity
             let sampling_config = SamplingConfig {
@@ -1547,21 +1325,17 @@ async fn record_range_with_velocity_layers(
             sampling_engine = match SamplingEngine::new(sampling_config) {
                 Ok(engine) => engine,
                 Err(e) => {
-                    println!("❌ Failed to create SamplingEngine for velocity {}: {}", velocity, e);
                     let _ = tx.send((Err(e), connection));
                     return;
                 }
             };
-            
+
             // Record this velocity layer for all notes
             for note in start_note..=end_note {
                 // Check for cancellation
                 if RECORDING_CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
-                    println!("⚠️ Recording cancelled by user");
                     break;
                 }
-                
-                println!("   🎵 Recording note {} at velocity {}", note, velocity);
                 
                 match sampling_engine.sample_single_note_blocking(&mut connection, note) {
                     Ok(mut sample) => {
@@ -1569,11 +1343,10 @@ async fn record_range_with_velocity_layers(
                         sample.velocity = velocity;
                         all_samples.push(sample);
                         completed += 1;
-                        
+
                         // Progress update
                         let progress = (completed as f32 / total_samples as f32) * 100.0;
-                        println!("   ✅ Sample {}/{} recorded ({:.1}%)", completed, total_samples, progress);
-                        
+
                         // Emit progress event to frontend
                         let progress_data = serde_json::json!({
                             "current": completed,
@@ -1587,8 +1360,7 @@ async fn record_range_with_velocity_layers(
                         });
                         let _ = app_handle.emit("recording_progress", progress_data);
                     },
-                    Err(e) => {
-                        println!("   ❌ Failed to record note {} at velocity {}: {}", note, velocity, e);
+                    Err(_e) => {
                         // Continue with other samples instead of failing completely
                     }
                 }
@@ -1601,12 +1373,9 @@ async fn record_range_with_velocity_layers(
             // Delay between velocity layers
             if layer_idx < velocity_count - 1 {
                 let delay_ms = layer_to_layer_delay.unwrap_or(500);
-                println!("⏸️ Pausing {}ms before next velocity layer...", delay_ms);
                 std::thread::sleep(std::time::Duration::from_millis(delay_ms as u64));
             }
         }
-        
-        println!("✅ Multi-velocity recording complete: {} samples collected", all_samples.len());
         
         // Send results back
         if all_samples.is_empty() {
@@ -1618,7 +1387,7 @@ async fn record_range_with_velocity_layers(
     
     // Wait for recording to complete
     match rx.recv() {
-        Ok((result, mut conn)) => {
+        Ok((result, conn)) => {
             // Restore MIDI connection for future use
             {
                 let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
@@ -1628,8 +1397,6 @@ async fn record_range_with_velocity_layers(
             // Process results
             match result {
                 Ok(samples) => {
-                    println!("✅ GUI: Received {} samples from multi-velocity recording", samples.len());
-                    
                     // Export samples
                     let output_path = if let Some(dir) = output_directory {
                         std::path::PathBuf::from(dir)
@@ -1671,20 +1438,16 @@ async fn record_range_with_velocity_layers(
                     let exported_paths = exporter.export_samples(&samples).map_err(|e| {
                         format!("Failed to export samples: {}", e)
                     })?;
-                    
-                    println!("✅ Exported {} files to {}", exported_paths.len(), output_path.display());
-                    
-                    Ok(format!("Multi-velocity range recording complete! {} samples saved to {}", 
+
+                    Ok(format!("Multi-velocity range recording complete! {} samples saved to {}",
                         exported_paths.len(), output_path.display()))
                 },
                 Err(e) => {
-                    println!("❌ Multi-velocity recording error: {}", e);
                     Err(format!("Multi-velocity recording failed: {}", e))
                 }
             }
         },
-        Err(e) => {
-            println!("❌ GUI: Thread communication error: {}", e);
+        Err(_e) => {
             Err("Recording thread communication failed".to_string())
         }
     }
@@ -1692,8 +1455,6 @@ async fn record_range_with_velocity_layers(
 
 #[tauri::command]
 fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, output_directory: Option<String>, sample_name: Option<String>, export_format: Option<String>, creator_name: Option<String>, instrument_description: Option<String>) -> Result<String, String> {
-    println!("🎹 GUI: Recording range sampling (notes: {}-{}, velocity: {}, duration: {}ms)", start_note, end_note, velocity, duration);
-    
     // Step 1: Get MIDI connection (GUI responsibility)
     let mut connection = {
         let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
@@ -1702,50 +1463,33 @@ fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, outpu
             None => return Err("No MIDI connection established. Please select a MIDI device first.".to_string()),
         }
     };
-    
+
     // Step 2: Range sampling in dedicated thread (follows architecture pattern)
-    println!("📡 GUI: Delegating to Core Audio Engine for range sampling...");
-    
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        println!("🧵 Range sampling thread started");
-        
         // Configure Core Audio Engine
-        println!("🔧 Configuring sampling engine for range...");
         let sampling_config = SamplingConfig {
             note_duration_ms: duration as u64,
             release_time_ms: 500,  // Professional standard: 500ms release capture
-            pre_delay_ms: 100,     // Professional standard: 100ms pre-roll  
+            pre_delay_ms: 100,     // Professional standard: 100ms pre-roll
             post_delay_ms: 100,    // Clean buffer flush
             midi_channel: 0,       // Channel 1 (0-indexed)
             velocity,
             ..SamplingConfig::default() // Use defaults for input_mode and input_channels
         };
-        
-        println!("🎛️ Creating SamplingEngine for range sampling...");
+
         let sampling_engine = match SamplingEngine::new(sampling_config) {
-            Ok(engine) => {
-                println!("✅ SamplingEngine created successfully");
-                engine
-            },
+            Ok(engine) => engine,
             Err(e) => {
-                println!("❌ Failed to create SamplingEngine: {}", e);
                 let _ = tx.send((Err(e), connection));
                 return;
             }
         };
-        
+
         // Use blocking range method from Core Audio Engine
-        println!("🎵 Starting range recording for notes {}-{}", start_note, end_note);
         let result = sampling_engine.sample_note_range_blocking(&mut connection, start_note, end_note);
-        
-        match &result {
-            Ok(samples) => println!("✅ Range recording completed: {} samples", samples.len()),
-            Err(e) => println!("❌ Range recording failed: {}", e),
-        }
-        
+
         // Send result back via channel
-        println!("📡 Sending range result back to main thread");
         let _ = tx.send((result, connection));
     });
     
@@ -1758,9 +1502,6 @@ fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, outpu
     
     match recording_result {
         Ok(samples) => {
-            println!("✅ GUI: Core Audio Engine completed range recording successfully");
-            println!("📊 GUI: Received {} samples from Core Engine", samples.len());
-            
             // Step 4: Handle export for all samples
             let output_dir = if let Some(dir) = output_directory {
                 if dir.trim().is_empty() {
@@ -1785,27 +1526,16 @@ fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, outpu
             // Create subfolder if sample name is provided (professional organization)
             if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
                 output_path = output_path.join(name.trim());
-                println!("📁 GUI: Creating subfolder for range samples: {}", name.trim());
             }
-            
+
             // Ensure output directory exists (including subfolder)
             if let Err(e) = std::fs::create_dir_all(&output_path) {
-                println!("❌ GUI: Failed to create output directory: {}", e);
                 return Err(format!("Failed to create output directory '{}': {}", output_path.display(), e));
             }
-            
-            println!("📁 GUI: Using output directory: {}", output_path.display());
-            
+
             // Filter out empty samples
             let valid_samples: Vec<_> = samples.into_iter()
-                .filter(|sample| {
-                    if sample.audio_data.is_empty() {
-                        println!("⚠️ GUI: Warning - Sample (note {}) has no audio data, skipping", sample.note);
-                        false
-                    } else {
-                        true
-                    }
-                })
+                .filter(|sample| !sample.audio_data.is_empty())
                 .collect();
             
             if valid_samples.is_empty() {
@@ -1842,37 +1572,26 @@ fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, outpu
                 instrument_description: instrument_description.clone(),
             };
             
-            println!("🔧 GUI: Creating batch exporter for {} samples...", valid_samples.len());
             let exporter = SampleExporter::new(export_config).map_err(|e| {
-                println!("❌ GUI: Failed to create batch exporter: {}", e);
                 format!("Failed to create sample exporter: {}", e)
             })?;
-            
+
             // Export all samples as a batch - this will create .dspreset/.sfz files automatically
-            println!("💾 GUI: Batch exporting {} samples...", valid_samples.len());
             let exported_file_paths = exporter.export_samples(&valid_samples).map_err(|e| {
-                println!("❌ GUI: Batch export failed: {}", e);
                 format!("Failed to export samples: {}", e)
             })?;
-            
+
             // Convert paths to filenames for display
             let exported_files: Vec<String> = exported_file_paths.iter()
                 .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
                 .collect();
-            
-            println!("✅ GUI: Successfully batch exported {} files:", exported_files.len());
-            for filename in &exported_files {
-                println!("   📄 {}", filename);
-            }
-            
-            let success_message = format!("Range recording complete! {} files saved to:\n{}", 
+
+            let success_message = format!("Range recording complete! {} files saved to:\n{}",
                 exported_files.len(), output_path.display());
-            
-            println!("✅ GUI: {}", success_message);
+
             Ok(success_message)
         }
         Err(e) => {
-            println!("❌ GUI: Core Audio Engine reported range recording error: {}", e);
             Err(format!("Range recording failed: {}", e))
         }
     }
@@ -1881,8 +1600,6 @@ fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, outpu
 /// Apply loop detection to a sample file
 #[tauri::command]
 fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_length: Option<f32>, correlation_threshold: Option<f32>) -> Result<String, String> {
-    println!("🔄 GUI: Detecting loop points for: {}", file_path);
-    
     use batcherbird_core::sampler::Sample;
     
     // Validate and load the audio file
@@ -1895,15 +1612,13 @@ fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_
             best_candidate: None,
             failure_reason: Some(format!("File not found: {}", file_path)),
         };
-        return Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?);
+        return serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e));
     }
     
     // Read the WAV file
     match hound::WavReader::open(&path) {
         Ok(mut reader) => {
             let spec = reader.spec();
-            println!("   📊 Audio specs: {}Hz, {} channels, {} bits", 
-                    spec.sample_rate, spec.channels, spec.bits_per_sample);
             
             // Read samples based on bit depth
             let samples: Result<Vec<f32>, _> = match spec.sample_format {
@@ -1935,7 +1650,7 @@ fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_
                                 best_candidate: None,
                                 failure_reason: Some(format!("Unsupported bit depth: {}", spec.bits_per_sample)),
                             };
-                            return Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?);
+                            return serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e));
                         }
                     }
                 }
@@ -1951,7 +1666,7 @@ fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_
                         best_candidate: None,
                         failure_reason: Some(format!("Failed to read audio data: {}", e)),
                     };
-                    return Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?);
+                    return serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e));
                 }
             };
             
@@ -1963,13 +1678,9 @@ fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_
                     best_candidate: None,
                     failure_reason: Some("No audio data found in file".to_string()),
                 };
-                return Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?);
+                return serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e));
             }
-            
-            println!("   📄 Loaded {} samples ({:.2}s)", 
-                    audio_data.len(), 
-                    audio_data.len() as f32 / spec.sample_rate as f32);
-            
+
             // Create a temporary sample for loop detection
             let mut sample = Sample {
                 note: 60, // Middle C - not used for loop detection
@@ -1993,10 +1704,7 @@ fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_
             if let Some(threshold) = correlation_threshold {
                 config.correlation_threshold = threshold;
             }
-            
-            println!("   🔧 Loop detection config: {:.1}s-{:.1}s, threshold: {:.2}", 
-                    config.min_loop_length_sec, config.max_loop_length_sec, config.correlation_threshold);
-            
+
             // Apply loop detection
             match sample.apply_loop_detection(config) {
                 Ok(result) => {
@@ -2030,18 +1738,6 @@ fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_
                         failure_reason: result.failure_reason,
                     };
                     
-                    if result.success {
-                        if let Some(ref candidate) = response.best_candidate {
-                            println!("   ✅ Loop detected: {:.3}s-{:.3}s, quality: {:.3}", 
-                                    candidate.start_sample as f32 / sample.sample_rate as f32,
-                                    candidate.end_sample as f32 / sample.sample_rate as f32,
-                                    candidate.quality_score);
-                        }
-                    } else {
-                        println!("   ❌ Loop detection failed: {}", 
-                                response.failure_reason.as_ref().unwrap_or(&"Unknown reason".to_string()));
-                    }
-                    
                     Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?)
                 },
                 Err(e) => {
@@ -2052,7 +1748,6 @@ fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_
                         best_candidate: None,
                         failure_reason: Some(format!("Loop detection error: {}", e)),
                     };
-                    println!("   ❌ Loop detection error: {}", e);
                     Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?)
                 }
             }
@@ -2065,7 +1760,6 @@ fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_
                 best_candidate: None,
                 failure_reason: Some(format!("Failed to open WAV file: {}", e)),
             };
-            println!("   ❌ Failed to open WAV file: {}", e);
             Ok(serde_json::to_string(&response).map_err(|e| format!("JSON serialization error: {}", e))?)
         }
     }
@@ -2074,9 +1768,6 @@ fn detect_loop_points(file_path: String, min_loop_length: Option<f32>, max_loop_
 /// Apply loop metadata to a WAV file
 #[tauri::command]
 fn apply_loop_metadata(file_path: String, start_sample: usize, end_sample: usize, sample_rate: u32) -> Result<String, String> {
-    println!("🔄 GUI: Applying loop metadata to: {}", file_path);
-    println!("   Loop: samples {}-{} (rate: {}Hz)", start_sample, end_sample, sample_rate);
-    
     // Validate path for security
     let path = validate_file_path(&file_path)?;
     if !path.exists() {
@@ -2099,11 +1790,9 @@ fn apply_loop_metadata(file_path: String, start_sample: usize, end_sample: usize
     
     match std::fs::write(&metadata_path, serde_json::to_string_pretty(&loop_metadata).unwrap()) {
         Ok(_) => {
-            println!("✅ GUI: Loop metadata saved to: {}", metadata_path.display());
             Ok(format!("Loop metadata applied and saved to: {}", metadata_path.display()))
         },
         Err(e) => {
-            println!("❌ GUI: Failed to save loop metadata: {}", e);
             Err(format!("Failed to save loop metadata: {}", e))
         }
     }
@@ -2111,8 +1800,6 @@ fn apply_loop_metadata(file_path: String, start_sample: usize, end_sample: usize
 
 #[tauri::command]
 async fn send_midi_panic() -> Result<String, String> {
-    println!("🚨 MIDI Panic command called from UI");
-    
     // Extract the connection from the mutex and drop the guard
     let mut connection = {
         let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
@@ -2139,9 +1826,7 @@ async fn send_midi_panic() -> Result<String, String> {
 async fn select_audio_file(app: tauri::AppHandle) -> Result<String, String> {
     use tauri_plugin_dialog::DialogExt;
     use std::sync::mpsc;
-    
-    println!("🎵 Opening native file picker for audio files...");
-    
+
     let (tx, rx) = mpsc::channel();
     
     app.dialog()
@@ -2157,15 +1842,12 @@ async fn select_audio_file(app: tauri::AppHandle) -> Result<String, String> {
     match rx.recv() {
         Ok(Some(path)) => {
             let path_str = path.to_string();
-            println!("✅ User selected audio file: {}", path_str);
             Ok(path_str)
         }
         Ok(None) => {
-            println!("❌ User cancelled file selection");
             Err("File selection cancelled".to_string())
         }
         Err(e) => {
-            println!("❌ File picker error: {}", e);
             Err(format!("File picker error: {}", e))
         }
     }
@@ -2173,8 +1855,6 @@ async fn select_audio_file(app: tauri::AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 fn show_samples_in_finder() -> Result<String, String> {
-    println!("📁 Opening samples folder in Finder...");
-    
     // Get the default samples directory
     let samples_dir = dirs::desktop_dir()
         .map(|desktop| desktop.join("Batcherbird Samples"))
@@ -2190,11 +1870,9 @@ fn show_samples_in_finder() -> Result<String, String> {
         .arg(&samples_dir)
         .status() {
         Ok(_) => {
-            println!("✅ Opened {} in Finder", samples_dir.display());
             Ok(format!("Opened samples folder: {}", samples_dir.display()))
         },
         Err(e) => {
-            println!("❌ Failed to open Finder: {}", e);
             Err(format!("Failed to open Finder: {}", e))
         }
     }
@@ -2203,10 +1881,6 @@ fn show_samples_in_finder() -> Result<String, String> {
 /// Get the path of the most recently recorded sample file
 #[tauri::command]
 fn get_last_recorded_sample_path(output_directory: Option<String>, sample_name: Option<String>) -> Result<String, String> {
-    println!("🔍 GUI: Finding last recorded sample path");
-    println!("   📁 Output directory param: {:?}", output_directory);
-    println!("   📁 Sample name param: {:?}", sample_name);
-    
     use std::path::PathBuf;
     use std::fs;
     use std::time::SystemTime;
@@ -2233,9 +1907,7 @@ fn get_last_recorded_sample_path(output_directory: Option<String>, sample_name: 
     if let Some(name) = sample_name.as_ref().filter(|n| !n.trim().is_empty()) {
         search_path = search_path.join(name.trim());
     }
-    
-    println!("   📁 Searching in: {}", search_path.display());
-    
+
     if !search_path.exists() {
         return Err(format!("Directory does not exist: {}", search_path.display()));
     }
@@ -2249,12 +1921,9 @@ fn get_last_recorded_sample_path(output_directory: Option<String>, sample_name: 
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let path = entry.path();
-        
-        println!("   🔍 Checking file: {}", path.display());
-        
+
         // Check if it's a WAV file
         if path.extension().and_then(|ext| ext.to_str()) == Some("wav") {
-            println!("   ✓ Found WAV file: {}", path.display());
             // Get modification time
             if let Ok(metadata) = fs::metadata(&path) {
                 if let Ok(modified) = metadata.modified() {
@@ -2270,18 +1939,15 @@ fn get_last_recorded_sample_path(output_directory: Option<String>, sample_name: 
     
     // Sort by modification time (most recent first)
     wav_files.sort_by(|a, b| b.1.cmp(&a.1));
-    
+
     let latest_file = &wav_files[0].0;
-    println!("   ✅ Found latest sample: {}", latest_file.display());
-    
+
     Ok(latest_file.to_string_lossy().to_string())
 }
 
 /// Extract waveform data from an audio file for visualization
 #[tauri::command]
 async fn get_waveform_data(file_path: String, resolution: Option<u32>) -> Result<WaveformData, String> {
-    println!("🌊 GUI: Extracting waveform data from: {}", file_path);
-    
     use hound::WavReader;
     
     // Default resolution: 800 points (matches UI width)
@@ -2305,14 +1971,11 @@ async fn get_waveform_data(file_path: String, resolution: Option<u32>) -> Result
     
     // Calculate duration
     let duration = samples_per_channel as f64 / sample_rate as f64;
-    
+
     // Calculate downsampling factor
     let samples_per_pixel = (samples_per_channel as f64 / target_resolution as f64).max(1.0);
     let chunk_size = samples_per_pixel as usize;
-    
-    println!("   📊 Sample rate: {} Hz, Channels: {}, Duration: {:.2}s", sample_rate, channels, duration);
-    println!("   📊 Total samples: {}, Samples per pixel: {}", total_samples, chunk_size);
-    
+
     // Read and process samples
     let mut positive_peaks = Vec::with_capacity(target_resolution as usize);
     let mut negative_peaks = Vec::with_capacity(target_resolution as usize);
@@ -2375,9 +2038,7 @@ async fn get_waveform_data(file_path: String, resolution: Option<u32>) -> Result
         positive_peaks.push(max_positive);
         negative_peaks.push(max_negative.abs()); // Store as positive for easier rendering
     }
-    
-    println!("   ✅ Generated {} waveform points", positive_peaks.len());
-    
+
     Ok(WaveformData {
         peaks: WaveformPeaks {
             positive: positive_peaks,
@@ -2393,15 +2054,12 @@ async fn get_waveform_data(file_path: String, resolution: Option<u32>) -> Result
 /// Load audio file for playback
 #[tauri::command]
 async fn load_sample_for_playback(file_path: String) -> Result<String, String> {
-    println!("🎵 GUI: Loading sample for playback: {}", file_path);
-    
     // Validate file path for security
     let validated_path = validate_file_path(&file_path)?;
-    
+
     // Initialize playback engine if needed
     let mut playback_guard = AUDIO_PLAYBACK.lock().unwrap();
     if playback_guard.is_none() {
-        println!("   🔧 Creating audio playback instance");
         match AudioPlayback::new() {
             Ok(playback) => {
                 let playback_arc = Arc::new(playback);
@@ -2428,8 +2086,6 @@ async fn load_sample_for_playback(file_path: String) -> Result<String, String> {
 /// Start audio playback
 #[tauri::command]
 async fn start_playback() -> Result<String, String> {
-    println!("▶️ GUI: Starting playback");
-    
     let playback_guard = AUDIO_PLAYBACK.lock().unwrap();
     if let Some(playback) = playback_guard.as_ref() {
         playback.start_playback()
@@ -2442,8 +2098,6 @@ async fn start_playback() -> Result<String, String> {
 /// Stop audio playback
 #[tauri::command]
 async fn stop_playback() -> Result<String, String> {
-    println!("⏹️ GUI: Stopping playback");
-    
     let playback_guard = AUDIO_PLAYBACK.lock().unwrap();
     if let Some(playback) = playback_guard.as_ref() {
         playback.stop_playback()
@@ -2456,8 +2110,6 @@ async fn stop_playback() -> Result<String, String> {
 /// Pause audio playback
 #[tauri::command]
 async fn pause_playback() -> Result<String, String> {
-    println!("⏸️ GUI: Pausing playback");
-    
     let playback_guard = AUDIO_PLAYBACK.lock().unwrap();
     if let Some(playback) = playback_guard.as_ref() {
         playback.pause_playback()
@@ -2470,8 +2122,6 @@ async fn pause_playback() -> Result<String, String> {
 /// Seek to position in audio (0.0 to 1.0)
 #[tauri::command]
 async fn seek_playback(position: f64) -> Result<String, String> {
-    println!("⏩ GUI: Seeking to position: {:.1}%", position * 100.0);
-    
     let playback_guard = AUDIO_PLAYBACK.lock().unwrap();
     if let Some(playback) = playback_guard.as_ref() {
         playback.seek_to_position(position)
@@ -2506,8 +2156,6 @@ async fn is_playing() -> Result<bool, String> {
 /// Get audio device channel information
 #[tauri::command]
 fn get_audio_device_info(device_index: usize) -> Result<AudioDeviceInfo, String> {
-    println!("🎤 Getting info for audio device index: {}", device_index);
-    
     use cpal::traits::{DeviceTrait, HostTrait};
     
     let host = cpal::default_host();
@@ -2532,10 +2180,7 @@ fn get_audio_device_info(device_index: usize) -> Result<AudioDeviceInfo, String>
     let channel_names: Vec<String> = (1..=total_channels)
         .map(|ch| format!("Input {}", ch))
         .collect();
-    
-    println!("   📊 Device: {}, Channels: {}, Sample Rate: {} Hz", 
-             device_name, total_channels, sample_rate);
-    
+
     Ok(AudioDeviceInfo {
         device_name,
         total_channels,
@@ -2547,8 +2192,6 @@ fn get_audio_device_info(device_index: usize) -> Result<AudioDeviceInfo, String>
 /// Initialize professional session management
 #[tauri::command]
 fn initialize_session_manager() -> Result<String, String> {
-    println!("🎛️ Initializing professional session manager");
-    
     let mut manager_guard = SESSION_MANAGER.lock().unwrap();
     if manager_guard.is_some() {
         return Ok("Session manager already initialized".to_string());
@@ -2563,16 +2206,14 @@ fn initialize_session_manager() -> Result<String, String> {
             
             manager.config_validator.update_available_devices(
                 audio_inputs,
-                audio_outputs, 
+                audio_outputs,
                 midi_devices
             );
-            
+
             *manager_guard = Some(manager);
-            println!("✅ Session manager initialized successfully");
             Ok("Session manager initialized".to_string())
         }
         Err(e) => {
-            println!("❌ Failed to initialize session manager: {}", e);
             Err(format!("Failed to initialize session manager: {}", e))
         }
     }
@@ -2581,19 +2222,15 @@ fn initialize_session_manager() -> Result<String, String> {
 /// Validate session configuration before initialization
 #[tauri::command]
 fn validate_session_config(config: SessionConfig) -> Result<ValidationReport, String> {
-    println!("🔍 Validating session configuration: {}", config.project_name);
-    
     let manager_guard = SESSION_MANAGER.lock().unwrap();
     let manager = manager_guard.as_ref()
         .ok_or_else(|| "Session manager not initialized".to_string())?;
-    
+
     match manager.config_validator.validate_session_config(&config) {
         Ok(report) => {
-            println!("📋 Validation complete: {} errors, {} warnings", report.errors.len(), report.warnings.len());
             Ok(report)
         }
         Err(e) => {
-            println!("❌ Validation failed: {}", e);
             Err(format!("Validation failed: {}", e))
         }
     }
@@ -2602,19 +2239,15 @@ fn validate_session_config(config: SessionConfig) -> Result<ValidationReport, St
 /// Test device connectivity before session initialization
 #[tauri::command]
 fn test_device_connectivity(config: SessionConfig) -> Result<DeviceTestResult, String> {
-    println!("🔍 Testing device connectivity for session: {}", config.project_name);
-    
     let manager_guard = SESSION_MANAGER.lock().unwrap();
     let manager = manager_guard.as_ref()
         .ok_or_else(|| "Session manager not initialized".to_string())?;
-    
+
     match manager.test_device_connectivity(&config) {
         Ok(test_result) => {
-            println!("🧪 Device test complete: overall success = {}", test_result.overall_success);
             Ok(test_result)
         }
         Err(e) => {
-            println!("❌ Device test failed: {}", e);
             Err(format!("Device test failed: {}", e))
         }
     }
@@ -2623,19 +2256,15 @@ fn test_device_connectivity(config: SessionConfig) -> Result<DeviceTestResult, S
 /// Initialize a new professional session
 #[tauri::command]
 fn initialize_session(config: SessionConfig) -> Result<String, String> {
-    println!("🎛️ Initializing professional session: {}", config.project_name);
-    
     let mut manager_guard = SESSION_MANAGER.lock().unwrap();
     let manager = manager_guard.as_mut()
         .ok_or_else(|| "Session manager not initialized".to_string())?;
-    
+
     match manager.initialize_session(config.clone()) {
         Ok(_) => {
-            println!("✅ Session '{}' initialized successfully", config.project_name);
             Ok(format!("Session '{}' ready for recording", config.project_name))
         }
         Err(e) => {
-            println!("❌ Session initialization failed: {}", e);
             Err(format!("Session initialization failed: {}", e))
         }
     }
@@ -2691,8 +2320,6 @@ fn get_default_session_config() -> Result<SessionConfig, String> {
 /// Save session configuration as template
 #[tauri::command]
 fn save_session_template(name: String, config: SessionConfig) -> Result<String, String> {
-    println!("💾 Saving session template: {}", name);
-    
     let mut manager_guard = SESSION_MANAGER.lock().unwrap();
     let manager = manager_guard.as_mut()
         .ok_or_else(|| "Session manager not initialized".to_string())?;
@@ -2706,8 +2333,6 @@ fn save_session_template(name: String, config: SessionConfig) -> Result<String, 
 /// Load session template
 #[tauri::command]
 fn load_session_template(name: String) -> Result<SessionConfig, String> {
-    println!("📂 Loading session template: {}", name);
-    
     let manager_guard = SESSION_MANAGER.lock().unwrap();
     let manager = manager_guard.as_ref()
         .ok_or_else(|| "Session manager not initialized".to_string())?;
@@ -2777,9 +2402,6 @@ async fn detect_sample_boundaries(
     profile: String,
     custom_config: Option<String>,
 ) -> Result<String, String> {
-    println!("🔍 Performing intelligent detection on: {}", file_path);
-    println!("   Profile: {}", profile);
-    
     // Validate file path
     let validated_path = validate_file_path(&file_path)?;
     
@@ -2827,8 +2449,6 @@ async fn apply_professional_trimming(
     detection_result: String,
     output_path: Option<String>,
 ) -> Result<String, String> {
-    println!("✂️ Applying professional trimming to: {}", file_path);
-    
     // Validate file path
     let validated_path = validate_file_path(&file_path)?;
     
@@ -2889,8 +2509,7 @@ async fn apply_professional_trimming(
     
     writer.finalize()
         .map_err(|e| format!("Failed to finalize output file: {}", e))?;
-    
-    println!("✅ Trimmed audio saved to: {}", output_file.display());
+
     Ok(output_file.to_string_lossy().to_string())
 }
 

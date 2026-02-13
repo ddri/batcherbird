@@ -39,28 +39,6 @@ export function WaveformDisplay({
 
   // Draw waveform on canvas with proper state prioritization
   useEffect(() => {
-    console.log('🌊 WaveformDisplay: Drawing waveform', { 
-      hasWaveformData: !!waveformData, 
-      isRecording,
-      isTransitioning,
-      isLoading,
-      fileName,
-      peaksLength: waveformData?.peaks.positive.length,
-      waveformDataSummary: waveformData ? {
-        duration: waveformData.duration,
-        sampleRate: waveformData.sample_rate,
-        channels: waveformData.channels,
-        format: waveformData.format
-      } : null
-    })
-    
-    console.log('🔍 WaveformDisplay: State check', {
-      isTransitioning,
-      hasWaveformData: !!waveformData,
-      isRecording,
-      canvasExists: !!canvasRef.current
-    })
-    
     const canvas = canvasRef.current
     if (!canvas) return
     
@@ -93,16 +71,6 @@ export function WaveformDisplay({
     const numPeaks = peaks.positive.length
     const peakWidth = (rect.width * zoomLevel) / numPeaks
     const centerY = rect.height / 2
-    
-    console.log('🎨 WaveformDisplay: Drawing parameters', {
-      numPeaks,
-      peakWidth,
-      centerY,
-      canvasWidth: rect.width,
-      canvasHeight: rect.height,
-      firstFewPositivePeaks: peaks.positive.slice(0, 5),
-      firstFewNegativePeaks: peaks.negative.slice(0, 5)
-    })
 
     // Set styles
     ctx.strokeStyle = '#d1d5db' // gray-300
@@ -152,13 +120,6 @@ export function WaveformDisplay({
 
   // Real-time waveform drawing during recording using VizChunk data
   useEffect(() => {
-    // Only log when starting/stopping recording to avoid 60fps spam
-    if (isRecording && realtimeVizChunks?.length === 1) {
-      console.log('🎨 WaveformDisplay: Starting real-time visualization')
-    } else if (!isRecording && realtimeVizChunks?.length === 0) {
-      console.log('🎨 WaveformDisplay: Stopping real-time visualization')  
-    }
-    
     // Don't draw real-time during transition or if not recording
     if (isTransitioning || !isRecording || !realtimeVizChunks || realtimeVizChunks.length === 0) return
     

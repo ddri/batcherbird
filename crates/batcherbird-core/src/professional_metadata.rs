@@ -1,6 +1,5 @@
 use crate::{Result, BatcherbirdError};
 use std::collections::HashMap;
-use std::path::Path;
 
 /// SMPL chunk for WAV files - industry standard sampler metadata
 #[derive(Debug, Clone)]
@@ -588,8 +587,6 @@ mod tests {
         assert!(metrics.snr_db > 0.0); // Should have positive SNR
         assert!(metrics.overall_quality > 0.3); // Should be reasonable quality
         
-        println!("Test metrics: SNR={:.1}dB, PAR={:.2}, Quality={:.2}", 
-            metrics.snr_db, metrics.peak_to_average_ratio, metrics.overall_quality);
     }
     
     #[test]

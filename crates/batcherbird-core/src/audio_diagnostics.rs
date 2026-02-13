@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Professional audio diagnostics following DAW industry standards
 /// Tracks real-time performance metrics without blocking operations
@@ -71,13 +71,13 @@ impl AudioDiagnostics {
     
     /// Start timing an audio callback (call at callback entry)
     #[inline]
-    pub fn start_callback_timing(&self) -> CallbackTimer {
+    pub fn start_callback_timing(&self) -> CallbackTimer<'_> {
         CallbackTimer::new(self)
     }
     
     /// Record a lock attempt (call before any lock operation)
     #[inline]
-    pub fn record_lock_attempt(&self) -> LockTimer {
+    pub fn record_lock_attempt(&self) -> LockTimer<'_> {
         self.lock_attempts.fetch_add(1, Ordering::Relaxed);
         LockTimer::new(self)
     }

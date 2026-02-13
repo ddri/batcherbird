@@ -127,8 +127,6 @@ impl SampleDetector {
             });
         }
         
-        println!("🔍 Starting sample detection on {} samples at {}Hz", audio_data.len(), sample_rate);
-        
         // Calculate window size in samples
         let window_size_samples = ((self.config.window_size_ms / 1000.0) * sample_rate as f32) as usize;
         if window_size_samples == 0 {
@@ -140,11 +138,7 @@ impl SampleDetector {
         
         // Convert threshold from dB to linear
         let threshold_linear = self.db_to_linear(self.config.threshold_db);
-        
-        println!("   Threshold: {}dB ({:.6} linear)", self.config.threshold_db, threshold_linear);
-        println!("   Window size: {}ms ({} samples)", self.config.window_size_ms, window_size_samples);
-        println!("   Calculated {} RMS windows", rms_values.len());
-        
+
         // Find start and end points using RMS analysis
         let (detected_start_window, detected_end_window) = self.find_signal_boundaries(&rms_values, threshold_linear)?;
         
@@ -164,10 +158,6 @@ impl SampleDetector {
         let min_length_samples = ((self.config.min_sample_length_ms / 1000.0) * sample_rate as f32) as usize;
         
         if final_length_samples < min_length_samples {
-            println!("⚠️  Detected sample too short: {}ms < {}ms minimum", 
-                (final_length_samples as f32 / sample_rate as f32) * 1000.0,
-                self.config.min_sample_length_ms);
-            
             return Ok(DetectionResult {
                 start_sample: 0,
                 end_sample: audio_data.len(),
@@ -178,17 +168,7 @@ impl SampleDetector {
                 failure_reason: Some("Sample too short after detection".to_string()),
             });
         }
-        
-        println!("✅ Detection successful:");
-        println!("   Raw detection: samples {}-{} ({:.1}ms-{:.1}ms)", 
-            detected_start_sample, detected_end_sample,
-            (detected_start_sample as f32 / sample_rate as f32) * 1000.0,
-            (detected_end_sample as f32 / sample_rate as f32) * 1000.0);
-        println!("   With triggers: samples {}-{} ({:.1}ms-{:.1}ms)",
-            final_start, final_end,
-            (final_start as f32 / sample_rate as f32) * 1000.0,
-            (final_end as f32 / sample_rate as f32) * 1000.0);
-        
+
         Ok(DetectionResult {
             start_sample: final_start,
             end_sample: final_end,
@@ -229,9 +209,7 @@ impl SampleDetector {
         
         // Find end: last position where we have enough consecutive windows above threshold  
         let end_window = self.find_end_boundary(rms_values, threshold, start_window)?;
-        
-        println!("   Signal boundaries: windows {}-{} of {}", start_window, end_window, rms_values.len());
-        
+
         Ok((start_window, end_window))
     }
     
@@ -302,23 +280,16 @@ impl SampleDetector {
     /// Trim audio data based on detection result
     pub fn trim_audio(&self, audio_data: &[f32], detection: &DetectionResult) -> Vec<f32> {
         if !detection.success {
-            println!("⚠️  Detection failed, returning original audio");
             return audio_data.to_vec();
         }
-        
+
         let start = detection.start_sample.min(audio_data.len());
         let end = detection.end_sample.min(audio_data.len());
-        
+
         if start >= end {
-            println!("⚠️  Invalid detection boundaries, returning original audio");
             return audio_data.to_vec();
         }
-        
-        println!("✂️  Trimming audio: {} -> {} samples ({:.1}% reduction)",
-            audio_data.len(),
-            end - start,
-            ((audio_data.len() - (end - start)) as f32 / audio_data.len() as f32) * 100.0);
-        
+
         audio_data[start..end].to_vec()
     }
 }

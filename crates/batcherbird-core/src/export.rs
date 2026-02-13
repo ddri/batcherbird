@@ -55,7 +55,7 @@ impl SampleExporter {
         // Create output directory if it doesn't exist
         if !config.output_directory.exists() {
             fs::create_dir_all(&config.output_directory)
-                .map_err(|e| BatcherbirdError::Export(e))?;
+                .map_err(BatcherbirdError::Export)?;
         }
         
         Ok(Self { config })
@@ -64,30 +64,14 @@ impl SampleExporter {
     pub fn export_sample(&self, sample: &Sample) -> Result<PathBuf> {
         let filename = self.generate_filename(sample);
         let filepath = self.config.output_directory.join(&filename);
-        
-        println!("💾 Exporting sample: {}", filename);
-        
+
         // Clone sample for processing (detection may modify audio data)
         let mut sample_copy = sample.clone();
         
         // Apply sample detection if enabled
         if self.config.apply_detection {
-            println!("🔍 Applying sample detection...");
-            match sample_copy.apply_detection(self.config.detection_config.clone()) {
-                Ok(detection_result) => {
-                    if detection_result.success {
-                        println!("   ✅ Detection successful, sample trimmed");
-                    } else {
-                        println!("   ⚠️ Detection failed: {}", 
-                            detection_result.failure_reason.as_deref().unwrap_or("Unknown"));
-                        println!("   📝 Exporting original sample without trimming");
-                    }
-                },
-                Err(e) => {
-                    println!("   ❌ Detection error: {}", e);
-                    println!("   📝 Exporting original sample without trimming");
-                }
-            }
+            // Attempt detection, but continue with export regardless of result
+            let _ = sample_copy.apply_detection(self.config.detection_config.clone());
         }
         
         // Process audio data
@@ -130,37 +114,30 @@ impl SampleExporter {
                 self.write_wav_file(&filepath, &audio_data, sample)?;
             }
         }
-        
-        println!("   ✅ Saved: {}", filepath.display());
+
         Ok(filepath)
     }
 
     pub fn export_samples(&self, samples: &[Sample]) -> Result<Vec<PathBuf>> {
         let mut exported_files = Vec::new();
-        
-        println!("💾 Exporting {} samples to: {}", samples.len(), self.config.output_directory.display());
-        
-        for (i, sample) in samples.iter().enumerate() {
-            println!("   Exporting sample {} of {}...", i + 1, samples.len());
+
+        for sample in samples.iter() {
             let filepath = self.export_sample(sample)?;
             exported_files.push(filepath);
         }
         
         // Generate .dspreset XML file for DecentSampler format
         if matches!(self.config.sample_format, AudioFormat::DecentSampler) {
-            println!("🎹 Generating Decent Sampler .dspreset file...");
             let dspreset_path = self.generate_dspreset_file(samples, &exported_files)?;
             exported_files.push(dspreset_path);
         }
-        
+
         // Generate .sfz file for SFZ format
         if matches!(self.config.sample_format, AudioFormat::SFZ) {
-            println!("🎼 Generating SFZ .sfz file...");
             let sfz_path = self.generate_sfz_file(samples, &exported_files)?;
             exported_files.push(sfz_path);
         }
-        
-        println!("✅ Exported {} samples successfully!", samples.len());
+
         Ok(exported_files)
     }
 
@@ -214,15 +191,12 @@ impl SampleExporter {
             for sample in audio_data.iter_mut() {
                 *sample *= gain;
             }
-            println!("   🔊 Normalized: +{:.1} dB gain", 20.0 * gain.log10());
         }
-        
+
         Ok(())
     }
 
     fn write_wav_file(&self, filepath: &Path, audio_data: &[f32], sample: &Sample) -> Result<()> {
-        println!("🔍 Writing WAV file: {} ({} samples)", filepath.display(), audio_data.len());
-        
         // Validate audio data first
         if audio_data.is_empty() {
             return Err(BatcherbirdError::Export(std::io::Error::new(
@@ -264,47 +238,30 @@ impl SampleExporter {
             }
         };
 
-        println!("🔍 WAV spec: {}Hz, {} channels, {} bits", spec.sample_rate, spec.channels, spec.bits_per_sample);
-
         // Create writer with explicit error handling
-        let mut writer = match WavWriter::create(filepath, spec) {
-            Ok(w) => {
-                println!("✅ WAV writer created successfully");
-                w
-            },
-            Err(e) => {
-                println!("❌ Failed to create WAV writer: {}", e);
-                return Err(BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)));
-            }
-        };
+        let mut writer = WavWriter::create(filepath, spec)
+            .map_err(|e| BatcherbirdError::Export(std::io::Error::other(e)))?;
 
-        // Write samples with progress tracking
-        let total_samples = audio_data.len();
+        // Write samples
         match self.config.sample_format {
             AudioFormat::Wav16Bit => {
-                for (i, &sample) in audio_data.iter().enumerate() {
+                for &sample in audio_data.iter() {
                     let sample_i16 = (sample * i16::MAX as f32) as i16;
-                    if let Err(e) = writer.write_sample(sample_i16) {
-                        println!("❌ Failed to write sample {} of {}: {}", i, total_samples, e);
-                        return Err(BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)));
-                    }
+                    writer.write_sample(sample_i16)
+                        .map_err(|e| BatcherbirdError::Export(std::io::Error::other(e)))?;
                 }
             }
             AudioFormat::Wav24Bit => {
-                for (i, &sample) in audio_data.iter().enumerate() {
+                for &sample in audio_data.iter() {
                     let sample_i32 = (sample * 8_388_607.0) as i32; // 24-bit max value
-                    if let Err(e) = writer.write_sample(sample_i32) {
-                        println!("❌ Failed to write sample {} of {}: {}", i, total_samples, e);
-                        return Err(BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)));
-                    }
+                    writer.write_sample(sample_i32)
+                        .map_err(|e| BatcherbirdError::Export(std::io::Error::other(e)))?;
                 }
             }
             AudioFormat::Wav32BitFloat => {
-                for (i, &sample) in audio_data.iter().enumerate() {
-                    if let Err(e) = writer.write_sample(sample) {
-                        println!("❌ Failed to write sample {} of {}: {}", i, total_samples, e);
-                        return Err(BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)));
-                    }
+                for &sample in audio_data.iter() {
+                    writer.write_sample(sample)
+                        .map_err(|e| BatcherbirdError::Export(std::io::Error::other(e)))?;
                 }
             }
             AudioFormat::DecentSampler => {
@@ -321,49 +278,17 @@ impl SampleExporter {
             }
         }
 
-        println!("✅ All {} samples written, finalizing...", total_samples);
-
         // Finalize with explicit error handling
-        match writer.finalize() {
-            Ok(_) => {
-                println!("✅ WAV file finalized successfully");
-            },
-            Err(e) => {
-                println!("❌ Failed to finalize WAV file: {}", e);
-                return Err(BatcherbirdError::Export(std::io::Error::new(std::io::ErrorKind::Other, e)));
-            }
-        }
+        writer.finalize()
+            .map_err(|e| BatcherbirdError::Export(std::io::Error::other(e)))?;
 
         // Explicitly sync file to disk to prevent corruption during rapid batch exports
-        match std::fs::File::open(filepath) {
-            Ok(file) => {
-                if let Err(e) = file.sync_all() {
-                    println!("⚠️ Warning: Failed to sync file to disk: {}", e);
-                } else {
-                    println!("✅ File synced to disk successfully");
-                }
-            },
-            Err(e) => {
-                println!("⚠️ Warning: Could not reopen file for sync: {}", e);
-            }
+        if let Ok(file) = std::fs::File::open(filepath) {
+            let _ = file.sync_all();
         }
 
-        // Verify file was created and has reasonable size
-        match std::fs::metadata(filepath) {
-            Ok(metadata) => {
-                let file_size = metadata.len();
-                println!("✅ File created: {} bytes", file_size);
-                
-                // Basic sanity check - WAV header is 44 bytes, so file should be larger
-                if file_size < 100 {
-                    println!("⚠️ Warning: File size suspiciously small: {} bytes", file_size);
-                }
-            },
-            Err(e) => {
-                println!("❌ Failed to verify file creation: {}", e);
-                return Err(BatcherbirdError::Export(e));
-            }
-        }
+        // Verify file was created
+        std::fs::metadata(filepath).map_err(BatcherbirdError::Export)?;
 
         Ok(())
     }
@@ -413,12 +338,11 @@ impl SampleExporter {
         
         // Write XML file
         let mut file = std::fs::File::create(&dspreset_path)
-            .map_err(|e| BatcherbirdError::Export(e))?;
+            .map_err(BatcherbirdError::Export)?;
         
         file.write_all(xml_content.as_bytes())
-            .map_err(|e| BatcherbirdError::Export(e))?;
-            
-        println!("   ✅ Generated Decent Sampler preset: {}", dspreset_filename);
+            .map_err(BatcherbirdError::Export)?;
+
         Ok(dspreset_path)
     }
     
@@ -515,12 +439,11 @@ impl SampleExporter {
         
         // Write SFZ file
         let mut file = std::fs::File::create(&sfz_path)
-            .map_err(|e| BatcherbirdError::Export(e))?;
+            .map_err(BatcherbirdError::Export)?;
         
         file.write_all(sfz_content.as_bytes())
-            .map_err(|e| BatcherbirdError::Export(e))?;
-            
-        println!("   ✅ Generated SFZ instrument: {}", sfz_filename);
+            .map_err(BatcherbirdError::Export)?;
+
         Ok(sfz_path)
     }
     
@@ -539,17 +462,17 @@ impl SampleExporter {
             sfz.push_str(&format!("// Description: {}\n", description));
         }
         
-        sfz.push_str("\n");
+        sfz.push('\n');
         
         // Control section - path settings
         sfz.push_str("<control>\n");
         sfz.push_str("default_path=samples/\n");
-        sfz.push_str("\n");
+        sfz.push('\n');
         
         // Global section - overall settings
         sfz.push_str("<global>\n");
         sfz.push_str("ampeg_release=0.5\n");
-        sfz.push_str("\n");
+        sfz.push('\n');
         
         // Sort velocity groups for consistent output
         let mut sorted_velocities: Vec<_> = velocity_groups.keys().collect();
@@ -575,7 +498,7 @@ impl SampleExporter {
                     
                     sfz.push_str(&format!("lovel={}\n", lo_vel));
                     sfz.push_str(&format!("hivel={}\n", hi_vel));
-                    sfz.push_str("\n");
+                    sfz.push('\n');
                 }
                 
                 // Add regions (samples) for this velocity group
@@ -594,7 +517,7 @@ impl SampleExporter {
                         sfz.push_str("hivel=127\n");
                     }
                     
-                    sfz.push_str("\n");
+                    sfz.push('\n');
                 }
             }
         }

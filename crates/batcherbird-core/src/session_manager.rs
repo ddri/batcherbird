@@ -63,8 +63,6 @@ impl SessionManager {
     
     /// Initialize a new session with comprehensive validation
     pub fn initialize_session(&mut self, config: SessionConfig) -> Result<(), Box<dyn std::error::Error>> {
-        println!("🎛️ Initializing professional session: {}", config.project_name);
-        
         self.session_state = SessionState::Initializing;
         
         // Phase 1: Validate configuration
@@ -83,8 +81,7 @@ impl SessionManager {
         
         // Phase 3: Create project structure
         let structure = create_project_structure(&config.project_name, Some(config.project_directory.clone()))?;
-        println!("📁 Created project structure: {}", structure.project_root.display());
-        
+
         // Phase 4: Initialize audio and MIDI engines
         let audio_manager = self.initialize_audio_engine(&config.audio)?;
         let midi_manager = self.initialize_midi_engine(&config.midi)?;
@@ -105,15 +102,12 @@ impl SessionManager {
         if self.auto_save_enabled {
             self.save_session_config(&config)?;
         }
-        
-        println!("✅ Session initialized successfully: {}", config.project_name);
+
         Ok(())
     }
     
     /// Test complete device connectivity before session initialization
     pub fn test_device_connectivity(&self, config: &SessionConfig) -> Result<DeviceTestResult, Box<dyn std::error::Error>> {
-        println!("🔍 Testing device connectivity...");
-        
         // Test audio input
         let audio_input_result = if let Some(ref device) = config.audio.input_device {
             self.test_audio_input_device(device, &config.audio)
@@ -183,8 +177,7 @@ impl SessionManager {
     
     /// Save session configuration as template
     pub fn save_session_template(&mut self, name: String, config: SessionConfig) -> Result<(), Box<dyn std::error::Error>> {
-        self.templates.insert(name.clone(), config);
-        println!("💾 Saved session template: {}", name);
+        self.templates.insert(name, config);
         Ok(())
     }
     
@@ -201,14 +194,12 @@ impl SessionManager {
     // Private helper methods
     
     fn initialize_audio_engine(&self, _config: &AudioSessionConfig) -> Result<Arc<AudioManager>, Box<dyn std::error::Error>> {
-        println!("🎤 Initializing audio engine...");
         let audio_manager = AudioManager::new()?;
         // TODO: Configure audio manager with session settings
         Ok(Arc::new(audio_manager))
     }
-    
+
     fn initialize_midi_engine(&self, _config: &MidiSessionConfig) -> Result<Arc<Mutex<MidiManager>>, Box<dyn std::error::Error>> {
-        println!("🎹 Initializing MIDI engine...");
         let midi_manager = MidiManager::new()?;
         // TODO: Configure MIDI manager with session settings
         Ok(Arc::new(Mutex::new(midi_manager)))
@@ -341,11 +332,10 @@ impl ConfigValidator {
         }
         
         // Directory validation
-        if !config.project_directory.exists() {
-            if let Err(_) = std::fs::create_dir_all(&config.project_directory) {
+        if !config.project_directory.exists()
+            && std::fs::create_dir_all(&config.project_directory).is_err() {
                 report.add_error("project_directory", "Cannot create project directory - check permissions");
             }
-        }
     }
     
     fn validate_audio_config(&self, config: &AudioSessionConfig, report: &mut ValidationReport) {
@@ -426,11 +416,10 @@ impl ConfigValidator {
     
     fn validate_export_config(&self, config: &ExportSessionConfig, report: &mut ValidationReport) {
         // Output directory validation
-        if !config.output_directory.exists() {
-            if let Err(_) = std::fs::create_dir_all(&config.output_directory) {
+        if !config.output_directory.exists()
+            && std::fs::create_dir_all(&config.output_directory).is_err() {
                 report.add_error("output_directory", "Cannot create output directory - check permissions");
             }
-        }
         
         // Naming pattern validation
         if config.naming_pattern.is_empty() {

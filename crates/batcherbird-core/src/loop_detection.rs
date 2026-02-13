@@ -70,11 +70,6 @@ impl LoopDetector {
 
     /// Detect loop points in the given audio sample
     pub fn detect_loop_points(&self, audio_data: &[f32], sample_rate: u32) -> LoopDetectionResult {
-        println!("🔄 Starting loop detection...");
-        println!("   Audio length: {} samples ({:.2}s)", 
-                audio_data.len(), 
-                audio_data.len() as f32 / sample_rate as f32);
-
         // Step 1: Find all zero crossings
         let zero_crossings = self.find_zero_crossings(audio_data);
         if zero_crossings.len() < 4 {
@@ -85,8 +80,6 @@ impl LoopDetector {
                 failure_reason: Some("Insufficient zero crossings found".to_string()),
             };
         }
-
-        println!("   Found {} zero crossings", zero_crossings.len());
 
         // Step 2: Generate loop candidates
         let candidates = self.generate_loop_candidates(&zero_crossings, audio_data, sample_rate);
@@ -99,21 +92,15 @@ impl LoopDetector {
             };
         }
 
-        println!("   Generated {} loop candidates", candidates.len());
-
         // Step 3: Evaluate and rank candidates
         let mut evaluated_candidates = self.evaluate_candidates(&candidates, audio_data);
         evaluated_candidates.sort_by(|a, b| b.quality_score.partial_cmp(&a.quality_score).unwrap());
-
-        println!("   Best candidate quality: {:.3}", 
-                evaluated_candidates.first().map(|c| c.quality_score).unwrap_or(0.0));
 
         // Step 4: Return results - ALWAYS SUCCESS with fallback
         let best_candidate = evaluated_candidates.first().cloned();
         
         // If no candidates found through normal means, create a basic fallback loop
         let (final_candidate, success) = if best_candidate.is_none() || evaluated_candidates.is_empty() {
-            println!("⚠️ No candidates found, creating fallback loop");
             let fallback_start = audio_data.len() / 4;  // Start at 25% 
             let fallback_end = (audio_data.len() * 3) / 4;  // End at 75%
             let fallback_candidate = LoopCandidate {

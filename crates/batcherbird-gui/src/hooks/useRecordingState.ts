@@ -11,9 +11,7 @@ export function useRecordingState() {
     try {
       setState('armed')
       await startMonitoring()
-      console.log('Recording armed - audio monitoring started')
     } catch (error) {
-      console.error('Failed to arm recording:', error)
       setState('idle')
       throw error
     }
@@ -23,9 +21,7 @@ export function useRecordingState() {
     try {
       setState('idle')
       await stopMonitoring()
-      console.log('Recording disarmed - audio monitoring stopped')
     } catch (error) {
-      console.error('Failed to disarm recording:', error)
       // Even if stopping fails, we should go back to idle
       setState('idle')
     }
@@ -36,7 +32,6 @@ export function useRecordingState() {
       throw new Error('Cannot start countdown - not armed')
     }
     setState('counting-down')
-    console.log('Recording countdown started')
   }, [state])
 
   const startRecording = useCallback(() => {
@@ -44,26 +39,21 @@ export function useRecordingState() {
       throw new Error('Cannot start recording - not in countdown or armed state')
     }
     setState('recording')
-    console.log('Recording started')
   }, [state])
 
   const stopRecording = useCallback(async () => {
     if (state !== 'recording') {
-      console.warn('Stop recording called but not in recording state')
       return
     }
     // Go back to armed state after recording
     setState('armed')
-    console.log('Recording stopped - returning to armed state')
   }, [state])
 
   const startPreview = useCallback(async () => {
     try {
       setState('preview')
       await startMonitoring(true) // Enable playthrough for preview
-      console.log('Preview mode - audio monitoring with playthrough started')
     } catch (error) {
-      console.error('Failed to start preview:', error)
       setState('idle')
       throw error
     }
@@ -73,9 +63,7 @@ export function useRecordingState() {
     try {
       setState('idle')
       await stopMonitoring()
-      console.log('Preview stopped - audio monitoring stopped')
     } catch (error) {
-      console.error('Failed to stop preview:', error)
       setState('idle')
     }
   }, [stopMonitoring])
@@ -85,7 +73,6 @@ export function useRecordingState() {
       return
     }
     setState('armed')
-    console.log('Recording countdown cancelled - returning to armed state')
   }, [state])
 
   // Computed states

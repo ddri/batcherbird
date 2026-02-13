@@ -27,7 +27,6 @@ export function SessionInitializationWizard({ isOpen, onClose, onComplete }: Ses
           const desktop = await desktopDir()
           setOutputDirectory(desktop)
         } catch (error) {
-          console.error('Failed to get desktop directory:', error)
           setOutputDirectory('') // Will show as empty, user can select
         }
       }
@@ -49,15 +48,13 @@ export function SessionInitializationWizard({ isOpen, onClose, onComplete }: Ses
     try {
       const directory = await selectOutputDirectory()
       setOutputDirectory(directory)
-      console.log('Selected directory:', directory)
     } catch (error) {
-      console.error('Directory selection failed:', error)
+      // Directory selection cancelled
     }
   }
 
   const handleComplete = () => {
     const sessionData = { projectName: projectName.trim(), outputDirectory }
-    console.log('Session initialized with:', sessionData)
     onComplete(sessionData)
     onClose()
   }

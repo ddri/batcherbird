@@ -52,7 +52,7 @@ export function IntelligentDetectionControls({
           setSelectedProfile(profileList[0])
         }
       } catch (err) {
-        console.error('Failed to load profiles:', err)
+        // Failed to load profiles
       }
     }
     loadProfiles()
@@ -66,7 +66,7 @@ export function IntelligentDetectionControls({
           const config = await getDetectionConfig(selectedProfile)
           setDetectionConfig(config)
         } catch (err) {
-          console.error('Failed to load detection config:', err)
+          // Failed to load detection config
         }
       }
       loadConfig()
@@ -81,14 +81,14 @@ export function IntelligentDetectionControls({
         const result = await detectSampleBoundaries(selectedFile, selectedProfile, detectionConfig || undefined)
         setDetectionResult(result)
       } catch (err) {
-        console.error('Detection failed:', err)
+        // Detection failed
       }
     } else {
       try {
         const result = await detectSampleBoundaries(audioFilePath, selectedProfile, detectionConfig || undefined)
         setDetectionResult(result)
       } catch (err) {
-        console.error('Detection failed:', err)
+        // Detection failed
       }
     }
   }, [audioFilePath, selectedProfile, detectionConfig, detectSampleBoundaries, selectAudioFile])
@@ -98,10 +98,9 @@ export function IntelligentDetectionControls({
 
     try {
       const trimmedPath = await applyProfessionalTrimming(audioFilePath, detectionResult)
-      console.log('✅ Trimming completed:', trimmedPath)
       onTrimmingComplete?.(trimmedPath)
     } catch (err) {
-      console.error('Trimming failed:', err)
+      // Trimming failed
     }
   }, [detectionResult, audioFilePath, applyProfessionalTrimming, onTrimmingComplete])
 
@@ -183,7 +182,7 @@ export function IntelligentDetectionControls({
                       try {
                         await selectAudioFile()
                       } catch (err) {
-                        console.log('File selection cancelled')
+                        // File selection cancelled
                       }
                     }}
                     className="text-xs"

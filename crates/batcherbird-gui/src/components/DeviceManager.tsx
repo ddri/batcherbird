@@ -49,12 +49,6 @@ export function DeviceManager({ onMidiPanic, onOpenSetup, onInputConfigChange }:
     }
   }, [inputMode, selectedInputChannels, onInputConfigChange])
   
-  // Debug device lists
-  useEffect(() => {
-    if (midiDevices.length > 0) console.log("MIDI devices:", midiDevices)
-    if (audioInputDevices.length > 0) console.log("Audio input devices:", audioInputDevices)
-    if (audioOutputDevices.length > 0) console.log("Audio output devices:", audioOutputDevices)
-  }, [midiDevices, audioInputDevices, audioOutputDevices])
 
   // Auto-select first devices when available
   useEffect(() => {
@@ -79,9 +73,8 @@ export function DeviceManager({ onMidiPanic, onOpenSetup, onInputConfigChange }:
     if (selectedMidiDevice) {
       try {
         await connectMidi(parseInt(selectedMidiDevice))
-        console.log("Connected to MIDI device:", midiDevices[parseInt(selectedMidiDevice)])
       } catch (err) {
-        console.error('Failed to connect MIDI device:', err)
+        // Failed to connect MIDI device
       }
     }
   }
@@ -96,13 +89,11 @@ export function DeviceManager({ onMidiPanic, onOpenSetup, onInputConfigChange }:
   
   const handleAudioInputChange = async (value: string) => {
     setSelectedAudioInput(value)
-    console.log("Selected audio input:", audioInputDevices[parseInt(value)])
-    
+
     // Get device info to know how many channels it has
     try {
       const info = await getDeviceInfo(parseInt(value))
-      console.log("Device info:", info)
-      
+
       // Reset to stereo mode with first two channels if available
       if (info.total_channels >= 2) {
         setInputMode('stereo')
@@ -112,7 +103,7 @@ export function DeviceManager({ onMidiPanic, onOpenSetup, onInputConfigChange }:
         setSelectedInputChannels([0])
       }
     } catch (err) {
-      console.error('Failed to get device info:', err)
+      // Failed to get device info
     }
   }
   
@@ -121,7 +112,7 @@ export function DeviceManager({ onMidiPanic, onOpenSetup, onInputConfigChange }:
     try {
       await testMidiConnection()
     } catch (err) {
-      console.error('MIDI test failed:', err)
+      // MIDI test failed
     }
   }
 
@@ -130,7 +121,7 @@ export function DeviceManager({ onMidiPanic, onOpenSetup, onInputConfigChange }:
       await sendMidiPanic()
       onMidiPanic()
     } catch (err) {
-      console.error('MIDI panic failed:', err)
+      // MIDI panic failed
     }
   }
 

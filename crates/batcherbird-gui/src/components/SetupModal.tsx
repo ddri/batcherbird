@@ -89,17 +89,17 @@ export function SetupModal({
       try {
         await connectMidi(parseInt(selectedMidiDevice))
       } catch (err) {
-        console.error('Failed to connect MIDI device:', err)
+        // Failed to connect MIDI device
       }
     }
   }
-  
+
   const handleAudioInputChange = async (value: string) => {
     setSelectedAudioInput(value)
-    
+
     try {
       const info = await getDeviceInfo(parseInt(value))
-      
+
       if (info.total_channels >= 2) {
         setInputMode('stereo')
         setSelectedInputChannels([0, 1])
@@ -108,7 +108,7 @@ export function SetupModal({
         setSelectedInputChannels([0])
       }
     } catch (err) {
-      console.error('Failed to get device info:', err)
+      // Failed to get device info
     }
   }
 
@@ -116,7 +116,7 @@ export function SetupModal({
     try {
       await testMidiConnection()
     } catch (err) {
-      console.error('MIDI test failed:', err)
+      // MIDI test failed
     }
   }
 
@@ -124,7 +124,7 @@ export function SetupModal({
     try {
       await sendMidiPanic()
     } catch (err) {
-      console.error('MIDI panic failed:', err)
+      // MIDI panic failed
     }
   }
 

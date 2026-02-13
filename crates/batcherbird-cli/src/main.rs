@@ -311,7 +311,7 @@ fn sample_single_note(note: u8) -> anyhow::Result<()> {
     let sample = engine.sample_single_note_blocking(&mut midi_conn, note)?;
     
     // Analyze the sample
-    let (rms, rms_db, peak_db) = batcherbird_core::audio::AudioManager::analyze_audio_samples(&sample.audio_data);
+    let (_rms, rms_db, peak_db) = batcherbird_core::audio::AudioManager::analyze_audio_samples(&sample.audio_data);
     
     println!("\n📊 Sample Analysis:");
     println!("   Note: {} ({})", sample.note, sample_note_name(sample.note));

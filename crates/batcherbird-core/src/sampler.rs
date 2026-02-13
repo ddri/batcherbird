@@ -284,7 +284,6 @@ impl SamplingEngine {
     
     /// Start persistent audio monitoring stream with optional playthrough
     pub fn start_monitoring_stream_with_playthrough(&self, enable_playthrough: bool) -> Result<(cpal::Stream, Option<cpal::Stream>)> {
-        println!("🎛️ Starting audio monitoring stream (playthrough: {})", enable_playthrough);
         
         let input_device = self.audio_manager.get_default_input_device()?;
         let input_config = input_device.default_input_config()
@@ -381,13 +380,11 @@ impl SamplingEngine {
             None
         };
         
-        println!("✅ Audio monitoring stream created (with playthrough: {})", enable_playthrough);
         Ok((input_stream, output_stream))
     }
 
     /// Start persistent audio monitoring stream (separate from recording)
     pub fn start_monitoring_stream(&self) -> Result<cpal::Stream> {
-        println!("🎛️ Starting persistent audio monitoring stream");
         
         let device = self.audio_manager.get_default_input_device()?;
         let config = device.default_input_config()
@@ -459,10 +456,9 @@ impl SamplingEngine {
             }
         };
 
-        println!("✅ Persistent audio monitoring stream created");
         Ok(stream)
     }
-    
+
 
     /// Blocking interface for Tauri GUI layer (follows TAURI_AUDIO_ARCHITECTURE.md)
     /// Uses professional lock-free recording architecture
@@ -537,9 +533,6 @@ impl SamplingEngine {
             timestamp += chunk.len() as u64;
         }
         
-        println!("✅ Created visualization data: {} chunks from {} samples", 
-            audio_data.len() / chunk_size, audio_data.len());
-        
         Ok(viz_consumer)
     }
 
@@ -551,19 +544,10 @@ impl SamplingEngine {
         midi_conn: &mut MidiOutputConnection,
         note: u8,
     ) -> Result<Sample> {
-        println!("🎵 Sampling note {} ({})", note, Self::note_to_name(note));
-        
-        let _total_duration = self.config.pre_delay_ms 
-            + self.config.note_duration_ms 
-            + self.config.release_time_ms 
+        let _total_duration = self.config.pre_delay_ms
+            + self.config.note_duration_ms
+            + self.config.release_time_ms
             + self.config.post_delay_ms;
-
-        println!("   Pre-delay: {}ms, Note: {}ms, Release: {}ms, Post: {}ms", 
-            self.config.pre_delay_ms,
-            self.config.note_duration_ms,
-            self.config.release_time_ms,
-            self.config.post_delay_ms
-        );
 
         // Start recording first
         let audio_samples = Arc::new(Mutex::new(Vec::new()));
@@ -628,8 +612,6 @@ impl SamplingEngine {
         let audio_timing = start_time.elapsed();
         let audio_data = audio_samples.lock().unwrap().clone();
         
-        println!("   ✅ Captured {} samples in {:.1}ms", audio_data.len(), audio_timing.as_millis());
-        
         Ok(Sample {
             note,
             velocity: self.config.velocity,
@@ -650,22 +632,13 @@ impl SamplingEngine {
         midi_conn: &mut MidiOutputConnection,
         note: u8,
     ) -> Result<(Sample, Consumer<VizChunk>)> {
-        println!("🎵 Sampling note {} ({}) with real-time visualization", note, Self::note_to_name(note));
-        
         // Create visualization ring buffer
         let (viz_producer, viz_consumer) = RingBuffer::<VizChunk>::new(VIZ_RING_BUFFER_SIZE);
-        
-        let _total_duration = self.config.pre_delay_ms 
-            + self.config.note_duration_ms 
-            + self.config.release_time_ms 
-            + self.config.post_delay_ms;
 
-        println!("   Pre-delay: {}ms, Note: {}ms, Release: {}ms, Post: {}ms", 
-            self.config.pre_delay_ms,
-            self.config.note_duration_ms,
-            self.config.release_time_ms,
-            self.config.post_delay_ms
-        );
+        let _total_duration = self.config.pre_delay_ms
+            + self.config.note_duration_ms
+            + self.config.release_time_ms
+            + self.config.post_delay_ms;
 
         // Start recording first
         let audio_samples = Arc::new(Mutex::new(Vec::new()));
@@ -729,8 +702,6 @@ impl SamplingEngine {
         
         let audio_timing = start_time.elapsed();
         let audio_data = audio_samples.lock().unwrap().clone();
-        
-        println!("   ✅ Captured {} samples in {:.1}ms with real-time visualization", audio_data.len(), audio_timing.as_millis());
         
         let sample = Sample {
             note,
@@ -1113,17 +1084,7 @@ impl SamplingEngine {
         let mut samples = Vec::new();
         let total_notes = end_note - start_note + 1;
         
-        println!("🎹 Range sampling with persistent stream: {} to {} ({} notes)", 
-            Self::note_to_name(start_note), 
-            Self::note_to_name(end_note), 
-            total_notes
-        );
-        
-        // === PHASE 1: Setup persistent audio stream (like Ableton's audio engine) ===
-        println!("🔧 Setting up persistent audio stream...");
-        
         // Safety: Clear any stuck notes before starting range recording session
-        println!("🚨 Sending MIDI panic before range recording for safety...");
         MidiManager::send_midi_panic(midi_conn)?;
         tokio::time::sleep(Duration::from_millis(100)).await; // Give hardware time to process
         
@@ -1142,28 +1103,22 @@ impl SamplingEngine {
 
         // Create ONE stream for entire range (like professional DAWs)
         let stream = self.build_persistent_recording_stream(&device, &config, samples_clone, recording_clone)?;
-        
+
         // Start the persistent stream
         stream.play().map_err(|e| BatcherbirdError::Audio(format!("Failed to start persistent stream: {}", e)))?;
-        println!("✅ Persistent audio stream started");
-        
-        // === PHASE 2: Record each note using the same stream ===
-        for (index, note) in (start_note..=end_note).enumerate() {
-            println!("🎵 Recording note {}/{}: {} ({})", 
-                index + 1, total_notes, Self::note_to_name(note), note);
-            
+
+        // Record each note using the same stream
+        for (_index, note) in (start_note..=end_note).enumerate() {
             // Clear the buffer for this note
             {
                 let mut buffer = audio_samples.lock().unwrap();
                 buffer.clear();
-                println!("   🧹 Buffer cleared ({} samples removed)", buffer.len());
             }
-            
+
             // Start recording for this note
             {
                 let mut recording = recording_active.lock().unwrap();
                 *recording = true;
-                println!("   🔴 Recording started");
             }
             
             let start_time = Instant::now();
@@ -1182,15 +1137,13 @@ impl SamplingEngine {
             // Send MIDI note on
             let midi_start = Instant::now();
             MidiManager::send_note_on(midi_conn, self.config.midi_channel, note, self.config.velocity)?;
-            println!("   🎹 MIDI Note On sent");
-            
+
             // Wait for note duration
             tokio::time::sleep(Duration::from_millis(self.config.note_duration_ms)).await;
-            
+
             // Send MIDI note off
             MidiManager::send_note_off(midi_conn, self.config.midi_channel, note, self.config.velocity)?;
             let midi_timing = midi_start.elapsed();
-            println!("   🎹 MIDI Note Off sent");
             
             // Wait for release
             if self.config.release_time_ms > 0 {
@@ -1206,18 +1159,15 @@ impl SamplingEngine {
             {
                 let mut recording = recording_active.lock().unwrap();
                 *recording = false;
-                println!("   ⏹️ Recording stopped");
             }
-            
+
             let audio_timing = start_time.elapsed();
-            
+
             // Extract recorded audio data
             let audio_data = {
                 let buffer = audio_samples.lock().unwrap();
                 buffer.clone()
             };
-            
-            println!("   ✅ Captured {} samples in {:.1}ms", audio_data.len(), audio_timing.as_millis());
             
             // Create sample record
             let sample = Sample {
@@ -1232,25 +1182,20 @@ impl SamplingEngine {
             };
             
             samples.push(sample);
-            
+
             // Brief pause between notes (hardware stability)
-            if index < total_notes as usize - 1 {
-                println!("   ⏸️ Pausing 300ms between notes...");
+            if _index < total_notes as usize - 1 {
                 tokio::time::sleep(Duration::from_millis(300)).await;
             }
         }
-        
-        // === PHASE 3: Clean shutdown of persistent stream ===
-        println!("🔧 Shutting down persistent stream...");
+
+        // Clean shutdown of persistent stream
         stream.pause().map_err(|e| BatcherbirdError::Audio(format!("Failed to stop persistent stream: {}", e)))?;
         drop(stream); // Explicit cleanup
-        println!("✅ Persistent stream shut down cleanly");
-        
+
         // Safety: Final MIDI panic to ensure no stuck notes (professional practice)
-        println!("🚨 Final MIDI panic after range recording for safety...");
         MidiManager::send_midi_panic(midi_conn)?;
-        
-        println!("🎉 Range sampling complete: {} notes recorded successfully", samples.len());
+
         Ok(samples)
     }
     
@@ -1273,8 +1218,6 @@ impl SamplingEngine {
         note: u8,
         velocity: u8,
     ) -> Result<(Sample, RecordingStats, AudioPerformanceReport)> {
-        println!("🎤 Starting LOCK-FREE MIDI recording for note {} ({})", note, Self::note_to_name(note));
-        
         // Create lock-free recorder with professional configuration
         let recording_config = LockFreeRecordingConfig {
             ring_buffer_size: 44100 * 4,     // 4 seconds buffer (professional standard)
@@ -1298,9 +1241,7 @@ impl SamplingEngine {
         
         // Start audio stream
         stream.play().map_err(|e| BatcherbirdError::Audio(format!("Failed to start stream: {}", e)))?;
-        
-        println!("✅ Lock-free audio stream started");
-        
+
         // MIDI sequence with precise timing (following Pro Tools approach)
         let start_time = tokio::time::Instant::now();
         
@@ -1345,29 +1286,6 @@ impl SamplingEngine {
             audio_timing: end_time.duration_since(start_time),
         };
         
-        // Performance analysis
-        let performance_grade = if performance_report.is_professional_grade() {
-            "PROFESSIONAL" 
-        } else if performance_report.cpu_utilization_percent < 90.0 {
-            "GOOD"
-        } else {
-            "NEEDS_OPTIMIZATION"
-        };
-        
-        println!("🎤 Lock-free recording completed:");
-        println!("   📊 Performance: {} ({}% CPU, {} violations)",
-            performance_grade,
-            performance_report.cpu_utilization_percent,
-            performance_report.memory_allocations + performance_report.blocking_operations
-        );
-        println!("   🎵 Audio: {:.1}ms, {} samples", 
-            recording_stats.duration_ms, 
-            recording_stats.total_samples
-        );
-        println!("   🎹 MIDI: {:.1}ms timing", 
-            sample.midi_timing.as_millis()
-        );
-        
         Ok((sample, recording_stats, performance_report))
     }
 
@@ -1384,52 +1302,31 @@ impl Sample {
     pub fn apply_detection(&mut self, config: DetectionConfig) -> Result<DetectionResult> {
         let detector = SampleDetector::new(config);
         let detection_result = detector.detect_boundaries(&self.audio_data, self.sample_rate)?;
-        
+
         if detection_result.success {
-            println!("🎵 Applying detection to {} sample ({})", 
-                Self::note_to_name(self.note), self.note);
-            
             // Trim the audio data
             self.audio_data = detector.trim_audio(&self.audio_data, &detection_result);
-            
-            println!("   Sample trimmed successfully");
-        } else {
-            println!("⚠️  Detection failed for {} sample ({}): {}", 
-                Self::note_to_name(self.note), self.note,
-                detection_result.failure_reason.as_deref().unwrap_or("Unknown reason"));
         }
-        
+
         Ok(detection_result)
     }
     
     /// Apply loop detection to find optimal loop points in the sample
     pub fn apply_loop_detection(&mut self, config: LoopDetectionConfig) -> Result<LoopDetectionResult> {
-        println!("🔄 Applying loop detection to {} sample ({})", 
-            Self::note_to_name(self.note), self.note);
-        
         let detector = LoopDetector::new(config);
         let loop_result = detector.detect_loop_points(&self.audio_data, self.sample_rate);
-        
+
         if loop_result.success {
             if let Some(ref candidate) = loop_result.best_candidate {
-                println!("   ✅ Loop detected: {:.2}s length, quality {:.3}", 
-                    candidate.length_samples as f32 / self.sample_rate as f32,
-                    candidate.quality_score);
-                
-                // Optionally apply the loop with crossfading
-                if let Err(e) = detector.apply_loop_with_crossfade(
-                    &mut self.audio_data, 
-                    candidate, 
+                // Apply the loop with crossfading
+                let _ = detector.apply_loop_with_crossfade(
+                    &mut self.audio_data,
+                    candidate,
                     self.sample_rate
-                ) {
-                    println!("   ⚠️ Failed to apply crossfade: {}", e);
-                }
+                );
             }
-        } else {
-            println!("   ⚠️ Loop detection failed: {}", 
-                loop_result.failure_reason.as_deref().unwrap_or("Unknown reason"));
         }
-        
+
         Ok(loop_result)
     }
     
@@ -1507,6 +1404,5 @@ mod tests {
         assert!(chunks_received > 0, "Should receive some visualization chunks");
         assert!(chunks_received < 1000, "Should not receive all chunks due to 60fps consumption");
         
-        println!("✅ Ring buffer stress test passed: {} chunks received", chunks_received);
     }
 }

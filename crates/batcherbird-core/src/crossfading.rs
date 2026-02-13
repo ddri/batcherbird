@@ -181,9 +181,7 @@ impl EqualPowerCrossfader {
         if loop_start.len() < self.config.length_samples || loop_end.len() < self.config.length_samples {
             return Err(BatcherbirdError::Audio("Insufficient audio data for crossfade".to_string()));
         }
-        
-        println!("🔄 Creating equal-power crossfade: {} samples", self.config.length_samples);
-        
+
         // Extract crossfade regions
         let fade_out_region = &loop_start[loop_start.len() - self.config.length_samples..];
         let fade_in_region = &loop_end[..self.config.length_samples];
@@ -202,10 +200,7 @@ impl EqualPowerCrossfader {
         let quality = self.assess_crossfade_quality(&crossfaded, fade_out_region, fade_in_region)?;
         
         let processing_time = start_time.elapsed().as_millis() as f32;
-        
-        println!("✅ Crossfade complete: {:.1}% quality, {}ms phase offset", 
-            quality.overall_quality * 100.0, phase_offset);
-        
+
         Ok(CrossfadeResult {
             audio_data: crossfaded,
             quality_metrics: quality,

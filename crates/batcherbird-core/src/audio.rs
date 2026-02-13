@@ -60,7 +60,6 @@ impl AudioManager {
         for device in input_devices {
             if let Ok(name) = device.name() {
                 if name.contains("MiniFuse") {
-                    println!("🎤 Found MiniFuse: {}", name);
                     return Ok(device);
                 }
             }
@@ -79,7 +78,6 @@ impl AudioManager {
         for device in output_devices {
             if let Ok(name) = device.name() {
                 if name.contains("MiniFuse") {
-                    println!("🔊 Found MiniFuse output: {}", name);
                     return Ok(device);
                 }
             }
@@ -94,11 +92,6 @@ impl AudioManager {
         let device = self.get_default_input_device()?;
         let config = device.default_input_config()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
-
-        println!("🎤 Recording from: {}", device.name().unwrap_or("Unknown".to_string()));
-        println!("   Sample rate: {} Hz", config.sample_rate().0);
-        println!("   Channels: {}", config.channels());
-        println!("   Format: {:?}", config.sample_format());
 
         let sample_rate = config.sample_rate().0;
         let channels = config.channels() as usize;
@@ -172,9 +165,7 @@ impl AudioManager {
 
         // Start recording
         stream.play().map_err(|e| BatcherbirdError::Audio(format!("Failed to start stream: {}", e)))?;
-        
-        println!("🔴 Recording for {} seconds... (make some noise!)", duration_secs);
-        
+
         // Record for specified duration
         std::thread::sleep(Duration::from_secs(duration_secs));
         
@@ -185,10 +176,9 @@ impl AudioManager {
         }
         
         stream.pause().map_err(|e| BatcherbirdError::Audio(format!("Failed to stop stream: {}", e)))?;
-        
+
         let samples = recorded_samples.lock().unwrap().clone();
-        println!("✅ Recording complete! Captured {} samples", samples.len());
-        
+
         Ok(samples)
     }
 

@@ -72,7 +72,7 @@ export function RealtimeMeters({ isActive, className = '' }: RealtimeMetersProps
             }
           })
         } catch (error) {
-          console.error('Failed to start meter stream:', error)
+          // Failed to start meter stream
         }
       } else {
         // Stop listening

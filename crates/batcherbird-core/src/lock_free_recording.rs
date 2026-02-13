@@ -128,10 +128,8 @@ impl LockFreeRecorder {
         
         self.consumer_thread = Some(thread::spawn(move || {
             let mut recorded_samples = Vec::with_capacity(max_samples);
-            let mut last_report = Instant::now();
-            
-            println!("🎤 Lock-free consumer thread started");
-            
+            let last_report = Instant::now();
+
             while is_recording.load(Ordering::Relaxed) || !consumer.is_empty() {
                 // Consume samples from ring buffer (never blocks)
                 while let Ok(sample) = consumer.pop() {
@@ -140,24 +138,17 @@ impl LockFreeRecorder {
                     
                     // Safety check to prevent memory overflow
                     if recorded_samples.len() >= max_samples {
-                        println!("⚠️ Recording reached safety limit, stopping");
                         break;
                     }
                 }
                 
-                // Report progress every second (non-blocking)
-                if last_report.elapsed() >= Duration::from_secs(1) {
-                    let sample_count = samples_recorded.load(Ordering::Relaxed);
-                    let duration_ms = (sample_count as f64 / 44100.0) * 1000.0;
-                    println!("🎤 Recording: {:.1}ms ({} samples)", duration_ms, sample_count);
-                    last_report = Instant::now();
-                }
-                
+                // Prevent unused variable warning
+                let _ = last_report;
+
                 // Small sleep to prevent busy waiting (following professional practice)
                 thread::sleep(Duration::from_micros(100));
             }
             
-            println!("✅ Lock-free recording completed: {} samples", recorded_samples.len());
             Ok(recorded_samples)
         }));
         
@@ -182,8 +173,7 @@ impl LockFreeRecorder {
                 .map_err(|_| BatcherbirdError::Audio("Consumer thread panicked".to_string()))?;
             
             let samples = result?;
-            
-            println!("🎤 Lock-free recording stopped: {} samples recorded", samples.len());
+
             return Ok(samples);
         }
         
@@ -336,7 +326,7 @@ impl LockFreeRecorder {
                 sample_count += data.len() as u64;
                 // ✅ No mutex locks, no memory allocation, no blocking operations
             },
-            |err| eprintln!("🚨 Audio input error: {}", err),
+            |err| eprintln!("Audio input error: {}", err),
             None,
         ).map_err(|e| BatcherbirdError::Audio(format!("Failed to build F32 stream: {}", e)))?;
         
@@ -349,9 +339,9 @@ impl LockFreeRecorder {
         device: &cpal::Device,
         config: &cpal::StreamConfig,
         mut producer: Producer<f32>,
-        mut meter_producer: Producer<RealtimeMeterData>,
+        _meter_producer: Producer<RealtimeMeterData>,
         is_recording: Arc<AtomicBool>,
-        channels: u16,
+        _channels: u16,
     ) -> Result<Stream> {
         let stream = device.build_input_stream(
             config,
@@ -367,7 +357,7 @@ impl LockFreeRecorder {
                     }
                 }
             },
-            |err| eprintln!("🚨 Audio input error: {}", err),
+            |err| eprintln!("Audio input error: {}", err),
             None,
         ).map_err(|e| BatcherbirdError::Audio(format!("Failed to build I16 stream: {}", e)))?;
         
@@ -380,9 +370,9 @@ impl LockFreeRecorder {
         device: &cpal::Device,
         config: &cpal::StreamConfig,
         mut producer: Producer<f32>,
-        mut meter_producer: Producer<RealtimeMeterData>,
+        _meter_producer: Producer<RealtimeMeterData>,
         is_recording: Arc<AtomicBool>,
-        channels: u16,
+        _channels: u16,
     ) -> Result<Stream> {
         let stream = device.build_input_stream(
             config,
@@ -398,7 +388,7 @@ impl LockFreeRecorder {
                     }
                 }
             },
-            |err| eprintln!("🚨 Audio input error: {}", err),
+            |err| eprintln!("Audio input error: {}", err),
             None,
         ).map_err(|e| BatcherbirdError::Audio(format!("Failed to build U16 stream: {}", e)))?;
         

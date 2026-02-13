@@ -1,5 +1,17 @@
 import { useState, useEffect } from "react"
-import { listen } from "@tauri-apps/api/event"
+import { listen, Event } from "@tauri-apps/api/event"
+
+// Type for recording progress events from Tauri backend
+interface RecordingProgressPayload {
+  current: number
+  total: number
+  percent: number
+  note?: number
+  velocity?: number
+  layer?: number
+  totalLayers?: number
+  noteName?: string
+}
 import { desktopDir } from "@tauri-apps/api/path"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -15,7 +27,8 @@ import { WaveformDisplay } from "@/components/WaveformDisplay"
 import { ProfessionalMeters } from "@/components/ProfessionalMeters"
 import { RealtimeMeters } from "@/components/RealtimeMeters"
 import { IntelligentDetectionControls } from "@/components/IntelligentDetectionControls"
-import { QualityValidationDashboard } from "@/components/QualityValidationDashboard"
+// Hidden for v0.1.0 - uses mock data, backend not implemented
+// import { QualityValidationDashboard } from "@/components/QualityValidationDashboard"
 import { useRecording, useFileSystem, useWaveform, useLoopDetection, useAudioPlayback, useMidiDevices, useAudioInputDevices, useAudioOutputDevices, useDeviceConnection, useRealTimeVisualization } from "@/hooks/useTauri"
 import { useRecordingState } from "@/hooks/useRecordingState"
 import { useRecordingCountdown } from "@/hooks/useRecordingCountdown"
@@ -116,7 +129,6 @@ export default function App() {
           const desktop = await desktopDir()
           setOutputDirectory(`${desktop}Batcherbird Samples`)
         } catch (error) {
-          console.error('Failed to get desktop directory:', error)
           setOutputDirectory('Batcherbird Samples') // Fallback
         }
       }
@@ -126,8 +138,8 @@ export default function App() {
   
   // Listen for recording progress events (Epic 4)
   useEffect(() => {
-    const unlisten = listen('recording_progress', (event) => {
-      setRecordingProgress(event.payload as any)
+    const unlisten = listen<RecordingProgressPayload>('recording_progress', (event: Event<RecordingProgressPayload>) => {
+      setRecordingProgress(event.payload)
     })
     
     return () => {
@@ -138,7 +150,6 @@ export default function App() {
   // Check if session initialization is needed
   useEffect(() => {
     if (!sessionInitialized && !showSessionWizard) {
-      console.log('🎛️ Session not initialized, showing setup wizard')
       setShowSessionWizard(true)
     }
   }, [sessionInitialized, showSessionWizard])
@@ -152,7 +163,6 @@ export default function App() {
       
       // Auto-connect like manual selection does (following professional audio app pattern)
       if (deviceIndex && !midiConnected) {
-        console.log('🔌 Auto-connecting to saved MIDI device:', midiDevices[parseInt(deviceIndex)])
         connectMidi(parseInt(deviceIndex))
       }
     }
@@ -280,7 +290,6 @@ export default function App() {
         event.preventDefault()
         if (lastRecordedFile) {
           togglePlayPause()
-          console.log('🎹 Spacebar: Toggle play/pause')
         }
         return
       }
@@ -299,17 +308,15 @@ export default function App() {
 
   const handleRecord = async () => {
     if (!canRecord) {
-      console.warn("Cannot record - not armed")
       return
     }
 
     // Professional countdown before recording (2 seconds like Pro Tools)
     startCountdown()
-    
+
     try {
       await startCountdownTimer(2000) // 2 second countdown
     } catch (error) {
-      console.log("Countdown cancelled")
       cancelCountdown()
       return
     }
@@ -321,33 +328,18 @@ export default function App() {
     const capturedCreatorName = creatorName
     const capturedInstrumentDescription = instrumentDescription
     
-    console.log('🎤 Recording with values:', {
-      capturedOutputDirectory,
-      capturedSampleName,
-      sessionInitialized
-    })
-
     if (recordingMode === "single") {
-      console.log('📝 App.tsx: Entering single recording mode')
       try {
-        console.log('📝 App.tsx: About to start recording state transition')
         startRecording() // Update state to recording
         setIsRecording(true)
-        console.log('📝 App.tsx: Recording state set to true')
-        
+
         // Clear old waveform data
         clearWaveform()
-        console.log('📝 App.tsx: Waveform cleared')
-        
+
         // Start real-time waveform visualization via Tauri channels
-        console.log('🎤 Starting real-time visualization...')
         await startRealTimeVisualization()
-        console.log('🎤 Real-time visualization started, isRealTimeRecording:', isRealTimeRecording)
-        
-        console.log('🚀 App.tsx: About to call recordSample hook function')
-        console.log('🚀 App.tsx: recordSample function type:', typeof recordSample)
-        
-        const result = await recordSample(
+
+        await recordSample(
           parseInt(selectedNote),
           selectedVelocity[0],
           selectedDuration[0],
@@ -357,47 +349,31 @@ export default function App() {
           capturedCreatorName,
           capturedInstrumentDescription
         )
-        console.log("🎉 App.tsx: Recording complete:", result)
-        
+
         // Stop real-time visualization immediately after recording completes
-        console.log("🔄 Transitioning from real-time to file-based waveform...")
         stopRealTimeVisualization()
-        
+
         // Transition from recording to file playback
         try {
-          console.log("🔍 Debug - Regular recording - About to call getLastRecordedSamplePath with:", { outputDirectory: capturedOutputDirectory, sampleName: capturedSampleName })
           const lastSamplePath = await getLastRecordedSamplePath(capturedOutputDirectory, capturedSampleName)
-          console.log("🔄 Transitioning to file playback for:", lastSamplePath)
-          console.log("Output directory:", capturedOutputDirectory)
-          console.log("Sample name:", capturedSampleName)
-          
+
           // Add small delay to ensure file is fully written
-          console.log("⏱️ Adding delay to ensure file is fully written...")
           await new Promise(resolve => setTimeout(resolve, 500))
-          
+
           setLastRecordedFile(lastSamplePath)
-          
-          console.log("🌊 Starting waveform transition...")
+
           try {
             await transitionToFilePlayback(lastSamplePath)
-            console.log("✅ Waveform transition completed successfully")
           } catch (waveformErr) {
-            console.error("❌ Waveform transition failed:", waveformErr)
-            console.error("❌ Waveform transition error details:", JSON.stringify(waveformErr))
             throw waveformErr
           }
-          
+
           // Also load the file for playback
-          console.log("🎵 Loading audio file for playback...")
           try {
             await loadAudioFile(lastSamplePath)
-            console.log("✅ Audio file loaded for playback")
           } catch (audioErr) {
-            console.error("❌ Audio file loading failed:", audioErr)
             // Don't throw - waveform is more important than playback
           }
-          
-          console.log("✅ Smooth transition to playback mode complete")
           
           // Show success notification
           showSuccess(
@@ -408,20 +384,18 @@ export default function App() {
           // Recording completed successfully - update state
           setIsRecording(false)
           await disarm() // Return to idle state after successful recording
-          
+
         } catch (waveformError) {
-          console.error("Failed to load waveform:", waveformError)
           showError(
             "Waveform Loading Failed",
             `Could not load waveform visualization: ${waveformError}. Recording saved successfully.`
           )
-          
+
           // Even if waveform loading failed, recording was successful
           setIsRecording(false)
           await disarm() // Return to idle state after successful recording
         }
       } catch (error) {
-        console.error("Recording failed:", error)
         showError(
           "Recording Failed",
           `Could not complete recording: ${error}. Check your audio interface and try again.`
@@ -451,12 +425,10 @@ export default function App() {
         
         // Check if velocity layers are enabled (more than 1 velocity)
         const useVelocityLayers = velocityLayers.length > 1
-        
-        let result
+
         if (useVelocityLayers) {
-          console.log("🎹 Recording range with velocity layers:", velocityLayers)
           // Use the new Epic 4 command for velocity layers
-          result = await recordRangeWithVelocityLayers(
+          await recordRangeWithVelocityLayers(
             parseInt(startNote),
             parseInt(endNote),
             velocityLayers,  // Pass all velocity layers
@@ -470,9 +442,8 @@ export default function App() {
             layerToLayerDelay
           )
         } else {
-          console.log("🎵 Recording range with single velocity:", velocityLayers[0] || selectedVelocity[0])
           // Use the original command for single velocity
-          result = await recordRange(
+          await recordRange(
             parseInt(startNote),
             parseInt(endNote),
             velocityLayers[0] || selectedVelocity[0],  // Use first velocity layer if set
@@ -484,10 +455,8 @@ export default function App() {
             capturedInstrumentDescription
           )
         }
-        console.log("Range recording complete:", result)
-        
+
         // Stop real-time visualization immediately after range recording completes
-        console.log("🔄 Range recording complete, stopping visualization...")
         stopRealTimeVisualization()
         
         // Show success notification
@@ -499,9 +468,8 @@ export default function App() {
         // Recording completed successfully - update state
         setIsRecording(false)
         await disarm() // Return to idle state after successful recording
-        
+
       } catch (error) {
-        console.error("Range recording failed:", error)
         showError(
           "Range Recording Failed",
           `Could not complete range recording: ${error}. Check your audio interface and try again.`
@@ -518,59 +486,41 @@ export default function App() {
   }
 
   const handleStopAndPlay = async () => {
-    console.log("🎵 Stopping recording and starting playback (Ableton-style)")
-    
     // Capture state values immediately to avoid race conditions
     const capturedSampleName = sampleName
     const capturedOutputDirectory = outputDirectory
-    
-    console.log("🔍 Debug - Captured sampleName:", capturedSampleName)
-    console.log("🔍 Debug - Captured outputDirectory:", capturedOutputDirectory)
-    console.log("🔍 Debug - Current sampleName:", sampleName)
-    console.log("🔍 Debug - Current outputDirectory:", outputDirectory)
-    
+
     try {
       // Stop recording immediately
       setIsRecording(false)
       // Note: Don't disarm here - we want to stay in playback mode
-      
+
       // Stop real-time visualization
-      console.log("🔄 Stopping real-time visualization...")
       stopRealTimeVisualization()
-      
+
       // Get the recorded file path immediately
       let lastSamplePath: string
       try {
-        console.log("🔍 Debug - About to call getLastRecordedSamplePath with:", { outputDirectory: capturedOutputDirectory, sampleName: capturedSampleName })
         lastSamplePath = await getLastRecordedSamplePath(capturedOutputDirectory, capturedSampleName)
-        console.log("📁 Loading recorded sample:", lastSamplePath)
       } catch (pathError) {
-        console.error("Failed to find recorded sample:", pathError)
-        console.error("🔍 Debug - pathError details:", pathError)
         showError(
           "File Not Found",
           `Could not locate the recorded sample. Check your output directory: ${capturedOutputDirectory}`
         )
         return
       }
-      
+
       // Load for playback FIRST (immediate audio feedback)
       await loadAudioFile(lastSamplePath)
-      console.log("🎵 Audio loaded for playback")
-      
+
       // Start playback immediately (Ableton-style)
       await togglePlayPause()
-      console.log("▶️ Started immediate playback")
-      
+
       // Transition waveform in background (visual feedback)
       setLastRecordedFile(lastSamplePath)
       await transitionToFilePlayback(lastSamplePath)
-      console.log("🌊 Waveform transition completed")
-      
-      console.log("✅ Seamless stop→play transition complete")
-      
+
     } catch (error) {
-      console.error("Failed to stop and play:", error)
       // Fallback to regular stop behavior
       setIsRecording(false)
       await disarm() // Return to idle state on failure
@@ -582,30 +532,22 @@ export default function App() {
     try {
       // Temporarily arm for preview
       await startPreview()
-      
-      console.log("Previewing note:", {
-        note: parseInt(selectedNote),
-        velocity: selectedVelocity[0],
-        duration: selectedDuration[0]
-      })
-      
-      const result = await previewNote(
+
+      await previewNote(
         parseInt(selectedNote),
         selectedVelocity[0],
         selectedDuration[0]
       )
-      console.log("Preview result:", result)
-      
+
       // Stop preview after a delay
       setTimeout(async () => {
         await stopPreview()
       }, selectedDuration[0] + 1000) // Duration + 1 second buffer
-      
+
     } catch (error) {
-      console.error("Preview failed:", error)
       await stopPreview() // Cleanup on error
       showError(
-        "Preview Failed", 
+        "Preview Failed",
         `Could not preview note: ${error}. Check your MIDI and audio connections.`
       )
     }
@@ -616,36 +558,31 @@ export default function App() {
       const directory = await selectOutputDirectory()
       setOutputDirectory(directory)
     } catch (error) {
-      console.error("Directory selection failed:", error)
+      // User cancelled directory selection
     }
   }
 
   const handleLoadFile = async () => {
     try {
-      console.log("🎵 Opening file picker to load audio file...")
       const filePath = await selectAudioFile()
-      console.log("📁 User selected file:", filePath)
-      
+
       // Stop any current playback first
       if (isPlaying) {
         await togglePlayPause()
       }
-      
+
       // Load the file for playback
       await loadAudioFile(filePath)
-      console.log("🎵 Audio file loaded for playback")
-      
+
       // Load the waveform
       await loadWaveform(filePath)
-      console.log("🌊 Waveform loaded successfully")
-      
+
       // Update state to show the loaded file
       setLastRecordedFile(filePath)
-      
+
       showSuccess("File Loaded", `Successfully loaded: ${filePath.split('/').pop()}`)
-      
+
     } catch (error) {
-      console.error("Failed to load audio file:", error)
       showError("Load Failed", `Could not load audio file: ${error}`)
     }
   }
@@ -667,17 +604,14 @@ export default function App() {
     const nextIndex = (currentIndex + 1) % presets.length
     setVelocityLayers(presets[nextIndex])
     setSelectedVelocity([presets[nextIndex][0]]) // Reset to first velocity
-    console.log("Changed velocity layers to:", presets[nextIndex])
   }
 
   const handleLoadTemplate = () => {
     // TODO: Implement template loading
-    console.log("Load template clicked")
   }
 
   const handleSaveTemplate = () => {
     // TODO: Implement template saving
-    console.log("Save template clicked")
   }
 
 
@@ -1021,7 +955,6 @@ export default function App() {
                 <IntelligentDetectionControls
                   audioFilePath={lastRecordedFile}
                   onTrimmingComplete={(trimmedPath) => {
-                    console.log('✅ Trimming completed:', trimmedPath)
                     // Optionally load the trimmed file into the waveform display
                     transitionToFilePlayback(trimmedPath, 500)
                   }}
@@ -1029,13 +962,11 @@ export default function App() {
                 />
               )}
 
-              {/* Quality Validation Dashboard */}
-              {lastRecordedFile && (
+              {/* Quality Validation Dashboard - Hidden for v0.1.0 (uses mock data, backend not implemented) */}
+              {/* {lastRecordedFile && (
                 <QualityValidationDashboard
                   audioFilePath={lastRecordedFile}
                   onValidationComplete={(result) => {
-                    console.log('✅ Quality validation completed:', result)
-                    // Show notification for quality score
                     const scoreMessage = `Quality score: ${result.metrics.overall_score.toFixed(1)}/10.0`
                     if (result.metrics.overall_score >= 7.0) {
                       showSuccess('Quality Analysis Complete', scoreMessage)
@@ -1045,8 +976,8 @@ export default function App() {
                   }}
                   isVisible={!!lastRecordedFile}
                 />
-              )}
-              
+              )} */}
+
               {/* Recording Controls */}
               <Card className="bg-gray-900 border-gray-700">
                 <CardContent className="pt-8">
@@ -1148,7 +1079,6 @@ export default function App() {
                                       setRecordingProgress(null)
                                       showSuccess('Recording Cancelled', 'The range recording has been cancelled')
                                     } catch (err) {
-                                      console.error('Failed to cancel recording:', err)
                                       showError('Cancellation Failed', 'Unable to cancel the recording')
                                     }
                                   }}
@@ -1394,33 +1324,26 @@ export default function App() {
         isOpen={showSessionWizard}
         onClose={() => setShowSessionWizard(false)}
         onComplete={async (sessionData) => {
-          console.log('✅ Session initialization completed with data:', sessionData)
-          
           // Create full project path: outputDirectory/projectName
           const fullProjectPath = `${sessionData.outputDirectory}/${sessionData.projectName}`
-          
+
           try {
             // Create the project directory
             await createDirectory(fullProjectPath)
-            console.log('📁 Project directory created:', fullProjectPath)
           } catch (error) {
-            console.error('❌ Failed to create project directory:', error)
             // Continue anyway - the recording system will try to create it
           }
-          
+
           // Apply session data to the recording interface
           setSampleName(sessionData.projectName)
           setOutputDirectory(fullProjectPath)
-          
+
           // Set professional defaults for session-based recording
           setExportFormat("all") // Default to "All Formats" for professional workflow
-          
+
           // Session is now initialized
           setSessionInitialized(true)
           setShowSessionWizard(false)
-          
-          console.log('🎤 Recording interface is now ready!')
-          console.log('📁 Project directory:', fullProjectPath)
         }}
       />
     </div>

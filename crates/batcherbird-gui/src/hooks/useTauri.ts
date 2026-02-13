@@ -163,13 +163,9 @@ export function useMidiDevices() {
     setError(null)
     try {
       const result = await invoke<string[]>('list_midi_devices')
-      console.log('MIDI devices loaded:', result)
       setDevices(result || [])
     } catch (err) {
       setError(err as string)
-      console.error('Failed to load MIDI devices:', err)
-      console.error('Full error object:', err)
-      console.error('Error stack:', (err as any)?.stack)
     } finally {
       setIsLoading(false)
     }
@@ -188,11 +184,9 @@ export function useAudioInputDevices() {
     setError(null)
     try {
       const result = await invoke<string[]>('list_audio_input_devices')
-      console.log('Audio input devices loaded:', result)
       setDevices(result || [])
     } catch (err) {
       setError(err as string)
-      console.error('Failed to load audio input devices:', err)
     } finally {
       setIsLoading(false)
     }
@@ -211,11 +205,9 @@ export function useAudioOutputDevices() {
     setError(null)
     try {
       const result = await invoke<string[]>('list_audio_output_devices')
-      console.log('Audio output devices loaded:', result)
       setDevices(result || [])
     } catch (err) {
       setError(err as string)
-      console.error('Failed to load audio output devices:', err)
     } finally {
       setIsLoading(false)
     }
@@ -240,7 +232,6 @@ export function useAudioDeviceInfo() {
     } catch (err) {
       const errorMsg = err as string
       setError(errorMsg)
-      console.error('Failed to get audio device info:', errorMsg)
       throw err
     } finally {
       setIsLoading(false)
@@ -265,7 +256,6 @@ export function useDeviceConnection() {
       setMidiConnected(true)
     } catch (err) {
       setError(err as string)
-      console.error('Failed to connect MIDI device:', err)
     } finally {
       setIsConnecting(false)
     }
@@ -274,12 +264,10 @@ export function useDeviceConnection() {
   const testMidiConnection = useCallback(async () => {
     try {
       const result = await invoke<string>('test_midi_connection')
-      console.log('MIDI test result:', result)
       // Mark MIDI activity when test succeeds
       setLastMidiActivity(Date.now())
       return result
     } catch (err) {
-      console.error('MIDI test failed:', err)
       throw err
     }
   }, [])
@@ -287,12 +275,10 @@ export function useDeviceConnection() {
   const sendMidiPanic = useCallback(async () => {
     try {
       const result = await invoke<string>('send_midi_panic')
-      console.log('MIDI panic result:', result)
       // Mark MIDI activity when panic is sent
       setLastMidiActivity(Date.now())
       return result
     } catch (err) {
-      console.error('MIDI panic failed:', err)
       throw err
     }
   }, [])
@@ -306,17 +292,14 @@ export function useDeviceConnection() {
   const checkMidiConnectionStatus = useCallback(async () => {
     try {
       const backendConnected = await invoke<boolean>('get_midi_connection_status')
-      console.log('🔍 Backend MIDI status:', backendConnected, 'Frontend state:', midiConnected)
-      
+
       // Sync frontend state with backend reality
       if (backendConnected !== midiConnected) {
-        console.log('🔄 Syncing MIDI connection state: backend =', backendConnected)
         setMidiConnected(backendConnected)
       }
-      
+
       return backendConnected
     } catch (err) {
-      console.error('Failed to check MIDI connection status:', err)
       return false
     }
   }, [midiConnected])
@@ -353,7 +336,6 @@ export function useAudioMonitoring() {
       }
       setIsMonitoring(true)
     } catch (err) {
-      console.error('Failed to start monitoring:', err)
       throw err
     }
   }, [])
@@ -363,7 +345,6 @@ export function useAudioMonitoring() {
       await invoke<string>('stop_input_monitoring')
       setIsMonitoring(false)
     } catch (err) {
-      console.error('Failed to stop monitoring:', err)
       throw err
     }
   }, [])
@@ -377,7 +358,7 @@ export function useAudioMonitoring() {
         const newLevels = await invoke<AudioLevels>('get_audio_levels')
         setLevels(newLevels)
       } catch (err) {
-        console.error('Failed to get audio levels:', err)
+        // Silently ignore polling errors
       }
     }, 50) // 20fps updates
 
@@ -421,7 +402,7 @@ export function useProfessionalMeters() {
         const newReadings = await invoke<ProfessionalMeterReadings>('get_professional_meter_readings')
         setReadings(newReadings)
       } catch (err) {
-        console.error('Failed to get professional meter readings:', err)
+        // Silently ignore polling errors
       }
     }, 50) // 20fps updates for smooth meter ballistics
 
@@ -462,7 +443,6 @@ export function useGainStaging() {
         setAnalysis(newAnalysis)
         setError(null)
       } catch (err) {
-        console.error('Failed to get gain staging analysis:', err)
         setError(err as string)
       }
     }, 200) // 5fps updates - slower for analysis
@@ -494,15 +474,10 @@ export function useRecording() {
     creatorName?: string,
     instrumentDescription?: string
   ): Promise<string> => {
-    console.log('🎧 Frontend: Starting SYNCHRONOUS recording')
     setIsRecording(true)
     setError(null)
-    
+
     try {
-      console.log('🚀 Frontend: Calling synchronous start_recording_with_viz', {
-        note, velocity, duration, outputDirectory, sampleName, exportFormat
-      })
-      
       const filePath = await invoke<string>('start_recording_with_viz', {
         note,
         velocity,
@@ -513,13 +488,11 @@ export function useRecording() {
         creatorName,
         instrumentDescription
       })
-      
-      console.log('✅ Frontend: SYNCHRONOUS recording completed:', filePath)
+
       setIsRecording(false)
       return filePath
-      
+
     } catch (err) {
-      console.error('❌ Frontend: SYNCHRONOUS recording failed:', err)
       setError(err as string)
       setIsRecording(false)
       throw err
@@ -554,7 +527,6 @@ export function useRecording() {
       return result
     } catch (err) {
       setError(err as string)
-      console.error('Range recording failed:', err)
       throw err
     } finally {
       setIsRecording(false)
@@ -593,7 +565,6 @@ export function useRecording() {
       return result
     } catch (err) {
       setError(err as string)
-      console.error('Multi-velocity range recording failed:', err)
       throw err
     } finally {
       setIsRecording(false)
@@ -605,7 +576,6 @@ export function useRecording() {
       const result = await invoke<string>('preview_note', { note, velocity, duration })
       return result
     } catch (err) {
-      console.error('Preview failed:', err)
       throw err
     }
   }, [])
@@ -615,7 +585,6 @@ export function useRecording() {
       const result = await invoke<string>('cancel_recording')
       return result
     } catch (err) {
-      console.error('Cancel recording failed:', err)
       throw err
     }
   }, [])
@@ -655,7 +624,6 @@ export function useLoopDetection() {
       return result
     } catch (err) {
       setError(err as string)
-      console.error('Loop detection failed:', err)
       throw err
     } finally {
       setIsDetecting(false)
@@ -677,7 +645,6 @@ export function useLoopDetection() {
       })
       return result
     } catch (err) {
-      console.error('Apply loop metadata failed:', err)
       throw err
     }
   }, [])
@@ -693,7 +660,6 @@ export function useLoopDetection() {
       })
       return result
     } catch (err) {
-      console.error('Get last sample path failed:', err)
       throw err
     }
   }, [])
@@ -714,7 +680,6 @@ export function useFileSystem() {
       const result = await invoke<string>('select_output_directory')
       return result
     } catch (err) {
-      console.error('Directory selection failed:', err)
       throw err
     }
   }, [])
@@ -724,7 +689,6 @@ export function useFileSystem() {
       const result = await invoke<string>('select_audio_file')
       return result
     } catch (err) {
-      console.error('Audio file selection failed:', err)
       throw err
     }
   }, [])
@@ -734,7 +698,6 @@ export function useFileSystem() {
       const result = await invoke<string>('show_samples_in_finder')
       return result
     } catch (err) {
-      console.error('Show samples in finder failed:', err)
       throw err
     }
   }, [])
@@ -756,7 +719,6 @@ export function useFileSystem() {
       })
       return result
     } catch (err) {
-      console.error('Generate instrument files failed:', err)
       throw err
     }
   }, [])
@@ -766,7 +728,6 @@ export function useFileSystem() {
       const result = await invoke<boolean>('create_directory', { path })
       return result
     } catch (err) {
-      console.error('Create directory failed:', err)
       throw err
     }
   }, [])
@@ -788,35 +749,20 @@ export function useWaveform() {
   const [error, setError] = useState<string | null>(null)
 
   const loadWaveform = useCallback(async (filePath: string, resolution?: number) => {
-    console.log('🌊 Loading waveform for:', filePath)
-    console.log('📊 Resolution parameter:', resolution)
     setIsLoading(true)
     setError(null)
     try {
-      console.log('📡 Calling Tauri get_waveform_data command...')
       const data = await invoke<WaveformData>('get_waveform_data', {
         filePath,
         resolution
       })
-      console.log('✅ Tauri command completed successfully')
-      console.log('🌊 Waveform loaded successfully:', { 
-        duration: data.duration, 
-        channels: data.channels, 
-        peaksLength: data.peaks.positive.length,
-        sampleRate: data.sample_rate,
-        format: data.format
-      })
       setWaveformData(data)
-      console.log('✅ Waveform data set in React state')
       return data
     } catch (err) {
       setError(err as string)
-      console.error('❌ Failed to load waveform:', err)
-      console.error('❌ Tauri command error details:', JSON.stringify(err))
       throw err
     } finally {
       setIsLoading(false)
-      console.log('🏁 loadWaveform completed, isLoading set to false')
     }
   }, [])
 
@@ -827,40 +773,21 @@ export function useWaveform() {
 
   // Transition from recording to file playback
   const transitionToFilePlayback = useCallback(async (filePath: string, resolution?: number) => {
-    console.log('🔄 Transitioning from recording to file playback:', filePath)
     setIsTransitioning(true)
     setError(null)
-    
+
     try {
       // Clear any existing waveform data first
-      console.log('🧹 Clearing existing waveform data...')
       setWaveformData(null)
-      
+
       // Small delay to ensure real-time visualization has stopped
-      console.log('⏱️ Waiting for real-time visualization to stop...')
       await new Promise(resolve => setTimeout(resolve, 100))
-      
-      // Verify file exists before attempting to load
-      console.log('📁 Attempting to load waveform from:', filePath)
-      console.log('📊 Using resolution:', resolution || 'default')
-      
+
       // Load the file waveform
       const data = await loadWaveform(filePath, resolution)
-      
-      console.log('✅ Transition to file playback complete:', {
-        peaksLength: data.peaks.positive.length,
-        duration: data.duration,
-        sampleRate: data.sample_rate
-      })
+
       return data
     } catch (err) {
-      console.error('❌ Failed to transition to file playback:', err)
-      console.error('❌ Error type:', typeof err)
-      console.error('❌ Error string:', String(err))
-      if (err instanceof Error) {
-        console.error('❌ Error message:', err.message)
-        console.error('❌ Error stack:', err.stack)
-      }
       setError(`Failed to load waveform: ${err}`)
       throw err
     } finally {
@@ -896,11 +823,9 @@ export function useAudioPlayback() {
       const result = await invoke<string>('load_sample_for_playback', { filePath })
       setCurrentFile(filePath)
       setPlaybackPosition(0)
-      console.log('Audio file loaded:', result)
       return result
     } catch (err) {
       setError(err as string)
-      console.error('Failed to load audio file:', err)
       throw err
     } finally {
       setIsLoading(false)
@@ -915,10 +840,9 @@ export function useAudioPlayback() {
     }
     setError(null)
     try {
-      const result = await invoke<string>('start_playback')
+      await invoke<string>('start_playback')
       setIsPlaying(true)
-      console.log('Playback started:', result)
-      
+
       // Start position polling
       if (positionIntervalRef.current) {
         clearInterval(positionIntervalRef.current)
@@ -927,7 +851,7 @@ export function useAudioPlayback() {
         try {
           const position = await invoke<number>('get_playback_position')
           setPlaybackPosition(position)
-          
+
           // Check if still playing
           const playing = await invoke<boolean>('is_playing')
           if (!playing) {
@@ -938,12 +862,11 @@ export function useAudioPlayback() {
             }
           }
         } catch (err) {
-          console.error('Failed to get playback position:', err)
+          // Silently ignore polling errors
         }
       }, 50) // 20fps update rate
     } catch (err) {
       setError(err as string)
-      console.error('Failed to start playback:', err)
       throw err
     }
   }, [currentFile])
@@ -952,10 +875,9 @@ export function useAudioPlayback() {
   const pause = useCallback(async () => {
     setError(null)
     try {
-      const result = await invoke<string>('pause_playback')
+      await invoke<string>('pause_playback')
       setIsPlaying(false)
-      console.log('Playback paused:', result)
-      
+
       // Stop position polling
       if (positionIntervalRef.current) {
         clearInterval(positionIntervalRef.current)
@@ -963,7 +885,6 @@ export function useAudioPlayback() {
       }
     } catch (err) {
       setError(err as string)
-      console.error('Failed to pause playback:', err)
       throw err
     }
   }, [])
@@ -972,11 +893,10 @@ export function useAudioPlayback() {
   const stop = useCallback(async () => {
     setError(null)
     try {
-      const result = await invoke<string>('stop_playback')
+      await invoke<string>('stop_playback')
       setIsPlaying(false)
       setPlaybackPosition(0)
-      console.log('Playback stopped:', result)
-      
+
       // Stop position polling
       if (positionIntervalRef.current) {
         clearInterval(positionIntervalRef.current)
@@ -984,7 +904,6 @@ export function useAudioPlayback() {
       }
     } catch (err) {
       setError(err as string)
-      console.error('Failed to stop playback:', err)
       throw err
     }
   }, [])
@@ -993,12 +912,10 @@ export function useAudioPlayback() {
   const seek = useCallback(async (position: number) => {
     setError(null)
     try {
-      const result = await invoke<string>('seek_playback', { position })
+      await invoke<string>('seek_playback', { position })
       setPlaybackPosition(position)
-      console.log('Seeked to position:', result)
     } catch (err) {
       setError(err as string)
-      console.error('Failed to seek:', err)
       throw err
     }
   }, [])
@@ -1047,50 +964,38 @@ export function useRealTimeVisualization() {
   const startRecording = useCallback(async () => {
     setError(null)
     setVizChunks([]) // Clear previous data
-    
+
     try {
-      console.log('🎤 Starting real-time visualization via Tauri channels')
-      
       // Set up Tauri channel listener for waveform chunks
       const unlisten = await listen<VizChunk>('waveform_chunk', (event) => {
         const vizChunk = event.payload
-        
-        // Only log every 60th chunk (once per second) to avoid spam
-        if (vizChunk.timestamp % 60 === 0) {
-          console.log('📊 VizChunk stream active - Peak:', vizChunk.peak.toFixed(3), 'RMS:', vizChunk.rms.toFixed(3))
-        }
-        
+
         setVizChunks(prev => {
           // Keep a rolling buffer of recent chunks (last 3 seconds at 60fps = 180 chunks)
           const newChunks = [...prev, vizChunk]
           return newChunks.slice(-180)
         })
       })
-      
+
       unlistenRef.current = unlisten
       setIsRecording(true)
-      console.log('✅ Real-time visualization started')
-      
+
     } catch (err) {
       const errorMsg = `Failed to start real-time visualization: ${err}`
       setError(errorMsg)
-      console.error('❌', errorMsg)
       throw err
     }
   }, [])
 
   // Stop recording visualization
   const stopRecording = useCallback(() => {
-    console.log('🛑 Stopping real-time visualization')
-    
     // Clean up Tauri listener
     if (unlistenRef.current) {
       unlistenRef.current()
       unlistenRef.current = null
     }
-    
+
     setIsRecording(false)
-    console.log('✅ Real-time visualization stopped')
   }, [])
 
   // Cleanup on unmount
@@ -1122,7 +1027,6 @@ export function useIntelligentDetection() {
       const profiles = await invoke<string[]>('get_synthesizer_profiles')
       return profiles
     } catch (err) {
-      console.error('Failed to get synthesizer profiles:', err)
       throw err
     }
   }, [])
@@ -1133,7 +1037,6 @@ export function useIntelligentDetection() {
       const config: IntelligentDetectionConfig = JSON.parse(configJson)
       return config
     } catch (err) {
-      console.error('Failed to get detection config:', err)
       throw err
     }
   }, [])
@@ -1156,7 +1059,6 @@ export function useIntelligentDetection() {
       return result
     } catch (err) {
       setError(err as string)
-      console.error('Failed to detect sample boundaries:', err)
       throw err
     } finally {
       setIsDetecting(false)
@@ -1180,7 +1082,6 @@ export function useIntelligentDetection() {
       return trimmedPath
     } catch (err) {
       setError(err as string)
-      console.error('Failed to apply professional trimming:', err)
       throw err
     } finally {
       setIsTrimming(false)

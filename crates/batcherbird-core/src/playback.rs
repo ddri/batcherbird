@@ -40,8 +40,6 @@ impl AudioPlayback {
     
     /// Load a WAV file for playback
     pub fn load_sample(&self, file_path: &str) -> Result<String> {
-        println!("🎵 Loading audio file for playback: {}", file_path);
-        
         // Verify file exists
         let path = Path::new(file_path);
         if !path.exists() {
@@ -55,10 +53,7 @@ impl AudioPlayback {
         let spec = reader.spec();
         let sample_rate = spec.sample_rate;
         let channels = spec.channels;
-        
-        println!("   📊 Sample rate: {} Hz, Channels: {}, Bit depth: {}", 
-                 sample_rate, channels, spec.bits_per_sample);
-        
+
         // Convert all samples to f32
         let samples: Vec<f32> = match spec.bits_per_sample {
             16 => {
@@ -87,9 +82,7 @@ impl AudioPlayback {
         
         let total_samples = samples.len() / channels as usize;
         let duration = total_samples as f64 / sample_rate as f64;
-        
-        println!("   ✅ Loaded {} samples ({:.2} seconds)", samples.len(), duration);
-        
+
         // Store the loaded sample
         let playback_sample = PlaybackSample {
             audio_data: samples,
@@ -111,8 +104,6 @@ impl AudioPlayback {
     
     /// Initialize the audio engine (creates the continuous audio thread)
     pub fn initialize_audio_engine(&self) -> Result<String> {
-        println!("🔧 Initializing audio playback engine");
-        
         // Check if already initialized
         let mut thread_guard = self.audio_thread.lock().unwrap();
         if thread_guard.is_some() {
@@ -121,15 +112,11 @@ impl AudioPlayback {
         
         // Get output device
         let device = self.audio_manager.get_default_output_device()?;
-        println!("   🔊 Using output device: {}", device.name().unwrap_or("Unknown".to_string()));
-        
+
         // Get device config
         let config = device.default_output_config()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to get output config: {}", e)))?;
-        
-        println!("   📊 Output config: {} Hz, {} channels", 
-                 config.sample_rate().0, config.channels());
-        
+
         // Clone Arc references for the audio thread
         let current_sample = Arc::clone(&self.current_sample);
         let playback_position = Arc::clone(&self.playback_position);
@@ -139,12 +126,9 @@ impl AudioPlayback {
         let handle = std::thread::Builder::new()
             .name("batcherbird-audio-playback".to_string())
             .spawn(move || {
-                println!("🎵 Audio playback thread started");
-                
                 // Build and run the stream in this thread
-                match Self::run_audio_thread(device, config, current_sample, playback_position, is_playing) {
-                    Ok(_) => println!("🎵 Audio playback thread finished"),
-                    Err(e) => eprintln!("❌ Audio playback thread error: {}", e),
+                if let Err(e) = Self::run_audio_thread(device, config, current_sample, playback_position, is_playing) {
+                    eprintln!("Audio playback thread error: {}", e);
                 }
             })
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to spawn audio thread: {}", e)))?;
@@ -156,8 +140,6 @@ impl AudioPlayback {
     
     /// Start playback (just sets the atomic flag)
     pub fn start_playback(&self) -> Result<String> {
-        println!("▶️ Starting audio playback");
-        
         // Ensure audio engine is initialized
         self.initialize_audio_engine()?;
         
@@ -176,8 +158,6 @@ impl AudioPlayback {
     
     /// Stop playback
     pub fn stop_playback(&self) -> Result<String> {
-        println!("⏹️ Stopping audio playback");
-        
         // Set playing flag to false
         self.is_playing.store(false, Ordering::Relaxed);
         
@@ -189,8 +169,6 @@ impl AudioPlayback {
     
     /// Pause playback (keeps position)
     pub fn pause_playback(&self) -> Result<String> {
-        println!("⏸️ Pausing audio playback");
-        
         // Just set playing flag to false - position is maintained
         self.is_playing.store(false, Ordering::Relaxed);
         
@@ -205,10 +183,7 @@ impl AudioPlayback {
         if let Some(sample) = sample.as_ref() {
             let new_position = (position * sample.total_samples as f64) as u64;
             self.playback_position.store(new_position, Ordering::Relaxed);
-            
-            println!("⏩ Seeking to position: {:.1}% (sample {})", 
-                     position * 100.0, new_position);
-            
+
             Ok(format!("Seeked to {:.1}%", position * 100.0))
         } else {
             Err(BatcherbirdError::Audio("No audio file loaded".to_string()))
@@ -315,9 +290,7 @@ impl AudioPlayback {
         // Start the stream - it will run forever (heartbeat pattern)
         stream.play()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to start stream: {}", e)))?;
-        
-        println!("💓 Audio stream heartbeat started");
-        
+
         // Keep the thread alive - the stream runs in the background
         // In a real implementation, you might want a way to signal shutdown
         loop {

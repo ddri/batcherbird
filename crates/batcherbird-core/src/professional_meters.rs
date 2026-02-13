@@ -794,7 +794,7 @@ impl ProfessionalMeterEngine {
             GainStagingStatus::Clipping
         } else if peak_db > -6.0 {
             GainStagingStatus::TooLoud
-        } else if vu_db >= -24.0 && vu_db <= -12.0 {
+        } else if (-24.0..=-12.0).contains(&vu_db) {
             GainStagingStatus::Optimal
         } else if vu_db < -30.0 {
             GainStagingStatus::TooQuiet
@@ -876,10 +876,6 @@ mod tests {
         
         let readings = engine.process_samples(&samples);
         
-        // Debug print to understand the values
-        println!("VU: {:.2} dB, PPM: {:.2} dB, Peak: {:.2} dB, LUFS: {:.2}", 
-                 readings.vu_db, readings.ppm_db, readings.peak_db, readings.lufs);
-        
         // The initial reading might be close to silence due to integration
         // Let's test multiple iterations to build up the integrators
         for _ in 0..10 {
@@ -887,9 +883,7 @@ mod tests {
         }
         
         let final_readings = engine.process_samples(&samples);
-        println!("Final VU: {:.2} dB, PPM: {:.2} dB, Peak: {:.2} dB, LUFS: {:.2}", 
-                 final_readings.vu_db, final_readings.ppm_db, final_readings.peak_db, final_readings.lufs);
-        
+
         // After multiple iterations, should have meaningful readings
         assert!(final_readings.peak_db > -60.0, "Peak should be above -60dB after processing samples");
         assert!(final_readings.lufs > -70.0, "LUFS should be above -70 after processing samples");
