@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            crates/batcherbird-gui/src-tauri/target/
+          key: ${{ runner.os }}-release-${{ hashFiles('crates/batcherbird-gui/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: crates/batcherbird-gui/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: crates/batcherbird-gui
+        run: npm ci
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0" --locked || true
+
+      - name: Build Tauri app
+        working-directory: crates/batcherbird-gui
+        run: cargo tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Rename DMG
+        run: |
+          DMG_PATH=$(find crates/batcherbird-gui/src-tauri/target/release/bundle/dmg -name "*.dmg" | head -1)
+          mv "$DMG_PATH" "BatcherBird-${{ steps.version.outputs.VERSION }}-macos.dmg"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: BatcherBird-*.dmg
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## BatcherBird ${{ steps.version.outputs.VERSION }}
+
+            Professional auto-sampling tool for hardware synthesizers.
+
+            ### Installation
+            1. Download the `.dmg` file below
+            2. Open the DMG and drag BatcherBird to Applications
+            3. On first launch, right-click → Open (Gatekeeper warning for unsigned app)
+            4. Grant microphone and MIDI permissions when prompted
+
+            ### Requirements
+            - macOS 10.15+ (Catalina or later)
+            - Audio interface connected to your synthesizer
+            - MIDI connection to your synthesizer
+
+            ### What's New
+            See the [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
