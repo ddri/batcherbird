@@ -66,7 +66,7 @@ Batcherbird is an open-source hardware sampling tool built with Rust and Tauri. 
 - Node.js 18+ and Rust 1.70+ (for development)
 
 ### Download
-1. Download the latest release from [Releases](https://github.com/yourusername/batcherbird/releases)
+1. Download the latest release from [Releases](https://github.com/dbtreasure/batcherbird/releases)
 2. Open the `.dmg` file and drag Batcherbird to Applications
 3. Grant microphone and MIDI permissions when prompted
 
@@ -86,7 +86,7 @@ cargo install tauri-cli --version "^2.0"
 
 #### Clone & Setup
 ```bash
-git clone https://github.com/yourusername/batcherbird.git
+git clone https://github.com/dbtreasure/batcherbird.git
 cd batcherbird
 cd crates/batcherbird-gui
 npm install
@@ -320,7 +320,7 @@ Desktop/Batcherbird Samples/DW6000/
 | Roland Juno-106 | Focusrite Scarlett | 🧪 Community Tested |
 | Moog Subsequent 37 | Universal Audio Apollo | 🧪 Community Tested |
 
-*Want to add your setup? [Open an issue](https://github.com/yourusername/batcherbird/issues) with your test results!*
+*Want to add your setup? [Open an issue](https://github.com/dbtreasure/batcherbird/issues) with your test results!*
 
 ## 🏗️ Architecture
 
@@ -344,15 +344,51 @@ We welcome contributions! Areas where we need help:
 
 See [IMPLEMENTATION_PRD.md](IMPLEMENTATION_PRD.md) for technical implementation details.
 
-## 🐛 Known Issues
+## ⚠️ Current Limitations
 
-- **macOS Only**: Currently supports macOS only (Linux/Windows planned for v0.3)
-- **Audio Permission**: Requires microphone permission for recording
-- **Export Formats**: Professional sampler format export planned for v0.2
+BatcherBird is in early release (v0.1.0). Please be aware:
+
+- **macOS Only** - Windows and Linux support planned for future releases
+- **Unsigned App** - You'll need to right-click → Open on first launch (Gatekeeper warning)
+- **Hardware Testing** - While core recording features work, extended multi-hour sampling sessions haven't been extensively tested
+- **No Auto-Update** - Check GitHub releases for new versions
+
+We'd love your feedback! Please [open an issue](https://github.com/dbtreasure/batcherbird/issues) if you encounter problems.
+
+## 🔧 Troubleshooting
+
+### "App is damaged" or Gatekeeper Warning
+This is normal for unsigned apps. Right-click the app and select "Open", then click "Open" in the dialog.
+
+### No MIDI Devices Detected
+- Ensure your MIDI interface is connected before launching BatcherBird
+- Try unplugging and reconnecting the MIDI interface
+- Check System Preferences → Security & Privacy → Privacy → Input Monitoring
+
+### No Audio Input Detected
+- Grant microphone permission when prompted on first launch
+- Check System Preferences → Security & Privacy → Privacy → Microphone
+- Verify your audio interface is selected as input in System Preferences → Sound
+
+### Notes Get Stuck
+- Use the **MIDI Panic** button in the app
+- Some vintage synthesizers need longer delays between notes (try 500ms)
+
+### Recording Stops Unexpectedly
+- Check that your audio interface hasn't disconnected
+- Ensure you have enough disk space
+- Try reducing the recording duration
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) for details.
+This project is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0).
+
+This means:
+- ✅ You can use, modify, and distribute the software
+- ✅ You must share any modifications under the same license
+- ✅ You must provide source code when distributing
+
+See [LICENSE](LICENSE) for the full license text.
 
 ## 🙏 Acknowledgments
 

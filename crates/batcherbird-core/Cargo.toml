@@ -3,7 +3,9 @@ name = "batcherbird-core"
 version = "0.1.0"
 edition = "2021"
 description = "Core library for Batcherbird hardware synthesizer sampling"
-license = "MIT OR Apache-2.0"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 
 [dependencies]
 midir = { workspace = true }

@@ -6,6 +6,11 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/dbtreasure/batcherbird"
+authors = ["David Treasure"]
+
 [workspace.dependencies]
 # Audio/MIDI core dependencies
 midir = "0.10.1"

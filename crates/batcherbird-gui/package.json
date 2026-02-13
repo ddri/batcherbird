@@ -1,6 +1,6 @@
 {
   "name": "batcherbird-gui",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "type": "module",
   "main": "index.js",
   "scripts": {
@@ -9,10 +9,14 @@
     "preview": "vite preview",
     "tauri": "tauri"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": ["audio", "sampling", "synthesizer", "midi", "tauri"],
+  "author": "David Treasure",
+  "license": "AGPL-3.0-or-later",
+  "description": "Professional auto-sampling tool for hardware synthesizers",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dbtreasure/batcherbird.git"
+  },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.14",
     "@radix-ui/react-label": "^2.1.7",
