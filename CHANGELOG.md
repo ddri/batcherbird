@@ -64,4 +64,4 @@ Initial public release of BatcherBird.
 - Extended sampling sessions not yet battle-tested
 - Quality Validation Dashboard uses mock data (backend not implemented)
 
-[0.1.0]: https://github.com/dbtreasure/batcherbird/releases/tag/v0.1.0
+[0.1.0]: https://github.com/ddri/batcherbird/releases/tag/v0.1.0

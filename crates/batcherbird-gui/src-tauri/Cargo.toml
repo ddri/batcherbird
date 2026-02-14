@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "BatcherBird - Professional auto-sampling tool for hardware synthesizers"
 authors = ["David Treasure"]
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/dbtreasure/batcherbird"
+repository = "https://github.com/ddri/batcherbird"
 edition = "2021"
 rust-version = "1.77.2"
 

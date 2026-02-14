@@ -19,7 +19,7 @@ For testing:
 
 ```bash
 # Clone the repository
-git clone https://github.com/dbtreasure/batcherbird.git
+git clone https://github.com/ddri/batcherbird.git
 cd batcherbird
 
 # Install frontend dependencies
@@ -51,7 +51,7 @@ batcherbird/
 ### Reporting Bugs
 
 Before opening a bug report:
-1. Check [existing issues](https://github.com/dbtreasure/batcherbird/issues) first
+1. Check [existing issues](https://github.com/ddri/batcherbird/issues) first
 2. Try the latest version
 
 When reporting, include:
@@ -148,8 +148,8 @@ docs: update README with troubleshooting section
 
 ## Questions?
 
-- Open a [Discussion](https://github.com/dbtreasure/batcherbird/discussions) for questions
-- Open an [Issue](https://github.com/dbtreasure/batcherbird/issues) for bugs or feature requests
+- Open a [Discussion](https://github.com/ddri/batcherbird/discussions) for questions
+- Open an [Issue](https://github.com/ddri/batcherbird/issues) for bugs or feature requests
 
 ## License
 

@@ -66,7 +66,7 @@ Batcherbird is an open-source hardware sampling tool built with Rust and Tauri. 
 - Node.js 18+ and Rust 1.70+ (for development)
 
 ### Download
-1. Download the latest release from [Releases](https://github.com/dbtreasure/batcherbird/releases)
+1. Download the latest release from [Releases](https://github.com/ddri/batcherbird/releases)
 2. Open the `.dmg` file and drag Batcherbird to Applications
 3. Grant microphone and MIDI permissions when prompted
 
@@ -86,7 +86,7 @@ cargo install tauri-cli --version "^2.0"
 
 #### Clone & Setup
 ```bash
-git clone https://github.com/dbtreasure/batcherbird.git
+git clone https://github.com/ddri/batcherbird.git
 cd batcherbird
 cd crates/batcherbird-gui
 npm install
@@ -320,7 +320,7 @@ Desktop/Batcherbird Samples/DW6000/
 | Roland Juno-106 | Focusrite Scarlett | 🧪 Community Tested |
 | Moog Subsequent 37 | Universal Audio Apollo | 🧪 Community Tested |
 
-*Want to add your setup? [Open an issue](https://github.com/dbtreasure/batcherbird/issues) with your test results!*
+*Want to add your setup? [Open an issue](https://github.com/ddri/batcherbird/issues) with your test results!*
 
 ## 🏗️ Architecture
 
@@ -353,7 +353,7 @@ BatcherBird is in early release (v0.1.0). Please be aware:
 - **Hardware Testing** - While core recording features work, extended multi-hour sampling sessions haven't been extensively tested
 - **No Auto-Update** - Check GitHub releases for new versions
 
-We'd love your feedback! Please [open an issue](https://github.com/dbtreasure/batcherbird/issues) if you encounter problems.
+We'd love your feedback! Please [open an issue](https://github.com/ddri/batcherbird/issues) if you encounter problems.
 
 ## 🔧 Troubleshooting
 

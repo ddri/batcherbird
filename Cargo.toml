@@ -8,7 +8,7 @@ resolver = "2"
 
 [workspace.package]
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/dbtreasure/batcherbird"
+repository = "https://github.com/ddri/batcherbird"
 authors = ["David Treasure"]
 
 [workspace.dependencies]
