@@ -2,7 +2,7 @@
 name = "app"
 version = "0.1.0"
 description = "BatcherBird - Professional auto-sampling tool for hardware synthesizers"
-authors = ["David Treasure"]
+authors = ["David Ryan"]
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/ddri/batcherbird"
 edition = "2021"

@@ -10,7 +10,7 @@
     "tauri": "tauri"
   },
   "keywords": ["audio", "sampling", "synthesizer", "midi", "tauri"],
-  "author": "David Treasure",
+  "author": "David Ryan",
   "license": "AGPL-3.0-or-later",
   "description": "Professional auto-sampling tool for hardware synthesizers",
   "repository": {
