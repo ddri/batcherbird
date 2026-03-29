@@ -7,6 +7,14 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[[bin]]
+name = "batcherbird-vizia"
+path = "src/main.rs"
+
+[lib]
+name = "batcherbird_vizia"
+path = "src/lib.rs"
+
 [dependencies]
 batcherbird-core = { path = "../batcherbird-core" }
 vizia = "0.3"
@@ -16,3 +24,4 @@ midir = { workspace = true }
 serde = { workspace = true }
 crossbeam-channel = "0.5"
 rfd = "0.15"
+dirs = "5.0"
