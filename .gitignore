@@ -59,6 +59,12 @@ build/
 *.log
 *.cache
 
+# Worktrees
+.worktrees/
+
+# Superpowers brainstorm sessions
+.superpowers/
+
 # Development and security notes (private)
 CLAUDE.md
 SECURITY-REVIEW.md
