@@ -1,0 +1,18 @@
+[package]
+name = "batcherbird-vizia"
+version = "0.1.0"
+edition = "2021"
+description = "BatcherBird native GUI built with VIZIA"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+batcherbird-core = { path = "../batcherbird-core" }
+vizia = "0.3"
+rtrb = "0.3"
+cpal = { workspace = true }
+midir = { workspace = true }
+serde = { workspace = true }
+crossbeam-channel = "0.5"
+rfd = "0.15"
