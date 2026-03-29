@@ -1,0 +1,134 @@
+use vizia::prelude::*;
+use crate::app_data::AppData;
+use crate::app_event::AppEvent;
+
+pub fn sidebar(cx: &mut Context) {
+    VStack::new(cx, |cx| {
+        // DEVICES section
+        VStack::new(cx, |cx| {
+            Label::new(cx, "DEVICES").class("sidebar-label");
+
+            VStack::new(cx, |cx| {
+                Label::new(cx, "MIDI Out").class("device-type");
+                Label::new(
+                    cx,
+                    AppData::midi_devices.map(|devs: &Vec<String>| {
+                        if devs.is_empty() {
+                            "No MIDI devices".to_string()
+                        } else {
+                            devs[0].clone()
+                        }
+                    }),
+                )
+                .class("device-name");
+            })
+            .class("device-row");
+
+            VStack::new(cx, |cx| {
+                Label::new(cx, "Audio In").class("device-type");
+                Label::new(
+                    cx,
+                    AppData::audio_input_devices.map(|devs: &Vec<String>| {
+                        if devs.is_empty() {
+                            "No audio devices".to_string()
+                        } else {
+                            devs[0].clone()
+                        }
+                    }),
+                )
+                .class("device-name");
+            })
+            .class("device-row");
+        })
+        .class("sidebar-section");
+
+        Element::new(cx).class("divider");
+
+        // SAMPLING section
+        VStack::new(cx, |cx| {
+            Label::new(cx, "SAMPLING").class("sidebar-label");
+
+            HStack::new(cx, |cx| {
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "START").class("field-label");
+                    Label::new(
+                        cx,
+                        AppData::start_note.map(|n: &u8| AppData::note_name(*n)),
+                    )
+                    .class("field-value");
+                })
+                .class("field-box");
+
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "END").class("field-label");
+                    Label::new(
+                        cx,
+                        AppData::end_note.map(|n: &u8| AppData::note_name(*n)),
+                    )
+                    .class("field-value");
+                })
+                .class("field-box");
+            })
+            .gap(Pixels(8.0));
+
+            HStack::new(cx, |cx| {
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "LAYERS").class("field-label");
+                    Label::new(
+                        cx,
+                        AppData::velocity_layers.map(|n: &u8| n.to_string()),
+                    )
+                    .class("field-value");
+                })
+                .class("field-box");
+
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "DURATION").class("field-label");
+                    Label::new(
+                        cx,
+                        AppData::note_duration_ms.map(|ms: &u32| {
+                            format!("{:.1}s", *ms as f32 / 1000.0)
+                        }),
+                    )
+                    .class("field-value");
+                })
+                .class("field-box");
+            })
+            .gap(Pixels(8.0));
+        })
+        .class("sidebar-section");
+
+        Element::new(cx).class("divider");
+
+        // EXPORT section
+        VStack::new(cx, |cx| {
+            Label::new(cx, "EXPORT").class("sidebar-label");
+
+            VStack::new(cx, |cx| {
+                Label::new(cx, "FORMAT").class("field-label");
+                Label::new(cx, "Wav24Bit").class("field-value");
+            })
+            .class("field-box");
+
+            VStack::new(cx, |cx| {
+                Label::new(cx, "OUTPUT").class("field-label");
+                Label::new(
+                    cx,
+                    AppData::output_directory.map(|p: &std::path::PathBuf| {
+                        p.file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| p.to_string_lossy().to_string())
+                    }),
+                )
+                .class("field-value");
+            })
+            .class("field-box");
+        })
+        .class("sidebar-section");
+
+        Button::new(cx, |cx| Label::new(cx, "Export All"))
+            .class("btn-export")
+            .on_press(|cx| cx.emit(AppEvent::ExportAll));
+    })
+    .class("sidebar");
+}
