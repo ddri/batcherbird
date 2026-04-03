@@ -1,3 +1,4 @@
+use std::time::Duration;
 use vizia::prelude::*;
 use batcherbird_vizia::app_data::AppData;
 use batcherbird_vizia::app_event::AppEvent;
@@ -11,6 +12,17 @@ fn main() -> Result<(), ApplicationError> {
         AppData::default().build(cx);
 
         cx.emit(AppEvent::RefreshDevices);
+
+        let timer = cx.add_timer(
+            Duration::from_millis(16), // ~60fps
+            None,                      // run forever
+            |cx, action| {
+                if let TimerAction::Tick(_) = action {
+                    cx.emit(AppEvent::Tick);
+                }
+            },
+        );
+        cx.start_timer(timer);
 
         HStack::new(cx, |cx| {
             sidebar(cx);

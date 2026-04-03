@@ -1,7 +1,10 @@
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use vizia::prelude::*;
 use batcherbird_core::export::AudioFormat;
 use batcherbird_core::sampler::VizChunk;
+use batcherbird_core::lock_free_recording::RealtimeMeterData;
+use rtrb::Consumer;
 use crate::app_event::AppEvent;
 
 #[derive(Debug, Clone, PartialEq, Data)]
@@ -51,6 +54,10 @@ pub struct AppData {
     pub notes_completed: u32,
     pub notes_total: u32,
 
+    // Engine handles
+    #[lens(ignore)]
+    pub meter_consumer: Option<Arc<Mutex<Consumer<RealtimeMeterData>>>>,
+
     // Waveform data
     #[lens(ignore)]
     pub viz_chunks: Vec<VizChunk>,
@@ -92,6 +99,8 @@ impl Default for AppData {
             total_layers: 0,
             notes_completed: 0,
             notes_total: 0,
+
+            meter_consumer: None,
 
             viz_chunks: Vec::new(),
             viz_peaks: Vec::new(),
@@ -140,6 +149,31 @@ impl Model for AppData {
             }
             AppEvent::SelectAudioInput(idx) => {
                 self.selected_audio_input = Some(*idx);
+            }
+            AppEvent::Tick => {
+                if let Some(consumer) = &self.meter_consumer {
+                    if let Ok(mut consumer) = consumer.lock() {
+                        let mut latest: Option<RealtimeMeterData> = None;
+                        while let Ok(data) = consumer.pop() {
+                            latest = Some(data);
+                        }
+                        if let Some(data) = latest {
+                            self.meter_left = data.peak_left;
+                            self.meter_right = data.peak_right;
+                            self.meter_left_db = if data.peak_left > 0.0 {
+                                20.0 * data.peak_left.log10()
+                            } else {
+                                -60.0
+                            };
+                            self.meter_right_db = if data.peak_right > 0.0 {
+                                20.0 * data.peak_right.log10()
+                            } else {
+                                -60.0
+                            };
+                            self.is_clipping = data.is_clipping;
+                        }
+                    }
+                }
             }
             AppEvent::SetStartNote(n) => self.start_note = *n,
             AppEvent::SetEndNote(n) => self.end_note = *n,
