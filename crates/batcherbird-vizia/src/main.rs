@@ -1,6 +1,6 @@
 use vizia::prelude::*;
 use batcherbird_vizia::app_data::AppData;
-use batcherbird_vizia::views::sidebar;
+use batcherbird_vizia::views::{sidebar, stage};
 
 fn main() -> Result<(), ApplicationError> {
     Application::new(|cx| {
@@ -11,10 +11,7 @@ fn main() -> Result<(), ApplicationError> {
 
         HStack::new(cx, |cx| {
             sidebar(cx);
-            VStack::new(cx, |cx| {
-                Label::new(cx, "Stage area — recordings will appear here").class("idle-text");
-            })
-            .class("stage");
+            stage(cx);
         });
     })
     .title("BatcherBird")
