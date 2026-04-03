@@ -588,6 +588,7 @@ dependencies = [
  "batcherbird-core",
  "cpal",
  "crossbeam-channel",
+ "dirs",
  "midir",
  "rfd",
  "rtrb",

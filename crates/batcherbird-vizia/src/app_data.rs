@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use vizia::prelude::*;
 use batcherbird_core::export::AudioFormat;
-use batcherbird_core::sampler::VizChunk;
+use batcherbird_core::sampler::{SamplingConfig, SamplingEngine, VizChunk};
 use batcherbird_core::lock_free_recording::RealtimeMeterData;
 use rtrb::Consumer;
 use crate::app_event::AppEvent;
@@ -57,6 +57,10 @@ pub struct AppData {
     // Engine handles
     #[lens(ignore)]
     pub meter_consumer: Option<Arc<Mutex<Consumer<RealtimeMeterData>>>>,
+    #[lens(ignore)]
+    pub sampling_engine: Option<SamplingEngine>,
+    #[lens(ignore)]
+    pub monitoring_stream: Option<cpal::Stream>,
 
     // Waveform data
     #[lens(ignore)]
@@ -101,6 +105,8 @@ impl Default for AppData {
             notes_total: 0,
 
             meter_consumer: None,
+            sampling_engine: None,
+            monitoring_stream: None,
 
             viz_chunks: Vec::new(),
             viz_peaks: Vec::new(),
@@ -130,7 +136,7 @@ impl AppData {
 }
 
 impl Model for AppData {
-    fn event(&mut self, _cx: &mut EventContext, event: &mut Event) {
+    fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|app_event: &AppEvent, _| match app_event {
             AppEvent::RefreshDevices => {
                 if let Ok(mut manager) = batcherbird_core::midi::MidiManager::new() {
@@ -174,6 +180,16 @@ impl Model for AppData {
                         }
                     }
                 }
+                // Fallback: poll engine levels when monitoring (no ring buffer consumer)
+                if self.meter_consumer.is_none() {
+                    if let Some(engine) = &self.sampling_engine {
+                        let levels = engine.get_audio_levels();
+                        self.meter_left = levels.peak;
+                        self.meter_right = levels.peak; // mono for now
+                        self.meter_left_db = levels.peak_db;
+                        self.meter_right_db = levels.peak_db;
+                    }
+                }
             }
             AppEvent::SetStartNote(n) => self.start_note = *n,
             AppEvent::SetEndNote(n) => self.end_note = *n,
@@ -184,11 +200,33 @@ impl Model for AppData {
 
             AppEvent::Arm => {
                 if self.app_state == AppState::Idle {
-                    self.app_state = AppState::Armed;
+                    let config = SamplingConfig {
+                        note_duration_ms: self.note_duration_ms as u64,
+                        release_time_ms: 1000,
+                        pre_delay_ms: 100,
+                        post_delay_ms: 100,
+                        midi_channel: 0,
+                        velocity: 100,
+                    };
+                    match SamplingEngine::new(config) {
+                        Ok(engine) => {
+                            match engine.start_monitoring_stream() {
+                                Ok(stream) => {
+                                    self.monitoring_stream = Some(stream);
+                                    self.sampling_engine = Some(engine);
+                                    self.app_state = AppState::Armed;
+                                }
+                                Err(e) => eprintln!("Failed to start monitoring: {}", e),
+                            }
+                        }
+                        Err(e) => eprintln!("Failed to create engine: {}", e),
+                    }
                 }
             }
             AppEvent::Disarm => {
                 if self.app_state == AppState::Armed {
+                    self.monitoring_stream = None;
+                    self.sampling_engine = None;
                     self.app_state = AppState::Idle;
                 }
             }
@@ -199,6 +237,59 @@ impl Model for AppData {
                     self.notes_completed = 0;
                     self.viz_chunks.clear();
                     self.viz_peaks.clear();
+
+                    // Stop monitoring before recording
+                    self.monitoring_stream = None;
+                    self.sampling_engine = None;
+
+                    let config = SamplingConfig {
+                        note_duration_ms: self.note_duration_ms as u64,
+                        release_time_ms: 1000,
+                        pre_delay_ms: 100,
+                        post_delay_ms: 100,
+                        midi_channel: 0,
+                        velocity: 100,
+                    };
+
+                    let start_note = self.start_note;
+                    let end_note = self.end_note;
+                    let midi_device_idx = self.selected_midi_device.unwrap_or(0);
+                    let mut proxy = cx.get_proxy();
+
+                    std::thread::spawn(move || {
+                        // Create MIDI connection in the recording thread
+                        let midi_conn_result = (|| -> std::result::Result<midir::MidiOutputConnection, String> {
+                            let mut midi_mgr = batcherbird_core::midi::MidiManager::new()
+                                .map_err(|e| format!("Failed to create MIDI manager: {}", e))?;
+                            midi_mgr.connect_output(midi_device_idx)
+                                .map_err(|e| format!("Failed to connect MIDI output: {}", e))
+                        })();
+
+                        let mut midi_conn = match midi_conn_result {
+                            Ok(conn) => conn,
+                            Err(e) => {
+                                let _ = proxy.emit(AppEvent::RecordingError(e));
+                                return;
+                            }
+                        };
+
+                        match SamplingEngine::new(config) {
+                            Ok(engine) => {
+                                if start_note == end_note {
+                                    match engine.sample_single_note_blocking(&mut midi_conn, start_note) {
+                                        Ok(_) => { let _ = proxy.emit(AppEvent::RecordingComplete); }
+                                        Err(e) => { let _ = proxy.emit(AppEvent::RecordingError(e.to_string())); }
+                                    }
+                                } else {
+                                    match engine.sample_note_range_blocking(&mut midi_conn, start_note, end_note) {
+                                        Ok(_) => { let _ = proxy.emit(AppEvent::RecordingComplete); }
+                                        Err(e) => { let _ = proxy.emit(AppEvent::RecordingError(e.to_string())); }
+                                    }
+                                }
+                            }
+                            Err(e) => { let _ = proxy.emit(AppEvent::RecordingError(e.to_string())); }
+                        }
+                    });
                 }
             }
             AppEvent::PushVizChunk(chunk) => {
@@ -220,6 +311,20 @@ impl Model for AppData {
             }
             AppEvent::RecordingError(_msg) => {
                 self.app_state = AppState::Idle;
+            }
+
+            AppEvent::SelectOutputDirectory => {
+                let current_dir = self.output_directory.clone();
+                let mut proxy = cx.get_proxy();
+
+                std::thread::spawn(move || {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_directory(&current_dir)
+                        .pick_folder()
+                    {
+                        let _ = proxy.emit(AppEvent::SetOutputDirectory(path));
+                    }
+                });
             }
 
             _ => {}
