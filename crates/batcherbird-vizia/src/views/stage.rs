@@ -90,6 +90,22 @@ pub fn stage(cx: &mut Context) {
                 Display::None
             }
         }));
+
+        // --- Review content (only when Review) ---
+        VStack::new(cx, |cx| {
+            Label::new(cx, "Recording Complete").class("note-name");
+            Label::new(cx, "Samples ready for export").class("idle-subtext");
+            Button::new(cx, |cx| Label::new(cx, "New Session"))
+                .class("btn-arm")
+                .on_press(|cx| cx.emit(AppEvent::Disarm));
+        })
+        .display(AppData::app_state.map(|s| {
+            if *s == AppState::Review {
+                Display::Flex
+            } else {
+                Display::None
+            }
+        }));
     })
     .class("stage");
 }

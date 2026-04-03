@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use vizia::prelude::*;
 use batcherbird_core::export::AudioFormat;
 use batcherbird_core::sampler::{SamplingConfig, SamplingEngine, VizChunk};
@@ -56,7 +55,7 @@ pub struct AppData {
 
     // Engine handles
     #[lens(ignore)]
-    pub meter_consumer: Option<Arc<Mutex<Consumer<RealtimeMeterData>>>>,
+    pub meter_consumer: Option<Consumer<RealtimeMeterData>>,
     #[lens(ignore)]
     pub sampling_engine: Option<SamplingEngine>,
     #[lens(ignore)]
@@ -115,6 +114,17 @@ impl Default for AppData {
 }
 
 impl AppData {
+    fn build_sampling_config(&self) -> SamplingConfig {
+        SamplingConfig {
+            note_duration_ms: self.note_duration_ms as u64,
+            release_time_ms: 1000,
+            pre_delay_ms: 100,
+            post_delay_ms: 100,
+            midi_channel: 0,
+            velocity: 100,
+        }
+    }
+
     pub fn total_samples(&self) -> u32 {
         let num_notes = (self.end_note as u32)
             .saturating_sub(self.start_note as u32) + 1;
@@ -157,27 +167,25 @@ impl Model for AppData {
                 self.selected_audio_input = Some(*idx);
             }
             AppEvent::Tick => {
-                if let Some(consumer) = &self.meter_consumer {
-                    if let Ok(mut consumer) = consumer.lock() {
-                        let mut latest: Option<RealtimeMeterData> = None;
-                        while let Ok(data) = consumer.pop() {
-                            latest = Some(data);
-                        }
-                        if let Some(data) = latest {
-                            self.meter_left = data.peak_left;
-                            self.meter_right = data.peak_right;
-                            self.meter_left_db = if data.peak_left > 0.0 {
-                                20.0 * data.peak_left.log10()
-                            } else {
-                                -60.0
-                            };
-                            self.meter_right_db = if data.peak_right > 0.0 {
-                                20.0 * data.peak_right.log10()
-                            } else {
-                                -60.0
-                            };
-                            self.is_clipping = data.is_clipping;
-                        }
+                if let Some(consumer) = &mut self.meter_consumer {
+                    let mut latest: Option<RealtimeMeterData> = None;
+                    while let Ok(data) = consumer.pop() {
+                        latest = Some(data);
+                    }
+                    if let Some(data) = latest {
+                        self.meter_left = data.peak_left;
+                        self.meter_right = data.peak_right;
+                        self.meter_left_db = if data.peak_left > 0.0 {
+                            20.0 * data.peak_left.log10()
+                        } else {
+                            -60.0
+                        };
+                        self.meter_right_db = if data.peak_right > 0.0 {
+                            20.0 * data.peak_right.log10()
+                        } else {
+                            -60.0
+                        };
+                        self.is_clipping = data.is_clipping;
                     }
                 }
                 // Fallback: poll engine levels when monitoring (no ring buffer consumer)
@@ -200,14 +208,7 @@ impl Model for AppData {
 
             AppEvent::Arm => {
                 if self.app_state == AppState::Idle {
-                    let config = SamplingConfig {
-                        note_duration_ms: self.note_duration_ms as u64,
-                        release_time_ms: 1000,
-                        pre_delay_ms: 100,
-                        post_delay_ms: 100,
-                        midi_channel: 0,
-                        velocity: 100,
-                    };
+                    let config = self.build_sampling_config();
                     match SamplingEngine::new(config) {
                         Ok(engine) => {
                             match engine.start_monitoring_stream() {
@@ -224,7 +225,7 @@ impl Model for AppData {
                 }
             }
             AppEvent::Disarm => {
-                if self.app_state == AppState::Armed {
+                if self.app_state == AppState::Armed || self.app_state == AppState::Review {
                     self.monitoring_stream = None;
                     self.sampling_engine = None;
                     self.app_state = AppState::Idle;
@@ -242,14 +243,7 @@ impl Model for AppData {
                     self.monitoring_stream = None;
                     self.sampling_engine = None;
 
-                    let config = SamplingConfig {
-                        note_duration_ms: self.note_duration_ms as u64,
-                        release_time_ms: 1000,
-                        pre_delay_ms: 100,
-                        post_delay_ms: 100,
-                        midi_channel: 0,
-                        velocity: 100,
-                    };
+                    let config = self.build_sampling_config();
 
                     let start_note = self.start_note;
                     let end_note = self.end_note;

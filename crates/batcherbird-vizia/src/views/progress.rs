@@ -82,11 +82,14 @@ pub fn progress_bar(cx: &mut Context) {
                 .class("progress-count");
 
                 // Percentage
-                Label::new(
-                    cx,
-                    AppData::notes_completed.map(|n: &u32| format!("{}%", n)),
-                )
-                .class("progress-pct");
+                Binding::new(cx, AppData::notes_completed, |cx, completed| {
+                    let completed = completed.get(cx);
+                    Binding::new(cx, AppData::notes_total, move |cx, total| {
+                        let total = total.get(cx);
+                        let pct = if total > 0 { (completed * 100) / total } else { 0 };
+                        Label::new(cx, &format!("{}%", pct)).class("progress-pct");
+                    });
+                });
             })
             .class("progress-bar-row");
         }

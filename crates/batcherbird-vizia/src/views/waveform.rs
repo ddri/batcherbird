@@ -113,6 +113,3 @@ impl View for WaveformView {
     }
 }
 
-pub fn waveform(cx: &mut Context) {
-    WaveformView::new(cx);
-}
