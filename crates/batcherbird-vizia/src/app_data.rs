@@ -54,6 +54,9 @@ pub struct AppData {
     // Waveform data
     #[lens(ignore)]
     pub viz_chunks: Vec<VizChunk>,
+    /// Peak values (0.0-1.0) extracted from viz_chunks for waveform display.
+    /// Updated alongside viz_chunks. This field is lensable.
+    pub viz_peaks: Vec<f32>,
 }
 
 impl Default for AppData {
@@ -91,6 +94,7 @@ impl Default for AppData {
             notes_total: 0,
 
             viz_chunks: Vec::new(),
+            viz_peaks: Vec::new(),
         }
     }
 }
@@ -142,7 +146,12 @@ impl Model for AppData {
                     self.notes_total = self.total_samples();
                     self.notes_completed = 0;
                     self.viz_chunks.clear();
+                    self.viz_peaks.clear();
                 }
+            }
+            AppEvent::PushVizChunk(chunk) => {
+                self.viz_peaks.push(chunk.peak);
+                self.viz_chunks.push(chunk.clone());
             }
             AppEvent::CancelRecording => {
                 self.app_state = AppState::Idle;

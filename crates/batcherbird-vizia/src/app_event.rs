@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use batcherbird_core::export::AudioFormat;
+use batcherbird_core::sampler::VizChunk;
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {
@@ -40,6 +41,9 @@ pub enum AppEvent {
 
     // Export
     ExportAll,
+
+    // Visualization data
+    PushVizChunk(VizChunk),
 
     // Timer tick
     Tick,
