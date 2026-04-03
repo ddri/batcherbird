@@ -35,9 +35,11 @@ Before writing any interactive component, ask:
 4. Are there any "initial" props that need to become local state?
 
 ## Project Setup
-- GUI: React + TypeScript + Tauri in `crates/batcherbird-gui/`
-- Run development: `npm run dev` (from GUI directory)
-- MIDI device selection state is managed in App.tsx and passed down to components
+- GUI: VIZIA (Rust) in `crates/batcherbird-vizia/`
+- Run development: `cargo run -p batcherbird-vizia`
+- CSS theme: `crates/batcherbird-vizia/src/style/theme.css` (hot-reload supported)
+- Old Tauri GUI in `crates/batcherbird-gui/` is deprecated — do not modify
+- App state managed in `app_data.rs` via VIZIA Model + Lens pattern
 
 
 

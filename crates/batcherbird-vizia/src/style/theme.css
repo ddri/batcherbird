@@ -1,0 +1,250 @@
+/* BatcherBird Dark Theme */
+
+/* Root / Window */
+:root {
+    background-color: #111118;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+/* ------------------------------------------------------------------ */
+/* SIDEBAR                                                              */
+/* ------------------------------------------------------------------ */
+
+.sidebar {
+    width: 200px;
+    height: 1s;
+    background-color: #0e0e15;
+    padding-top: 16px;
+    padding-bottom: 16px;
+    vertical-gap: 0px;
+}
+
+.sidebar-section {
+    width: 1s;
+    height: auto;
+    padding-left: 12px;
+    padding-right: 12px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    vertical-gap: 8px;
+}
+
+.sidebar-label {
+    color: #555555;
+    font-size: 10;
+    width: 1s;
+}
+
+/* Device rows */
+.device-row {
+    width: 1s;
+    height: auto;
+    vertical-gap: 2px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+}
+
+.device-type {
+    color: #888888;
+    font-size: 10;
+    width: 1s;
+}
+
+.device-name {
+    color: #e0e0e0;
+    font-size: 12;
+    width: 1s;
+}
+
+/* Signal dots */
+.signal-dot {
+    width: 6px;
+    height: 6px;
+    corner-radius: 50%;
+    background-color: #28c840;
+}
+
+.signal-dot.disconnected {
+    background-color: #555555;
+}
+
+/* ------------------------------------------------------------------ */
+/* FIELD BOXES                                                          */
+/* ------------------------------------------------------------------ */
+
+.field-box {
+    width: 1s;
+    height: auto;
+    background-color: #1a1a22;
+    border-width: 1px;
+    border-color: #2a2a35;
+    corner-radius: 3px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    padding-left: 6px;
+    padding-right: 6px;
+    vertical-gap: 2px;
+}
+
+.field-label {
+    color: #555555;
+    font-size: 9;
+    width: 1s;
+}
+
+.field-value {
+    color: #e0e0e0;
+    font-size: 13;
+    width: 1s;
+}
+
+/* ------------------------------------------------------------------ */
+/* DIVIDER                                                              */
+/* ------------------------------------------------------------------ */
+
+.divider {
+    width: 1s;
+    height: 1px;
+    background-color: #222230;
+}
+
+/* ------------------------------------------------------------------ */
+/* STAGE (main area)                                                    */
+/* ------------------------------------------------------------------ */
+
+.stage {
+    width: 1s;
+    height: 1s;
+    background-color: #111118;
+    padding: 24px;
+    vertical-gap: 16px;
+}
+
+/* ------------------------------------------------------------------ */
+/* METERS                                                               */
+/* ------------------------------------------------------------------ */
+
+.meter-label {
+    color: #888888;
+    font-size: 11;
+}
+
+.meter-db {
+    color: #e0e0e0;
+    font-size: 12;
+}
+
+/* ------------------------------------------------------------------ */
+/* NOTE DISPLAY                                                         */
+/* ------------------------------------------------------------------ */
+
+.note-name {
+    color: #ffffff;
+    font-size: 32;
+}
+
+.note-detail {
+    color: #888888;
+    font-size: 13;
+}
+
+/* ------------------------------------------------------------------ */
+/* RECORDING INDICATOR                                                  */
+/* ------------------------------------------------------------------ */
+
+.rec-indicator {
+    width: 8px;
+    height: 8px;
+    corner-radius: 50%;
+    background-color: #e53935;
+}
+
+.rec-text {
+    color: #e53935;
+    font-size: 12;
+}
+
+/* ------------------------------------------------------------------ */
+/* BUTTONS                                                              */
+/* ------------------------------------------------------------------ */
+
+.btn-arm {
+    width: 1s;
+    height: 36px;
+    background-color: #4a9eff;
+    corner-radius: 4px;
+    alignment: center;
+    cursor: hand;
+}
+
+.btn-arm:hover {
+    background-color: #6ab3ff;
+}
+
+.btn-arm:active {
+    background-color: #3a8eef;
+}
+
+.btn-record {
+    width: 1s;
+    height: 36px;
+    background-color: #e53935;
+    corner-radius: 4px;
+    alignment: center;
+    cursor: hand;
+}
+
+.btn-record:hover {
+    background-color: #f55350;
+}
+
+.btn-record:active {
+    background-color: #c62828;
+}
+
+.btn-export {
+    width: 1s;
+    height: 32px;
+    background-color: #2a2a38;
+    border-width: 1px;
+    border-color: #4a9eff;
+    corner-radius: 4px;
+    alignment: center;
+    cursor: hand;
+    color: #4a9eff;
+    font-size: 12;
+    margin-left: 12px;
+    margin-right: 12px;
+    margin-top: 4px;
+}
+
+.btn-export:hover {
+    background-color: #1a2a48;
+}
+
+/* ------------------------------------------------------------------ */
+/* PROGRESS                                                             */
+/* ------------------------------------------------------------------ */
+
+.progress-text {
+    color: #888888;
+    font-size: 12;
+}
+
+/* ------------------------------------------------------------------ */
+/* IDLE STATE                                                           */
+/* ------------------------------------------------------------------ */
+
+.idle-text {
+    color: #888888;
+    font-size: 16;
+    width: 1s;
+    height: 1s;
+    alignment: center;
+}
+
+.idle-subtext {
+    color: #555555;
+    font-size: 13;
+}
