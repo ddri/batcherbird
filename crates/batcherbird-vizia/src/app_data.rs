@@ -123,6 +123,24 @@ impl AppData {
 impl Model for AppData {
     fn event(&mut self, _cx: &mut EventContext, event: &mut Event) {
         event.map(|app_event: &AppEvent, _| match app_event {
+            AppEvent::RefreshDevices => {
+                if let Ok(mut manager) = batcherbird_core::midi::MidiManager::new() {
+                    if let Ok(devices) = manager.list_output_devices() {
+                        self.midi_devices = devices;
+                    }
+                }
+                if let Ok(manager) = batcherbird_core::audio::AudioManager::new() {
+                    if let Ok(devices) = manager.list_input_devices() {
+                        self.audio_input_devices = devices;
+                    }
+                }
+            }
+            AppEvent::SelectMidiDevice(idx) => {
+                self.selected_midi_device = Some(*idx);
+            }
+            AppEvent::SelectAudioInput(idx) => {
+                self.selected_audio_input = Some(*idx);
+            }
             AppEvent::SetStartNote(n) => self.start_note = *n,
             AppEvent::SetEndNote(n) => self.end_note = *n,
             AppEvent::SetVelocityLayers(n) => self.velocity_layers = *n,

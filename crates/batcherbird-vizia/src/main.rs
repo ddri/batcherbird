@@ -1,5 +1,6 @@
 use vizia::prelude::*;
 use batcherbird_vizia::app_data::AppData;
+use batcherbird_vizia::app_event::AppEvent;
 use batcherbird_vizia::views::{sidebar, stage};
 
 fn main() -> Result<(), ApplicationError> {
@@ -8,6 +9,8 @@ fn main() -> Result<(), ApplicationError> {
             .expect("Failed to load theme");
 
         AppData::default().build(cx);
+
+        cx.emit(AppEvent::RefreshDevices);
 
         HStack::new(cx, |cx| {
             sidebar(cx);
