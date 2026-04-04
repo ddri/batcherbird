@@ -1,10 +1,8 @@
-/* BatcherBird Dark Theme */
+/* BatcherBird Dark Theme — VIZIA-native properties */
 
-/* Root / Window */
 :root {
     background-color: #111118;
     color: #e0e0e0;
-    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
 }
 
 /* ------------------------------------------------------------------ */
@@ -12,55 +10,52 @@
 /* ------------------------------------------------------------------ */
 
 .sidebar {
-    width: 200px;
+    width: 220px;
     height: 1s;
     background-color: #0e0e15;
-    padding-top: 16px;
-    padding-bottom: 16px;
-    vertical-gap: 0px;
+    row-between: 0px;
 }
 
 .sidebar-section {
     width: 1s;
     height: auto;
-    padding-left: 12px;
-    padding-right: 12px;
-    padding-top: 12px;
-    padding-bottom: 12px;
-    vertical-gap: 8px;
+    child-left: 14px;
+    child-right: 14px;
+    child-top: 12px;
+    child-bottom: 8px;
+    row-between: 8px;
 }
 
 .sidebar-label {
     color: #555555;
     font-size: 10;
     width: 1s;
+    height: auto;
 }
 
 /* Device rows */
 .device-row {
     width: 1s;
     height: auto;
-    vertical-gap: 2px;
-    padding-top: 4px;
-    padding-bottom: 4px;
+    row-between: 2px;
 }
 
 .device-type {
-    color: #888888;
+    color: #666666;
     font-size: 10;
-    width: 1s;
+    height: auto;
 }
 
 .device-name {
-    color: #e0e0e0;
+    color: #cccccc;
     font-size: 12;
-    width: 1s;
+    height: auto;
 }
 
 /* Signal dots */
 .signal-dot {
-    width: 6px;
-    height: 6px;
+    width: 7px;
+    height: 7px;
     corner-radius: 50%;
     background-color: #28c840;
 }
@@ -76,35 +71,41 @@
 .field-box {
     width: 1s;
     height: auto;
-    background-color: #1a1a22;
+    background-color: #161620;
     border-width: 1px;
-    border-color: #2a2a35;
-    corner-radius: 3px;
-    padding-top: 4px;
-    padding-bottom: 4px;
-    padding-left: 6px;
-    padding-right: 6px;
-    vertical-gap: 2px;
+    border-color: #252530;
+    corner-radius: 4px;
+    child-left: 6px;
+    child-right: 6px;
+    child-top: 4px;
+    child-bottom: 4px;
+    row-between: 2px;
 }
 
 .field-label {
     color: #555555;
     font-size: 9;
-    width: 1s;
+    height: auto;
 }
 
 .field-value {
-    color: #e0e0e0;
+    color: #dddddd;
     font-size: 13;
-    width: 1s;
+    height: auto;
+    child-top: auto;
+    child-bottom: auto;
 }
 
 .field-controls {
     width: 1s;
     height: auto;
-    col-between: 2px;
-    child-top: auto;
-    child-bottom: auto;
+    col-between: 4px;
+}
+
+.field-row {
+    width: 1s;
+    height: auto;
+    col-between: 8px;
 }
 
 .field-box-interactive {
@@ -112,8 +113,11 @@
     border-color: #252530;
     border-width: 1px;
     corner-radius: 4px;
-    child-space: 6px;
-    cursor: pointer;
+    child-left: 6px;
+    child-right: 6px;
+    child-top: 4px;
+    child-bottom: 4px;
+    row-between: 2px;
 }
 
 .field-box-interactive:hover {
@@ -121,15 +125,15 @@
 }
 
 .btn-sm {
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
     background-color: #252530;
-    border-color: #333333;
+    border-color: #333344;
     border-width: 1px;
     corner-radius: 3px;
     color: #888888;
-    font-size: 12;
-    child-space: 0px;
+    font-size: 11;
+    child-space: auto;
 }
 
 .btn-sm:hover {
@@ -155,22 +159,45 @@
     width: 1s;
     height: 1s;
     background-color: #111118;
-    padding: 24px;
-    vertical-gap: 16px;
+    child-left: 20px;
+    child-right: 20px;
+    child-top: 16px;
+    child-bottom: 16px;
+    row-between: 12px;
 }
 
 /* ------------------------------------------------------------------ */
 /* METERS                                                               */
 /* ------------------------------------------------------------------ */
 
+.meters {
+    width: 1s;
+    height: auto;
+    row-between: 4px;
+}
+
+.meter-row {
+    width: 1s;
+    height: auto;
+    col-between: 8px;
+}
+
 .meter-label {
-    color: #888888;
-    font-size: 11;
+    color: #555555;
+    font-size: 10;
+    width: 14px;
+    height: auto;
+    child-top: auto;
+    child-bottom: auto;
 }
 
 .meter-db {
-    color: #e0e0e0;
-    font-size: 12;
+    color: #666666;
+    font-size: 10;
+    width: 36px;
+    height: auto;
+    child-top: auto;
+    child-bottom: auto;
 }
 
 /* ------------------------------------------------------------------ */
@@ -180,11 +207,21 @@
 .note-name {
     color: #ffffff;
     font-size: 32;
+    height: auto;
 }
 
 .note-detail {
-    color: #888888;
+    color: #666666;
     font-size: 13;
+    height: auto;
+    child-top: auto;
+    child-bottom: auto;
+}
+
+.note-display {
+    width: 1s;
+    height: auto;
+    col-between: 10px;
 }
 
 /* ------------------------------------------------------------------ */
@@ -192,15 +229,16 @@
 /* ------------------------------------------------------------------ */
 
 .rec-indicator {
-    width: 8px;
-    height: 8px;
-    corner-radius: 50%;
-    background-color: #e53935;
+    height: auto;
+    col-between: 6px;
 }
 
 .rec-text {
     color: #e53935;
     font-size: 12;
+    height: auto;
+    child-top: auto;
+    child-bottom: auto;
 }
 
 /* ------------------------------------------------------------------ */
@@ -209,27 +247,30 @@
 
 .btn-arm {
     width: 1s;
-    height: 36px;
-    background-color: #4a9eff;
-    corner-radius: 4px;
-    alignment: center;
+    height: 44px;
+    background-color: #1a1a28;
+    border-width: 2px;
+    border-color: #e5393566;
+    corner-radius: 8px;
+    color: #e53935;
+    font-size: 16;
+    child-space: auto;
     cursor: hand;
 }
 
 .btn-arm:hover {
-    background-color: #6ab3ff;
-}
-
-.btn-arm:active {
-    background-color: #3a8eef;
+    background-color: #251520;
+    border-color: #e53935;
 }
 
 .btn-record {
     width: 1s;
-    height: 36px;
+    height: 44px;
     background-color: #e53935;
-    corner-radius: 4px;
-    alignment: center;
+    corner-radius: 8px;
+    color: #ffffff;
+    font-size: 16;
+    child-space: auto;
     cursor: hand;
 }
 
@@ -237,64 +278,109 @@
     background-color: #f55350;
 }
 
-.btn-record:active {
-    background-color: #c62828;
-}
-
 .btn-export {
     width: 1s;
     height: 32px;
-    background-color: #2a2a38;
+    background-color: #1a1a28;
     border-width: 1px;
-    border-color: #4a9eff;
-    corner-radius: 4px;
-    alignment: center;
-    cursor: hand;
-    color: #4a9eff;
+    border-color: #333344;
+    corner-radius: 5px;
+    color: #666666;
     font-size: 12;
-    margin-left: 12px;
-    margin-right: 12px;
-    margin-top: 4px;
+    child-space: auto;
+    cursor: hand;
 }
 
 .btn-export:hover {
-    background-color: #1a2a48;
+    border-color: #4a9eff;
+    color: #4a9eff;
 }
 
 .btn-cancel {
+    width: 1s;
+    height: 32px;
     background-color: #1a1a28;
-    border-color: #333333;
     border-width: 1px;
+    border-color: #333344;
     corner-radius: 6px;
     color: #888888;
     font-size: 12;
-    child-space: 6px;
+    child-space: auto;
+    cursor: hand;
 }
 
-/* ------------------------------------------------------------------ */
-/* PROGRESS                                                             */
-/* ------------------------------------------------------------------ */
-
-.progress-text {
-    color: #888888;
-    font-size: 12;
+.btn-cancel:hover {
+    border-color: #666666;
+    color: #cccccc;
 }
 
 /* ------------------------------------------------------------------ */
 /* IDLE STATE                                                           */
 /* ------------------------------------------------------------------ */
 
-.idle-text {
-    color: #888888;
-    font-size: 16;
-    width: 1s;
-    height: 1s;
-    alignment: center;
+.idle-heading {
+    color: #444444;
+    font-size: 14;
+    height: auto;
+    child-space: auto;
 }
 
-.idle-subtext {
+.idle-summary {
+    color: #333333;
+    font-size: 12;
+    height: auto;
+    child-space: auto;
+}
+
+.idle-content {
+    width: 1s;
+    height: auto;
+    row-between: 8px;
+    child-left: auto;
+    child-right: auto;
+}
+
+/* ------------------------------------------------------------------ */
+/* ARMED STATE                                                          */
+/* ------------------------------------------------------------------ */
+
+.armed-heading {
+    color: #888888;
+    font-size: 14;
+    height: auto;
+    child-space: auto;
+}
+
+.armed-content {
+    width: 1s;
+    height: auto;
+    row-between: 12px;
+}
+
+/* ------------------------------------------------------------------ */
+/* PROGRESS                                                             */
+/* ------------------------------------------------------------------ */
+
+.progress-bar-row {
+    width: 1s;
+    height: auto;
+    col-between: 10px;
+}
+
+.progress-count {
+    font-size: 12;
+    color: #cccccc;
+    height: auto;
+    child-top: auto;
+    child-bottom: auto;
+}
+
+.progress-pct {
+    font-size: 12;
     color: #555555;
-    font-size: 13;
+    height: auto;
+    child-top: auto;
+    child-bottom: auto;
 }
 
 /* ------------------------------------------------------------------ */
@@ -302,69 +388,17 @@
 /* ------------------------------------------------------------------ */
 
 .error-banner {
+    width: 1s;
+    height: auto;
     background-color: #2a1015;
     border-color: #e53935;
     border-width: 1px;
     corner-radius: 6px;
-    child-space: 8px;
+    child-left: 12px;
+    child-right: 12px;
+    child-top: 8px;
+    child-bottom: 8px;
     col-between: 8px;
-}
-
-/* ------------------------------------------------------------------ */
-/* METERS                                                               */
-/* ------------------------------------------------------------------ */
-
-.meter-row {
-    col-between: 6px;
-    height: auto;
-}
-
-/* ------------------------------------------------------------------ */
-/* IDLE / ARMED / RECORDING STATE CLASSES                              */
-/* ------------------------------------------------------------------ */
-
-.idle-heading {
-    font-size: 18;
-    color: #cccccc;
-}
-
-.idle-summary {
-    font-size: 12;
-    color: #666666;
-}
-
-.idle-content {
-    row-between: 8px;
-    child-space: auto;
-}
-
-.armed-heading {
-    font-size: 14;
-    color: #888888;
-}
-
-.armed-content {
-    row-between: 12px;
-    child-space: auto;
-}
-
-.note-display {
-    col-between: 10px;
-}
-
-.progress-bar-row {
-    col-between: 10px;
-    height: auto;
-}
-
-.progress-count {
-    font-size: 12;
-    color: #cccccc;
-}
-
-.progress-pct {
-    font-size: 12;
-    color: #888888;
 }
 
 /* ------------------------------------------------------------------ */
@@ -372,39 +406,42 @@
 /* ------------------------------------------------------------------ */
 
 .review-content {
-    row-between: 12px;
     width: 1s;
     height: auto;
+    row-between: 12px;
 }
 
 .review-heading {
     font-size: 20;
     color: #ffffff;
+    height: auto;
 }
 
 .review-summary {
     font-size: 13;
     color: #888888;
+    height: auto;
 }
 
 .review-controls {
-    col-between: 8px;
     height: auto;
+    col-between: 8px;
 }
 
 .review-actions {
-    col-between: 8px;
     height: auto;
+    col-between: 8px;
 }
 
 .btn-play {
+    height: 32px;
     background-color: #28c840;
     color: #ffffff;
     corner-radius: 6px;
     font-size: 13;
-    child-space: 8px;
-    padding-left: 16px;
-    padding-right: 16px;
+    child-space: auto;
+    child-left: 16px;
+    child-right: 16px;
     cursor: hand;
 }
 
@@ -412,25 +449,18 @@
     background-color: #32d94e;
 }
 
-.btn-play:active {
-    background-color: #1faa32;
-}
-
 .btn-stop {
+    height: 32px;
     background-color: #333333;
     color: #cccccc;
     corner-radius: 6px;
     font-size: 13;
-    child-space: 8px;
-    padding-left: 16px;
-    padding-right: 16px;
+    child-space: auto;
+    child-left: 16px;
+    child-right: 16px;
     cursor: hand;
 }
 
 .btn-stop:hover {
     background-color: #444444;
-}
-
-.btn-stop:active {
-    background-color: #222222;
 }

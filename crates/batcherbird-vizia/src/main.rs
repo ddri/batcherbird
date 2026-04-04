@@ -27,7 +27,9 @@ fn main() -> Result<(), ApplicationError> {
         HStack::new(cx, |cx| {
             sidebar(cx);
             stage(cx);
-        });
+        })
+        .width(Stretch(1.0))
+        .height(Stretch(1.0));
     })
     .title("BatcherBird")
     .inner_size((900, 550))

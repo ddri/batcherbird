@@ -116,7 +116,7 @@ pub fn sidebar(cx: &mut Context) {
                 })
                 .class("field-box field-box-interactive");
             })
-            .gap(Pixels(8.0));
+            .class("field-row");
 
             HStack::new(cx, |cx| {
                 // LAYERS
@@ -149,7 +149,7 @@ pub fn sidebar(cx: &mut Context) {
                 })
                 .class("field-box field-box-interactive");
             })
-            .gap(Pixels(8.0));
+            .class("field-row");
         })
         .class("sidebar-section");
 
