@@ -2,20 +2,36 @@ use crate::app_data::AppData;
 use crate::app_event::AppEvent;
 use vizia::prelude::*;
 
-/// Small +/- button helper
 fn increment_button(cx: &mut Context, label: &str, event: AppEvent) {
     Button::new(cx, |cx| Label::new(cx, label))
+        .width(Pixels(22.0))
+        .height(Pixels(22.0))
         .class("btn-sm")
         .on_press(move |cx| cx.emit(event.clone()));
 }
 
+fn field_box(cx: &mut Context, label_text: &str, content: impl FnOnce(&mut Context)) {
+    VStack::new(cx, |cx| {
+        Label::new(cx, label_text).class("field-label");
+        content(cx);
+    })
+    .width(Stretch(1.0))
+    .height(Auto)
+    .background_color(Color::from("#161620"))
+    .border_width(Pixels(1.0))
+    .border_color(Color::from("#252530"))
+    .corner_radius(Pixels(4.0))
+    .padding(Pixels(6.0))
+    .vertical_gap(Pixels(2.0));
+}
+
 pub fn sidebar(cx: &mut Context) {
     VStack::new(cx, |cx| {
-        // DEVICES section
+        // ---- DEVICES ----
         VStack::new(cx, |cx| {
             Label::new(cx, "DEVICES").class("sidebar-label");
 
-            // MIDI device row
+            // MIDI Out
             VStack::new(cx, |cx| {
                 Label::new(cx, "MIDI Out").class("device-type");
                 HStack::new(cx, |cx| {
@@ -37,18 +53,23 @@ pub fn sidebar(cx: &mut Context) {
                     Binding::new(cx, AppData::midi_connected, |cx, connected| {
                         let connected = connected.get(cx);
                         let dot = Element::new(cx)
-                            .class("signal-dot")
-                            .size(Pixels(7.0))
-                            .corner_radius(Percentage(50.0));
-                        if !connected {
-                            dot.class("disconnected");
-                        }
+                            .width(Pixels(7.0))
+                            .height(Pixels(7.0))
+                            .corner_radius(Percentage(50.0))
+                            .background_color(if connected {
+                                Color::from("#28c840")
+                            } else {
+                                Color::from("#555555")
+                            });
                     });
-                });
+                })
+                .height(Auto)
+                .horizontal_gap(Pixels(6.0));
             })
-            .class("device-row");
+            .height(Auto)
+            .vertical_gap(Pixels(2.0));
 
-            // Audio input row
+            // Audio In
             VStack::new(cx, |cx| {
                 Label::new(cx, "Audio In").class("device-type");
                 HStack::new(cx, |cx| {
@@ -70,71 +91,87 @@ pub fn sidebar(cx: &mut Context) {
                     Binding::new(cx, AppData::audio_connected, |cx, connected| {
                         let connected = connected.get(cx);
                         let dot = Element::new(cx)
-                            .class("signal-dot")
-                            .size(Pixels(7.0))
-                            .corner_radius(Percentage(50.0));
-                        if !connected {
-                            dot.class("disconnected");
-                        }
+                            .width(Pixels(7.0))
+                            .height(Pixels(7.0))
+                            .corner_radius(Percentage(50.0))
+                            .background_color(if connected {
+                                Color::from("#28c840")
+                            } else {
+                                Color::from("#555555")
+                            });
                     });
-                });
+                })
+                .height(Auto)
+                .horizontal_gap(Pixels(6.0));
             })
-            .class("device-row");
+            .height(Auto)
+            .vertical_gap(Pixels(2.0));
         })
-        .class("sidebar-section");
+        .width(Stretch(1.0))
+        .height(Auto)
+        .padding(Pixels(14.0))
+        .vertical_gap(Pixels(10.0));
 
-        Element::new(cx).class("divider");
+        Element::new(cx)
+            .width(Stretch(1.0))
+            .height(Pixels(1.0))
+            .background_color(Color::from("#222230"));
 
-        // SAMPLING section
+        // ---- SAMPLING ----
         VStack::new(cx, |cx| {
             Label::new(cx, "SAMPLING").class("sidebar-label");
 
+            // START / END row
             HStack::new(cx, |cx| {
-                // START note
-                VStack::new(cx, |cx| {
-                    Label::new(cx, "START").class("field-label");
+                field_box(cx, "START", |cx| {
                     HStack::new(cx, |cx| {
                         increment_button(cx, "-", AppEvent::DecrementStartNote);
                         Label::new(cx, AppData::start_note.map(|n: &u8| AppData::note_name(*n)))
-                            .class("field-value");
+                            .class("field-value")
+                            .width(Stretch(1.0))
+                            .alignment(Alignment::Center);
                         increment_button(cx, "+", AppEvent::IncrementStartNote);
                     })
-                    .class("field-controls");
-                })
-                .class("field-box field-box-interactive");
+                    .height(Auto)
+                    .horizontal_gap(Pixels(4.0))
+                    .alignment(Alignment::Center);
+                });
 
-                // END note
-                VStack::new(cx, |cx| {
-                    Label::new(cx, "END").class("field-label");
+                field_box(cx, "END", |cx| {
                     HStack::new(cx, |cx| {
                         increment_button(cx, "-", AppEvent::DecrementEndNote);
                         Label::new(cx, AppData::end_note.map(|n: &u8| AppData::note_name(*n)))
-                            .class("field-value");
+                            .class("field-value")
+                            .width(Stretch(1.0))
+                            .alignment(Alignment::Center);
                         increment_button(cx, "+", AppEvent::IncrementEndNote);
                     })
-                    .class("field-controls");
-                })
-                .class("field-box field-box-interactive");
+                    .height(Auto)
+                    .horizontal_gap(Pixels(4.0))
+                    .alignment(Alignment::Center);
+                });
             })
-            .class("field-row");
+            .width(Stretch(1.0))
+            .height(Auto)
+            .horizontal_gap(Pixels(8.0));
 
+            // LAYERS / DURATION row
             HStack::new(cx, |cx| {
-                // LAYERS
-                VStack::new(cx, |cx| {
-                    Label::new(cx, "LAYERS").class("field-label");
+                field_box(cx, "LAYERS", |cx| {
                     HStack::new(cx, |cx| {
                         increment_button(cx, "-", AppEvent::DecrementVelocityLayers);
                         Label::new(cx, AppData::velocity_layers.map(|n: &u8| n.to_string()))
-                            .class("field-value");
+                            .class("field-value")
+                            .width(Stretch(1.0))
+                            .alignment(Alignment::Center);
                         increment_button(cx, "+", AppEvent::IncrementVelocityLayers);
                     })
-                    .class("field-controls");
-                })
-                .class("field-box field-box-interactive");
+                    .height(Auto)
+                    .horizontal_gap(Pixels(4.0))
+                    .alignment(Alignment::Center);
+                });
 
-                // DURATION
-                VStack::new(cx, |cx| {
-                    Label::new(cx, "DURATION").class("field-label");
+                field_box(cx, "DURATION", |cx| {
                     HStack::new(cx, |cx| {
                         increment_button(cx, "-", AppEvent::DecrementDuration);
                         Label::new(
@@ -142,38 +179,42 @@ pub fn sidebar(cx: &mut Context) {
                             AppData::note_duration_ms
                                 .map(|ms: &u32| format!("{:.1}s", *ms as f32 / 1000.0)),
                         )
-                        .class("field-value");
+                        .class("field-value")
+                        .width(Stretch(1.0))
+                        .alignment(Alignment::Center);
                         increment_button(cx, "+", AppEvent::IncrementDuration);
                     })
-                    .class("field-controls");
-                })
-                .class("field-box field-box-interactive");
+                    .height(Auto)
+                    .horizontal_gap(Pixels(4.0))
+                    .alignment(Alignment::Center);
+                });
             })
-            .class("field-row");
+            .width(Stretch(1.0))
+            .height(Auto)
+            .horizontal_gap(Pixels(8.0));
         })
-        .class("sidebar-section");
+        .width(Stretch(1.0))
+        .height(Auto)
+        .padding(Pixels(14.0))
+        .vertical_gap(Pixels(10.0));
 
-        Element::new(cx).class("divider");
+        Element::new(cx)
+            .width(Stretch(1.0))
+            .height(Pixels(1.0))
+            .background_color(Color::from("#222230"));
 
-        // EXPORT section
+        // ---- EXPORT ----
         VStack::new(cx, |cx| {
             Label::new(cx, "EXPORT").class("sidebar-label");
 
-            // FORMAT — click to cycle
-            VStack::new(cx, |cx| {
-                Label::new(cx, "FORMAT").class("field-label");
+            field_box(cx, "FORMAT", |cx| {
                 Label::new(cx, AppData::export_format_display)
                     .class("field-value")
                     .cursor(CursorIcon::Hand)
                     .on_press(|cx| cx.emit(AppEvent::CycleExportFormat));
-            })
-            .class("field-box field-box-interactive")
-            .cursor(CursorIcon::Hand)
-            .on_press(|cx| cx.emit(AppEvent::CycleExportFormat));
+            });
 
-            // OUTPUT directory
-            VStack::new(cx, |cx| {
-                Label::new(cx, "OUTPUT").class("field-label");
+            field_box(cx, "OUTPUT", |cx| {
                 Label::new(
                     cx,
                     AppData::output_directory.map(|p: &std::path::PathBuf| {
@@ -182,17 +223,29 @@ pub fn sidebar(cx: &mut Context) {
                             .unwrap_or_else(|| p.to_string_lossy().to_string())
                     }),
                 )
-                .class("field-value");
-            })
-            .class("field-box")
-            .cursor(CursorIcon::Hand)
-            .on_press(|cx| cx.emit(AppEvent::SelectOutputDirectory));
+                .class("field-value")
+                .cursor(CursorIcon::Hand)
+                .on_press(|cx| cx.emit(AppEvent::SelectOutputDirectory));
+            });
         })
-        .class("sidebar-section");
+        .width(Stretch(1.0))
+        .height(Auto)
+        .padding(Pixels(14.0))
+        .vertical_gap(Pixels(10.0));
 
+        // Spacer to push export button to bottom
+        Element::new(cx).height(Stretch(1.0));
+
+        // Export button
         Button::new(cx, |cx| Label::new(cx, "Export All"))
             .class("btn-export")
+            .height(Pixels(32.0))
+            .left(Pixels(14.0))
+            .right(Pixels(14.0))
+            .bottom(Pixels(14.0))
             .on_press(|cx| cx.emit(AppEvent::ExportAll));
     })
-    .class("sidebar");
+    .width(Pixels(220.0))
+    .height(Stretch(1.0))
+    .background_color(Color::from("#0e0e15"));
 }
