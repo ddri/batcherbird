@@ -357,7 +357,7 @@ impl LockFreeRecorder {
                     sample_count += data.len() as u64;
                     // ✅ No mutex locks, no memory allocation, no blocking operations
                 },
-                |err| eprintln!("Audio input error: {}", err),
+                |err| tracing::error!("Audio input error: {}", err),
                 None,
             )
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to build F32 stream: {}", e)))?;
@@ -390,7 +390,7 @@ impl LockFreeRecorder {
                         }
                     }
                 },
-                |err| eprintln!("Audio input error: {}", err),
+                |err| tracing::error!("Audio input error: {}", err),
                 None,
             )
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to build I16 stream: {}", e)))?;
@@ -423,7 +423,7 @@ impl LockFreeRecorder {
                         }
                     }
                 },
-                |err| eprintln!("Audio input error: {}", err),
+                |err| tracing::error!("Audio input error: {}", err),
                 None,
             )
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to build U16 stream: {}", e)))?;

@@ -100,8 +100,8 @@ impl LoopDetector {
         let best_candidate = evaluated_candidates.first().cloned();
 
         // If no candidates found through normal means, create a basic fallback loop
-        let (final_candidate, success) =
-            if best_candidate.is_none() || evaluated_candidates.is_empty() {
+        let (final_candidate, success) = match best_candidate {
+            None => {
                 let fallback_start = audio_data.len() / 4; // Start at 25%
                 let fallback_end = (audio_data.len() * 3) / 4; // End at 75%
                 let fallback_candidate = LoopCandidate {
@@ -113,11 +113,12 @@ impl LoopDetector {
                     correlation: 0.3,
                 };
                 (Some(fallback_candidate), true)
-            } else {
-                let candidate = best_candidate.unwrap();
+            }
+            Some(candidate) => {
                 // ALWAYS SUCCESS - even if quality is low, user can edit manually
                 (Some(candidate), true)
-            };
+            }
+        };
 
         LoopDetectionResult {
             success,

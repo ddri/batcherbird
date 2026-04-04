@@ -67,11 +67,3 @@ pub use quality_validation::{
     QualityValidationConfig, RecommendationSeverity, ValidationResult, ValidationStatus,
 };
 pub use sampler::{AudioLevels, LevelMeterState};
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}

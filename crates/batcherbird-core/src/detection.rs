@@ -103,14 +103,15 @@ pub struct SampleDetector {
     config: DetectionConfig,
 }
 
+impl Default for SampleDetector {
+    fn default() -> Self {
+        Self::new(DetectionConfig::default())
+    }
+}
+
 impl SampleDetector {
     pub fn new(config: DetectionConfig) -> Self {
         Self { config }
-    }
-
-    /// Create detector with default settings
-    pub fn default() -> Self {
-        Self::new(DetectionConfig::default())
     }
 
     /// Analyze audio and detect sample boundaries

@@ -8,7 +8,7 @@ use crate::professional_meters::{ProfessionalMeterEngine, ProfessionalMeterReadi
 use crate::{BatcherbirdError, Result};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use midir::MidiOutputConnection;
-use rtrb::{Consumer, Producer, RingBuffer};
+use rtrb::{Consumer, RingBuffer};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -343,7 +343,7 @@ impl SamplingEngine {
                                 }
                             }
                         },
-                        |err| eprintln!("Audio input error: {}", err),
+                        |err| tracing::error!("Audio input error: {}", err),
                         None,
                     )
                     .map_err(|e| {
@@ -392,7 +392,7 @@ impl SamplingEngine {
                                     data.fill(0.0);
                                 }
                             },
-                            |err| eprintln!("Audio output error: {}", err),
+                            |err| tracing::error!("Audio output error: {}", err),
                             None,
                         )
                         .map_err(|e| {
@@ -440,7 +440,7 @@ impl SamplingEngine {
                             let levels = level_detector.process_samples(data);
                             level_state_clone.update_levels(levels);
                         },
-                        |err| eprintln!("Audio monitoring error: {}", err),
+                        |err| tracing::error!("Audio monitoring error: {}", err),
                         None,
                     )
                     .map_err(|e| {
@@ -464,7 +464,7 @@ impl SamplingEngine {
                             let levels = level_detector.process_samples(&f32_samples);
                             level_state_clone.update_levels(levels);
                         },
-                        |err| eprintln!("Audio monitoring error: {}", err),
+                        |err| tracing::error!("Audio monitoring error: {}", err),
                         None,
                     )
                     .map_err(|e| {
@@ -488,7 +488,7 @@ impl SamplingEngine {
                             let levels = level_detector.process_samples(&f32_samples);
                             level_state_clone.update_levels(levels);
                         },
-                        |err| eprintln!("Audio monitoring error: {}", err),
+                        |err| tracing::error!("Audio monitoring error: {}", err),
                         None,
                     )
                     .map_err(|e| {
@@ -579,497 +579,6 @@ impl SamplingEngine {
         Ok(viz_consumer)
     }
 
-    /// DEPRECATED: Legacy mutex-based implementation (violates real-time audio principles)
-    /// Use sample_single_note_lock_free() instead for professional-grade recording
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use sample_single_note_lock_free() for professional audio quality"
-    )]
-    async fn sample_single_note_async(
-        &self,
-        midi_conn: &mut MidiOutputConnection,
-        note: u8,
-    ) -> Result<Sample> {
-        let _total_duration = self.config.pre_delay_ms
-            + self.config.note_duration_ms
-            + self.config.release_time_ms
-            + self.config.post_delay_ms;
-
-        // Start recording first
-        let audio_samples = Arc::new(Mutex::new(Vec::new()));
-        let recording_complete = Arc::new(Mutex::new(false));
-        let samples_clone = audio_samples.clone();
-        let complete_clone = recording_complete.clone();
-
-        let device = self.audio_manager.get_default_input_device()?;
-        let config = device
-            .default_input_config()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
-
-        let sample_rate = config.sample_rate().0;
-        let channels = config.channels();
-
-        // Build recording stream
-        let stream =
-            self.build_recording_stream(&device, &config, samples_clone, complete_clone, None)?;
-
-        // Start recording
-        stream
-            .play()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to start stream: {}", e)))?;
-
-        let start_time = Instant::now();
-
-        // Pre-delay
-        if self.config.pre_delay_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(self.config.pre_delay_ms)).await;
-        }
-
-        // Safety: Clear any stuck notes on this channel before starting
-        MidiManager::send_channel_panic(midi_conn, self.config.midi_channel)?;
-
-        // Brief delay after panic to ensure hardware processes it
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        // Send MIDI note on
-        let midi_start = Instant::now();
-        MidiManager::send_note_on(
-            midi_conn,
-            self.config.midi_channel,
-            note,
-            self.config.velocity,
-        )?;
-
-        // Wait for note duration
-        tokio::time::sleep(Duration::from_millis(self.config.note_duration_ms)).await;
-
-        // Send MIDI note off
-        MidiManager::send_note_off(
-            midi_conn,
-            self.config.midi_channel,
-            note,
-            self.config.velocity,
-        )?;
-        let midi_timing = midi_start.elapsed();
-
-        // Wait for release
-        if self.config.release_time_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(self.config.release_time_ms)).await;
-        }
-
-        // Post delay
-        if self.config.post_delay_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(self.config.post_delay_ms)).await;
-        }
-
-        // Stop recording
-        {
-            let mut complete = recording_complete.lock().unwrap();
-            *complete = true;
-        }
-        stream
-            .pause()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to stop stream: {}", e)))?;
-
-        let audio_timing = start_time.elapsed();
-        let audio_data = audio_samples.lock().unwrap().clone();
-
-        Ok(Sample {
-            note,
-            velocity: self.config.velocity,
-            audio_data,
-            sample_rate,
-            channels,
-            recorded_at: std::time::SystemTime::now(),
-            midi_timing,
-            audio_timing,
-        })
-    }
-
-    /// DEPRECATED: Legacy mutex-based implementation with visualization (violates real-time audio principles)
-    /// Use sample_single_note_with_viz_blocking() which uses lock-free recording internally
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use lock-free visualization approach in blocking method"
-    )]
-    async fn sample_single_note_with_viz_async(
-        &self,
-        midi_conn: &mut MidiOutputConnection,
-        note: u8,
-    ) -> Result<(Sample, Consumer<VizChunk>)> {
-        // Create visualization ring buffer
-        let (viz_producer, viz_consumer) = RingBuffer::<VizChunk>::new(VIZ_RING_BUFFER_SIZE);
-
-        let _total_duration = self.config.pre_delay_ms
-            + self.config.note_duration_ms
-            + self.config.release_time_ms
-            + self.config.post_delay_ms;
-
-        // Start recording first
-        let audio_samples = Arc::new(Mutex::new(Vec::new()));
-        let recording_complete = Arc::new(Mutex::new(false));
-        let samples_clone = audio_samples.clone();
-        let complete_clone = recording_complete.clone();
-
-        let device = self.audio_manager.get_default_input_device()?;
-        let config = device
-            .default_input_config()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
-
-        let sample_rate = config.sample_rate().0;
-        let channels = config.channels();
-
-        // Build recording stream with visualization
-        let stream = self.build_recording_stream(
-            &device,
-            &config,
-            samples_clone,
-            complete_clone,
-            Some(viz_producer),
-        )?;
-
-        // Start recording
-        stream
-            .play()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to start stream: {}", e)))?;
-
-        let start_time = Instant::now();
-
-        // Pre-delay
-        if self.config.pre_delay_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(self.config.pre_delay_ms)).await;
-        }
-
-        // Safety: Clear any stuck notes on this channel before starting
-        MidiManager::send_channel_panic(midi_conn, self.config.midi_channel)?;
-
-        // Brief delay after panic to ensure hardware processes it
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        // Send MIDI note on
-        let midi_start = Instant::now();
-        MidiManager::send_note_on(
-            midi_conn,
-            self.config.midi_channel,
-            note,
-            self.config.velocity,
-        )?;
-
-        // Wait for note duration
-        tokio::time::sleep(Duration::from_millis(self.config.note_duration_ms)).await;
-
-        // Send MIDI note off
-        MidiManager::send_note_off(
-            midi_conn,
-            self.config.midi_channel,
-            note,
-            self.config.velocity,
-        )?;
-        let midi_timing = midi_start.elapsed();
-
-        // Wait for release
-        if self.config.release_time_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(self.config.release_time_ms)).await;
-        }
-
-        // Post delay
-        if self.config.post_delay_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(self.config.post_delay_ms)).await;
-        }
-
-        // Stop recording
-        {
-            let mut complete = recording_complete.lock().unwrap();
-            *complete = true;
-        }
-        stream
-            .pause()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to stop stream: {}", e)))?;
-
-        let audio_timing = start_time.elapsed();
-        let audio_data = audio_samples.lock().unwrap().clone();
-
-        let sample = Sample {
-            note,
-            velocity: self.config.velocity,
-            audio_data,
-            sample_rate,
-            channels,
-            recorded_at: std::time::SystemTime::now(),
-            midi_timing,
-            audio_timing,
-        };
-
-        Ok((sample, viz_consumer))
-    }
-
-    /// DEPRECATED: Legacy mutex-based stream builder (violates real-time audio principles)
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use LockFreeRecorder.build_lock_free_stream() for professional audio"
-    )]
-    fn build_recording_stream(
-        &self,
-        device: &cpal::Device,
-        config: &cpal::SupportedStreamConfig,
-        samples: Arc<Mutex<Vec<f32>>>,
-        complete: Arc<Mutex<bool>>,
-        viz_producer: Option<Producer<VizChunk>>,
-    ) -> Result<cpal::Stream> {
-        let level_state = Arc::clone(&self.level_meter_state);
-        let sample_rate = 44100; // Use our standard sample rate
-        use cpal::SampleFormat;
-
-        let stream_config = AudioManager::get_standard_stream_config();
-
-        let stream = match config.sample_format() {
-            SampleFormat::F32 => {
-                let level_state_clone = Arc::clone(&level_state);
-                let diagnostics_clone = Arc::clone(&self.audio_diagnostics);
-                let mut level_detector = AudioLevelDetector::new(sample_rate);
-                let mut viz_producer_moved = viz_producer;
-                let mut sample_timestamp = 0u64;
-
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                            // 🔍 DIAGNOSTIC: Start timing this audio callback
-                            let _callback_timer = diagnostics_clone.start_callback_timing();
-
-                            // Professional level detection in audio thread (✅ lock-free)
-                            let levels = level_detector.process_samples(data);
-                            level_state_clone.update_levels(levels);
-
-                            // Push visualization data to ring buffer (✅ lock-free, never blocks)
-                            if let Some(ref mut producer) = viz_producer_moved {
-                                let viz_chunk = VizChunk::from_samples(data, sample_timestamp);
-                                match producer.push(viz_chunk) {
-                                    Ok(_) => {}
-                                    Err(_) => {
-                                        // 🔍 DIAGNOSTIC: Record buffer overflow
-                                        diagnostics_clone.record_buffer_overflow();
-                                    }
-                                }
-                            }
-                            sample_timestamp += data.len() as u64;
-
-                            // ❌ PROFESSIONAL AUDIO VIOLATION: Blocking operations in audio thread
-                            // This code violates real-time audio programming principles!
-
-                            // 🔍 DIAGNOSTIC: Record lock attempt for samples
-                            let lock_timer1 = diagnostics_clone.record_lock_attempt();
-                            let audio_samples_result = samples.try_lock();
-                            match audio_samples_result {
-                                Ok(mut audio_samples) => {
-                                    // 🔍 DIAGNOSTIC: Record lock attempt for complete flag
-                                    let lock_timer2 = diagnostics_clone.record_lock_attempt();
-                                    let recording_complete_result = complete.try_lock();
-                                    match recording_complete_result {
-                                        Ok(recording_complete) => {
-                                            if !*recording_complete {
-                                                // 🔍 DIAGNOSTIC: Record memory allocation violation
-                                                diagnostics_clone.record_memory_allocation();
-                                                audio_samples.extend_from_slice(data);
-                                            }
-                                        }
-                                        Err(_) => {
-                                            // 🔍 DIAGNOSTIC: Lock contention detected
-                                            lock_timer2.record_contention();
-                                            diagnostics_clone.record_blocking_operation();
-                                        }
-                                    }
-                                }
-                                Err(_) => {
-                                    // 🔍 DIAGNOSTIC: Lock contention detected
-                                    lock_timer1.record_contention();
-                                    diagnostics_clone.record_blocking_operation();
-                                }
-                            }
-                        },
-                        |err| eprintln!("Audio input error: {}", err),
-                        None,
-                    )
-                    .map_err(|e| {
-                        BatcherbirdError::Audio(format!("Failed to build input stream: {}", e))
-                    })?
-            }
-            SampleFormat::I16 => {
-                let level_state_clone = Arc::clone(&level_state);
-                let diagnostics_clone = Arc::clone(&self.audio_diagnostics);
-                let mut level_detector = AudioLevelDetector::new(sample_rate);
-                let mut viz_producer_moved = viz_producer;
-                let mut sample_timestamp = 0u64;
-
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                            // 🔍 DIAGNOSTIC: Start timing this audio callback
-                            let _callback_timer = diagnostics_clone.start_callback_timing();
-
-                            // 🔍 DIAGNOSTIC: Record memory allocation violation (Vec::collect)
-                            diagnostics_clone.record_memory_allocation();
-
-                            // Convert to f32 for processing
-                            let f32_samples: Vec<f32> = data
-                                .iter()
-                                .map(|&sample| sample as f32 / i16::MAX as f32)
-                                .collect();
-
-                            // Professional level detection in audio thread (✅ lock-free)
-                            let levels = level_detector.process_samples(&f32_samples);
-                            level_state_clone.update_levels(levels);
-
-                            // Push visualization data to ring buffer (✅ lock-free, never blocks)
-                            if let Some(ref mut producer) = viz_producer_moved {
-                                let viz_chunk =
-                                    VizChunk::from_samples(&f32_samples, sample_timestamp);
-                                match producer.push(viz_chunk) {
-                                    Ok(_) => {}
-                                    Err(_) => {
-                                        // 🔍 DIAGNOSTIC: Record buffer overflow
-                                        diagnostics_clone.record_buffer_overflow();
-                                    }
-                                }
-                            }
-                            sample_timestamp += f32_samples.len() as u64;
-
-                            // ❌ PROFESSIONAL AUDIO VIOLATION: Blocking operations in audio thread
-
-                            // 🔍 DIAGNOSTIC: Record lock attempt for samples
-                            let lock_timer1 = diagnostics_clone.record_lock_attempt();
-                            let audio_samples_result = samples.try_lock();
-                            match audio_samples_result {
-                                Ok(mut audio_samples) => {
-                                    // 🔍 DIAGNOSTIC: Record lock attempt for complete flag
-                                    let lock_timer2 = diagnostics_clone.record_lock_attempt();
-                                    let recording_complete_result = complete.try_lock();
-                                    match recording_complete_result {
-                                        Ok(recording_complete) => {
-                                            if !*recording_complete {
-                                                // 🔍 DIAGNOSTIC: Record memory allocation violation
-                                                diagnostics_clone.record_memory_allocation();
-                                                audio_samples.extend(f32_samples);
-                                            }
-                                        }
-                                        Err(_) => {
-                                            // 🔍 DIAGNOSTIC: Lock contention detected
-                                            lock_timer2.record_contention();
-                                            diagnostics_clone.record_blocking_operation();
-                                        }
-                                    }
-                                }
-                                Err(_) => {
-                                    // 🔍 DIAGNOSTIC: Lock contention detected
-                                    lock_timer1.record_contention();
-                                    diagnostics_clone.record_blocking_operation();
-                                }
-                            }
-                        },
-                        |err| eprintln!("Audio input error: {}", err),
-                        None,
-                    )
-                    .map_err(|e| {
-                        BatcherbirdError::Audio(format!("Failed to build input stream: {}", e))
-                    })?
-            }
-            SampleFormat::U16 => {
-                let level_state_clone = Arc::clone(&level_state);
-                let diagnostics_clone = Arc::clone(&self.audio_diagnostics);
-                let mut level_detector = AudioLevelDetector::new(sample_rate);
-                let mut viz_producer_moved = viz_producer;
-                let mut sample_timestamp = 0u64;
-
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                            // 🔍 DIAGNOSTIC: Start timing this audio callback
-                            let _callback_timer = diagnostics_clone.start_callback_timing();
-
-                            // 🔍 DIAGNOSTIC: Record memory allocation violation (Vec::collect)
-                            diagnostics_clone.record_memory_allocation();
-
-                            // Convert to f32 for processing
-                            let f32_samples: Vec<f32> = data
-                                .iter()
-                                .map(|&sample| (sample as f32 - 32768.0) / 32768.0)
-                                .collect();
-
-                            // Professional level detection in audio thread (✅ lock-free)
-                            let levels = level_detector.process_samples(&f32_samples);
-                            level_state_clone.update_levels(levels);
-
-                            // Push visualization data to ring buffer (✅ lock-free, never blocks)
-                            if let Some(ref mut producer) = viz_producer_moved {
-                                let viz_chunk =
-                                    VizChunk::from_samples(&f32_samples, sample_timestamp);
-                                match producer.push(viz_chunk) {
-                                    Ok(_) => {}
-                                    Err(_) => {
-                                        // 🔍 DIAGNOSTIC: Record buffer overflow
-                                        diagnostics_clone.record_buffer_overflow();
-                                    }
-                                }
-                            }
-                            sample_timestamp += f32_samples.len() as u64;
-
-                            // ❌ PROFESSIONAL AUDIO VIOLATION: Blocking operations in audio thread
-
-                            // 🔍 DIAGNOSTIC: Record lock attempt for samples
-                            let lock_timer1 = diagnostics_clone.record_lock_attempt();
-                            let audio_samples_result = samples.try_lock();
-                            match audio_samples_result {
-                                Ok(mut audio_samples) => {
-                                    // 🔍 DIAGNOSTIC: Record lock attempt for complete flag
-                                    let lock_timer2 = diagnostics_clone.record_lock_attempt();
-                                    let recording_complete_result = complete.try_lock();
-                                    match recording_complete_result {
-                                        Ok(recording_complete) => {
-                                            if !*recording_complete {
-                                                // 🔍 DIAGNOSTIC: Record memory allocation violation
-                                                diagnostics_clone.record_memory_allocation();
-                                                audio_samples.extend(f32_samples);
-                                            }
-                                        }
-                                        Err(_) => {
-                                            // 🔍 DIAGNOSTIC: Lock contention detected
-                                            lock_timer2.record_contention();
-                                            diagnostics_clone.record_blocking_operation();
-                                        }
-                                    }
-                                }
-                                Err(_) => {
-                                    // 🔍 DIAGNOSTIC: Lock contention detected
-                                    lock_timer1.record_contention();
-                                    diagnostics_clone.record_blocking_operation();
-                                }
-                            }
-                        },
-                        |err| eprintln!("Audio input error: {}", err),
-                        None,
-                    )
-                    .map_err(|e| {
-                        BatcherbirdError::Audio(format!("Failed to build input stream: {}", e))
-                    })?
-            }
-            _ => {
-                return Err(BatcherbirdError::Audio(format!(
-                    "Unsupported sample format: {:?}",
-                    config.sample_format()
-                )));
-            }
-        };
-
-        Ok(stream)
-    }
-
-    /// DEPRECATED: Legacy persistent stream builder (violates real-time audio principles)  
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use LockFreeRecorder for professional range sampling"
-    )]
     fn build_persistent_recording_stream(
         &self,
         device: &cpal::Device,
@@ -1105,7 +614,7 @@ impl SamplingEngine {
                             }
                             // Stream stays alive but ignores data when recording_active = false
                         },
-                        |err| eprintln!("Persistent stream audio input error: {}", err),
+                        |err| tracing::error!("Persistent stream audio input error: {}", err),
                         None,
                     )
                     .map_err(|e| {
@@ -1140,7 +649,7 @@ impl SamplingEngine {
                                 audio_samples.extend(f32_samples);
                             }
                         },
-                        |err| eprintln!("Persistent stream audio input error: {}", err),
+                        |err| tracing::error!("Persistent stream audio input error: {}", err),
                         None,
                     )
                     .map_err(|e| {
@@ -1175,7 +684,7 @@ impl SamplingEngine {
                                 audio_samples.extend(f32_samples);
                             }
                         },
-                        |err| eprintln!("Persistent stream audio input error: {}", err),
+                        |err| tracing::error!("Persistent stream audio input error: {}", err),
                         None,
                     )
                     .map_err(|e| {
@@ -1448,15 +957,6 @@ impl SamplingEngine {
 
         Ok((sample, recording_stats, performance_report))
     }
-
-    fn note_to_name(note: u8) -> String {
-        let note_names = [
-            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-        ];
-        let octave = (note / 12).saturating_sub(1);
-        let note_name = note_names[(note % 12) as usize];
-        format!("{}{}", note_name, octave)
-    }
 }
 
 impl Sample {
@@ -1493,16 +993,6 @@ impl Sample {
         }
 
         Ok(loop_result)
-    }
-
-    /// Helper method to convert note number to name
-    fn note_to_name(note: u8) -> String {
-        let note_names = [
-            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-        ];
-        let octave = (note / 12).saturating_sub(1);
-        let note_name = note_names[(note % 12) as usize];
-        format!("{}{}", note_name, octave)
     }
 }
 

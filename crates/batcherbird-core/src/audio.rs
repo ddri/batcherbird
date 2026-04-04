@@ -127,7 +127,7 @@ impl AudioManager {
                                 samples.extend_from_slice(data);
                             }
                         },
-                        |err| eprintln!("Audio input error: {}", err),
+                        |err| tracing::error!("Audio input error: {}", err),
                         None,
                     )
                     .map_err(|e| {
@@ -150,7 +150,7 @@ impl AudioManager {
                                 }
                             }
                         },
-                        |err| eprintln!("Audio input error: {}", err),
+                        |err| tracing::error!("Audio input error: {}", err),
                         None,
                     )
                     .map_err(|e| {
@@ -173,7 +173,7 @@ impl AudioManager {
                                 }
                             }
                         },
-                        |err| eprintln!("Audio input error: {}", err),
+                        |err| tracing::error!("Audio input error: {}", err),
                         None,
                     )
                     .map_err(|e| {

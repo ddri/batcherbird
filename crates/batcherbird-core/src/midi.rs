@@ -183,15 +183,6 @@ impl MidiManager {
         let _ = (time_str, msg_type, channel, message);
     }
 
-    fn note_to_name(note: u8) -> String {
-        let note_names = [
-            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-        ];
-        let octave = (note / 12).saturating_sub(1);
-        let note_name = note_names[(note % 12) as usize];
-        format!("{}{}", note_name, octave)
-    }
-
     /// Send MIDI Panic - All Notes Off on all channels
     /// Professional standard for handling stuck notes (like Logic/Ableton's panic button)
     /// Enhanced for vintage synths like DW6000 that need specific timing

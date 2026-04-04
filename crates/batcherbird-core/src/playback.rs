@@ -146,7 +146,7 @@ impl AudioPlayback {
                     playback_position,
                     is_playing,
                 ) {
-                    eprintln!("Audio playback thread error: {}", e);
+                    tracing::error!("Audio playback thread error: {}", e);
                 }
             })
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to spawn audio thread: {}", e)))?;
@@ -306,7 +306,7 @@ impl AudioPlayback {
                                 playback_position.store(position as u64, Ordering::Relaxed);
                             }
                         },
-                        |err| eprintln!("Audio output error: {}", err),
+                        |err| tracing::error!("Audio output error: {}", err),
                         None,
                     )
                     .map_err(|e| {

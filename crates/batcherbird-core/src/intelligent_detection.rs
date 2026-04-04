@@ -372,13 +372,15 @@ pub struct ProfessionalTrimmer {
     config: TrimmingConfig,
 }
 
+impl Default for ProfessionalTrimmer {
+    fn default() -> Self {
+        Self::new(TrimmingConfig::default())
+    }
+}
+
 impl ProfessionalTrimmer {
     pub fn new(config: TrimmingConfig) -> Self {
         Self { config }
-    }
-
-    pub fn default() -> Self {
-        Self::new(TrimmingConfig::default())
     }
 
     /// Apply professional trimming to audio based on detection result
@@ -620,6 +622,12 @@ pub struct IntelligentSampleDetector {
     adaptive_threshold: AdaptiveThreshold,
 }
 
+impl Default for IntelligentSampleDetector {
+    fn default() -> Self {
+        Self::new(IntelligentDetectionConfig::default())
+    }
+}
+
 impl IntelligentSampleDetector {
     pub fn new(config: IntelligentDetectionConfig) -> Self {
         let spectral_flux = SpectralFluxDetector::new(
@@ -644,10 +652,6 @@ impl IntelligentSampleDetector {
         }
     }
 
-    /// Create detector with default intelligent settings
-    pub fn default() -> Self {
-        Self::new(IntelligentDetectionConfig::default())
-    }
 
     /// Create detector optimized for specific synthesizer type
     pub fn for_profile(profile: SynthesizerProfile) -> Self {
