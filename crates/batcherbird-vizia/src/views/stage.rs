@@ -120,12 +120,49 @@ pub fn stage(cx: &mut Context) {
 
         // --- Review content (only when Review) ---
         VStack::new(cx, |cx| {
-            Label::new(cx, "Recording Complete").class("note-name");
-            Label::new(cx, "Samples ready for export").class("idle-subtext");
-            Button::new(cx, |cx| Label::new(cx, "New Session"))
-                .class("btn-arm")
-                .on_press(|cx| cx.emit(AppEvent::Disarm));
+            // Heading
+            Label::new(cx, "Recording Complete").class("review-heading");
+
+            // Summary: how many samples were recorded
+            Binding::new(cx, AppData::recorded_count, |cx, count| {
+                let count = count.get(cx);
+                Label::new(cx, &format!("{} samples recorded", count))
+                    .class("review-summary");
+            });
+
+            // Playback controls
+            HStack::new(cx, |cx| {
+                Binding::new(cx, AppData::is_playing, |cx, playing| {
+                    if playing.get(cx) {
+                        Button::new(cx, |cx| Label::new(cx, "Pause"))
+                            .class("btn-play")
+                            .on_press(|cx| cx.emit(AppEvent::PausePreview));
+                    } else {
+                        Button::new(cx, |cx| Label::new(cx, "Play"))
+                            .class("btn-play")
+                            .on_press(|cx| cx.emit(AppEvent::PlayPreview));
+                    }
+                });
+
+                Button::new(cx, |cx| Label::new(cx, "Stop"))
+                    .class("btn-stop")
+                    .on_press(|cx| cx.emit(AppEvent::StopPreview));
+            })
+            .class("review-controls");
+
+            // Action buttons
+            HStack::new(cx, |cx| {
+                Button::new(cx, |cx| Label::new(cx, "Export All"))
+                    .class("btn-export")
+                    .on_press(|cx| cx.emit(AppEvent::ExportAll));
+
+                Button::new(cx, |cx| Label::new(cx, "New Session"))
+                    .class("btn-cancel")
+                    .on_press(|cx| cx.emit(AppEvent::Disarm));
+            })
+            .class("review-actions");
         })
+        .class("review-content")
         .display(AppData::app_state.map(|s| {
             if *s == AppState::Review {
                 Display::Flex

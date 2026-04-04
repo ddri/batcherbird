@@ -33,6 +33,7 @@ pub struct AppData {
     // Export config
     #[lens(ignore)]
     pub export_format: AudioFormat,
+    pub export_format_display: String,
     pub output_directory: PathBuf,
 
     // App state
@@ -68,6 +69,11 @@ pub struct AppData {
     /// Peak values (0.0-1.0) extracted from viz_chunks for waveform display.
     /// Updated alongside viz_chunks. This field is lensable.
     pub viz_peaks: Vec<f32>,
+
+    // Review state
+    pub recorded_count: u32,
+    pub is_playing: bool,
+    pub playback_position: f64,
 }
 
 impl Default for AppData {
@@ -86,6 +92,7 @@ impl Default for AppData {
             note_duration_ms: 2000,
 
             export_format: AudioFormat::Wav24Bit,
+            export_format_display: "Wav24Bit".to_string(),
             output_directory: dirs::document_dir().unwrap_or_else(|| PathBuf::from(".")),
 
             app_state: AppState::Idle,
@@ -110,6 +117,10 @@ impl Default for AppData {
 
             viz_chunks: Vec::new(),
             viz_peaks: Vec::new(),
+
+            recorded_count: 0,
+            is_playing: false,
+            playback_position: 0.0,
         }
     }
 }
@@ -138,6 +149,26 @@ impl AppData {
         let octave = (note as i8 / 12) - 1;
         let index = (note % 12) as usize;
         format!("{}{}", names[index], octave)
+    }
+
+    pub fn format_display(fmt: &AudioFormat) -> &'static str {
+        match fmt {
+            AudioFormat::Wav16Bit => "Wav16Bit",
+            AudioFormat::Wav24Bit => "Wav24Bit",
+            AudioFormat::Wav32BitFloat => "Wav32Float",
+            AudioFormat::DecentSampler => "DecentSampler",
+            AudioFormat::SFZ => "SFZ",
+        }
+    }
+
+    pub fn next_format(fmt: &AudioFormat) -> AudioFormat {
+        match fmt {
+            AudioFormat::Wav16Bit => AudioFormat::Wav24Bit,
+            AudioFormat::Wav24Bit => AudioFormat::Wav32BitFloat,
+            AudioFormat::Wav32BitFloat => AudioFormat::DecentSampler,
+            AudioFormat::DecentSampler => AudioFormat::SFZ,
+            AudioFormat::SFZ => AudioFormat::Wav16Bit,
+        }
     }
 
     pub fn estimated_duration_secs(&self) -> f32 {
@@ -205,8 +236,76 @@ impl Model for AppData {
             AppEvent::SetEndNote(n) => self.end_note = *n,
             AppEvent::SetVelocityLayers(n) => self.velocity_layers = *n,
             AppEvent::SetDuration(ms) => self.note_duration_ms = *ms,
-            AppEvent::SetExportFormat(fmt) => self.export_format = fmt.clone(),
+            AppEvent::SetExportFormat(fmt) => {
+                self.export_format_display = Self::format_display(fmt).to_string();
+                self.export_format = fmt.clone();
+            }
             AppEvent::SetOutputDirectory(path) => self.output_directory = path.clone(),
+
+            AppEvent::CycleNextMidiDevice => {
+                if !self.midi_devices.is_empty() {
+                    let next = match self.selected_midi_device {
+                        Some(i) => (i + 1) % self.midi_devices.len(),
+                        None => 0,
+                    };
+                    self.selected_midi_device = Some(next);
+                }
+            }
+            AppEvent::CycleNextAudioInput => {
+                if !self.audio_input_devices.is_empty() {
+                    let next = match self.selected_audio_input {
+                        Some(i) => (i + 1) % self.audio_input_devices.len(),
+                        None => 0,
+                    };
+                    self.selected_audio_input = Some(next);
+                }
+            }
+            AppEvent::CycleExportFormat => {
+                let next = Self::next_format(&self.export_format);
+                self.export_format_display = Self::format_display(&next).to_string();
+                self.export_format = next;
+            }
+
+            AppEvent::IncrementStartNote => {
+                if self.start_note < 127 && self.start_note < self.end_note {
+                    self.start_note += 1;
+                }
+            }
+            AppEvent::DecrementStartNote => {
+                if self.start_note > 0 {
+                    self.start_note -= 1;
+                }
+            }
+            AppEvent::IncrementEndNote => {
+                if self.end_note < 127 {
+                    self.end_note += 1;
+                }
+            }
+            AppEvent::DecrementEndNote => {
+                if self.end_note > 0 && self.end_note > self.start_note {
+                    self.end_note -= 1;
+                }
+            }
+            AppEvent::IncrementVelocityLayers => {
+                if self.velocity_layers < 4 {
+                    self.velocity_layers += 1;
+                }
+            }
+            AppEvent::DecrementVelocityLayers => {
+                if self.velocity_layers > 1 {
+                    self.velocity_layers -= 1;
+                }
+            }
+            AppEvent::IncrementDuration => {
+                if self.note_duration_ms < 10000 {
+                    self.note_duration_ms = (self.note_duration_ms + 500).min(10000);
+                }
+            }
+            AppEvent::DecrementDuration => {
+                if self.note_duration_ms > 500 {
+                    self.note_duration_ms = self.note_duration_ms.saturating_sub(500).max(500);
+                }
+            }
 
             AppEvent::Arm => {
                 if self.app_state == AppState::Idle {
@@ -331,7 +430,20 @@ impl Model for AppData {
                 self.notes_total = *total;
             }
             AppEvent::RecordingComplete => {
+                self.recorded_count = self.notes_total;
+                self.is_playing = false;
+                self.playback_position = 0.0;
                 self.app_state = AppState::Review;
+            }
+            AppEvent::PlayPreview => {
+                self.is_playing = true;
+            }
+            AppEvent::StopPreview => {
+                self.is_playing = false;
+                self.playback_position = 0.0;
+            }
+            AppEvent::PausePreview => {
+                self.is_playing = false;
             }
             AppEvent::RecordingError(msg) => {
                 self.app_state = AppState::Idle;

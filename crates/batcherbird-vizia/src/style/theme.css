@@ -328,3 +328,71 @@
     font-size: 12;
     color: #888888;
 }
+
+/* ------------------------------------------------------------------ */
+/* REVIEW STATE                                                         */
+/* ------------------------------------------------------------------ */
+
+.review-content {
+    row-between: 12px;
+    width: 1s;
+    height: auto;
+}
+
+.review-heading {
+    font-size: 20;
+    color: #ffffff;
+}
+
+.review-summary {
+    font-size: 13;
+    color: #888888;
+}
+
+.review-controls {
+    col-between: 8px;
+    height: auto;
+}
+
+.review-actions {
+    col-between: 8px;
+    height: auto;
+}
+
+.btn-play {
+    background-color: #28c840;
+    color: #ffffff;
+    corner-radius: 6px;
+    font-size: 13;
+    child-space: 8px;
+    padding-left: 16px;
+    padding-right: 16px;
+    cursor: hand;
+}
+
+.btn-play:hover {
+    background-color: #32d94e;
+}
+
+.btn-play:active {
+    background-color: #1faa32;
+}
+
+.btn-stop {
+    background-color: #333333;
+    color: #cccccc;
+    corner-radius: 6px;
+    font-size: 13;
+    child-space: 8px;
+    padding-left: 16px;
+    padding-right: 16px;
+    cursor: hand;
+}
+
+.btn-stop:hover {
+    background-color: #444444;
+}
+
+.btn-stop:active {
+    background-color: #222222;
+}

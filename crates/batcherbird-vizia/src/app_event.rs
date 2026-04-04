@@ -8,6 +8,8 @@ pub enum AppEvent {
     RefreshDevices,
     SelectMidiDevice(usize),
     SelectAudioInput(usize),
+    CycleNextMidiDevice,
+    CycleNextAudioInput,
 
     // Config
     SetStartNote(u8),
@@ -17,6 +19,17 @@ pub enum AppEvent {
     SetExportFormat(AudioFormat),
     SetOutputDirectory(PathBuf),
     SelectOutputDirectory,
+    CycleExportFormat,
+
+    // Increment/decrement events
+    IncrementStartNote,
+    DecrementStartNote,
+    IncrementEndNote,
+    DecrementEndNote,
+    IncrementVelocityLayers,
+    DecrementVelocityLayers,
+    IncrementDuration,
+    DecrementDuration,
 
     // Recording lifecycle
     Arm,
@@ -41,6 +54,11 @@ pub enum AppEvent {
     // Playback
     PlaySample(usize),
     StopPlayback,
+
+    // Review preview controls
+    PlayPreview,
+    PausePreview,
+    StopPreview,
 
     // Export
     ExportAll,
