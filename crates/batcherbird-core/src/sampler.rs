@@ -8,8 +8,8 @@ use crate::professional_meters::{ProfessionalMeterEngine, ProfessionalMeterReadi
 use crate::{BatcherbirdError, Result};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use midir::MidiOutputConnection;
-use rtrb::{Consumer, RingBuffer};
-use std::sync::atomic::{AtomicU32, Ordering};
+use rtrb::{Consumer, Producer, RingBuffer};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::Instant;
@@ -583,8 +583,8 @@ impl SamplingEngine {
         &self,
         device: &cpal::Device,
         config: &cpal::SupportedStreamConfig,
-        samples: Arc<Mutex<Vec<f32>>>,
-        recording_active: Arc<Mutex<bool>>,
+        mut producer: Producer<f32>,
+        recording_active: Arc<AtomicBool>,
     ) -> Result<cpal::Stream> {
         let level_state = Arc::clone(&self.level_meter_state);
         let sample_rate = 44100; // Use our standard sample rate
@@ -605,12 +605,14 @@ impl SamplingEngine {
                             let levels = level_detector.process_samples(data);
                             level_state_clone.update_levels(levels);
 
-                            let recording_flag = recording_active.lock().unwrap();
-
-                            // Only collect samples when recording is active
-                            if *recording_flag {
-                                let mut audio_samples = samples.lock().unwrap();
-                                audio_samples.extend_from_slice(data);
+                            // Only collect samples when recording is active (lock-free)
+                            if recording_active.load(Ordering::Acquire) {
+                                for &sample in data {
+                                    if producer.push(sample).is_err() {
+                                        // Ring buffer full - drop samples gracefully
+                                        break;
+                                    }
+                                }
                             }
                             // Stream stays alive but ignores data when recording_active = false
                         },
@@ -642,11 +644,13 @@ impl SamplingEngine {
                             let levels = level_detector.process_samples(&f32_samples);
                             level_state_clone.update_levels(levels);
 
-                            let recording_flag = recording_active.lock().unwrap();
-
-                            if *recording_flag {
-                                let mut audio_samples = samples.lock().unwrap();
-                                audio_samples.extend(f32_samples);
+                            // Only collect samples when recording is active (lock-free)
+                            if recording_active.load(Ordering::Acquire) {
+                                for &sample in f32_samples.iter() {
+                                    if producer.push(sample).is_err() {
+                                        break;
+                                    }
+                                }
                             }
                         },
                         |err| tracing::error!("Persistent stream audio input error: {}", err),
@@ -677,11 +681,13 @@ impl SamplingEngine {
                             let levels = level_detector.process_samples(&f32_samples);
                             level_state_clone.update_levels(levels);
 
-                            let recording_flag = recording_active.lock().unwrap();
-
-                            if *recording_flag {
-                                let mut audio_samples = samples.lock().unwrap();
-                                audio_samples.extend(f32_samples);
+                            // Only collect samples when recording is active (lock-free)
+                            if recording_active.load(Ordering::Acquire) {
+                                for &sample in f32_samples.iter() {
+                                    if producer.push(sample).is_err() {
+                                        break;
+                                    }
+                                }
                             }
                         },
                         |err| tracing::error!("Persistent stream audio input error: {}", err),
@@ -742,18 +748,28 @@ impl SamplingEngine {
         let sample_rate = config.sample_rate().0;
         let channels = config.channels();
 
-        // Shared audio buffer - reused for all notes
-        let audio_samples = Arc::new(Mutex::new(Vec::new()));
-        let recording_active = Arc::new(Mutex::new(false));
-        let samples_clone = audio_samples.clone();
-        let recording_clone = recording_active.clone();
+        // Calculate ring buffer size: enough for the longest single note recording
+        // (pre_delay + note_duration + release + post_delay) * sample_rate * channels
+        let max_note_duration_secs = (self.config.pre_delay_ms
+            + self.config.note_duration_ms
+            + self.config.release_time_ms
+            + self.config.post_delay_ms
+            + 1000) as usize; // +1s safety margin
+        let ring_buffer_size =
+            (sample_rate as usize) * max_note_duration_secs / 1000 * channels as usize;
+        // Ensure minimum buffer size and round up to power of 2 for efficiency
+        let ring_buffer_size = ring_buffer_size.max(44100 * 4);
+
+        let (producer, mut consumer) = RingBuffer::<f32>::new(ring_buffer_size);
+        let recording_active = Arc::new(AtomicBool::new(false));
+        let recording_active_clone = Arc::clone(&recording_active);
 
         // Create ONE stream for entire range (like professional DAWs)
         let stream = self.build_persistent_recording_stream(
             &device,
             &config,
-            samples_clone,
-            recording_clone,
+            producer,
+            recording_active_clone,
         )?;
 
         // Start the persistent stream
@@ -763,17 +779,11 @@ impl SamplingEngine {
 
         // Record each note using the same stream
         for (_index, note) in (start_note..=end_note).enumerate() {
-            // Clear the buffer for this note
-            {
-                let mut buffer = audio_samples.lock().unwrap();
-                buffer.clear();
-            }
+            // Drain any leftover samples from the ring buffer before this note
+            while consumer.pop().is_ok() {}
 
-            // Start recording for this note
-            {
-                let mut recording = recording_active.lock().unwrap();
-                *recording = true;
-            }
+            // Start recording for this note (lock-free)
+            recording_active.store(true, Ordering::Release);
 
             let start_time = Instant::now();
 
@@ -819,19 +829,19 @@ impl SamplingEngine {
                 tokio::time::sleep(Duration::from_millis(self.config.post_delay_ms)).await;
             }
 
-            // Stop recording for this note
-            {
-                let mut recording = recording_active.lock().unwrap();
-                *recording = false;
-            }
+            // Stop recording for this note (lock-free)
+            recording_active.store(false, Ordering::Release);
+
+            // Brief yield to let any in-flight audio callback finish
+            tokio::time::sleep(Duration::from_millis(10)).await;
 
             let audio_timing = start_time.elapsed();
 
-            // Extract recorded audio data
-            let audio_data = {
-                let buffer = audio_samples.lock().unwrap();
-                buffer.clone()
-            };
+            // Drain recorded audio data from ring buffer (non-blocking consumer side)
+            let mut audio_data = Vec::new();
+            while let Ok(sample) = consumer.pop() {
+                audio_data.push(sample);
+            }
 
             // Create sample record
             let sample = Sample {

@@ -551,45 +551,30 @@ impl ProfessionalQualityValidator {
         &self,
         sample: &SampleData,
     ) -> Result<FormatCompatibilityResult> {
-        let mut result = FormatCompatibilityResult::default();
-
         // Validate sample rate
-        result.sample_rate_compatible = matches!(sample.sample_rate, 44100 | 48000 | 88200 | 96000);
-
-        // Validate audio data format (f32 is good)
-        result.file_format_valid = true;
-
-        // Channel count (mono is compatible)
-        result.channel_count_compatible = true;
-
-        // Bit depth (f32 provides excellent bit depth)
-        result.bit_depth_compatible = true;
-
-        // Metadata format
-        result.metadata_format_compatible = !sample.metadata.is_empty();
+        let sample_rate_compatible = matches!(sample.sample_rate, 44100 | 48000 | 88200 | 96000);
 
         // Format-specific scores
         let mut format_scores = HashMap::new();
         format_scores.insert("WAV".to_string(), 1.0);
         format_scores.insert(
             "DecentSampler".to_string(),
-            if result.sample_rate_compatible {
-                1.0
-            } else {
-                0.7
-            },
+            if sample_rate_compatible { 1.0 } else { 0.7 },
         );
         format_scores.insert(
             "SFZ".to_string(),
-            if result.sample_rate_compatible {
-                1.0
-            } else {
-                0.8
-            },
+            if sample_rate_compatible { 1.0 } else { 0.8 },
         );
         format_scores.insert("Kontakt".to_string(), 0.9); // Good compatibility
 
-        result.format_scores = format_scores;
+        let result = FormatCompatibilityResult {
+            sample_rate_compatible,
+            file_format_valid: true,           // f32 is a valid audio data format
+            channel_count_compatible: true,    // mono is compatible
+            bit_depth_compatible: true,        // f32 provides excellent bit depth
+            metadata_format_compatible: !sample.metadata.is_empty(),
+            format_scores,
+        };
 
         Ok(result)
     }
@@ -775,6 +760,7 @@ impl ProfessionalQualityValidator {
 
 /// FFT-based frequency analyzer
 struct FftAnalyzer {
+    #[allow(dead_code)] // Planned for proper FFT-based frequency analysis
     fft_size: usize,
 }
 

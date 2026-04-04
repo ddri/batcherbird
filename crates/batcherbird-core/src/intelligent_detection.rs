@@ -146,8 +146,11 @@ impl IntelligentDetectionConfig {
 /// Spectral flux detector for onset detection
 #[derive(Debug)]
 pub struct SpectralFluxDetector {
+    #[allow(dead_code)] // Planned for full FFT-based implementation
     fft_size: usize,
+    #[allow(dead_code)] // Planned for full FFT-based implementation
     overlap_factor: f32,
+    #[allow(dead_code)] // Planned for full FFT-based implementation
     threshold: f32,
     prev_magnitude: Option<Vec<f32>>,
 }
@@ -198,8 +201,10 @@ impl SpectralFluxDetector {
 /// Phase deviation detector for transient detection
 #[derive(Debug)]
 pub struct PhaseDeviationDetector {
+    #[allow(dead_code)] // Planned for full phase-deviation transient detection
     threshold: f32,
     prev_phases: Option<Vec<f32>>,
+    #[allow(dead_code)] // Planned for full phase-deviation transient detection
     window_size: usize,
 }
 
@@ -593,7 +598,7 @@ impl ProfessionalTrimmer {
         }
 
         // Ensure quality score is between 0 and 1
-        quality_score = quality_score.max(0.0).min(1.0);
+        quality_score = quality_score.clamp(0.0, 1.0);
 
         if quality_score >= 0.8 {
             notes.push("Excellent trimming quality".to_string());

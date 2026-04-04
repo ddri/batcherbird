@@ -390,6 +390,12 @@ pub struct ProfessionalMetadata {
     pub custom_fields: HashMap<String, String>,
 }
 
+impl Default for ProfessionalMetadata {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProfessionalMetadata {
     /// Create new professional metadata container
     pub fn new() -> Self {

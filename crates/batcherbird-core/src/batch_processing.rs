@@ -511,6 +511,7 @@ impl BatchProcessor {
 /// Streaming processor for very large datasets
 pub struct StreamingProcessor {
     batch_processor: BatchProcessor,
+    #[allow(dead_code)] // Used in planned streaming pipeline implementation
     stream_config: StreamConfig,
 }
 

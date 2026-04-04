@@ -284,6 +284,7 @@ impl Default for SimdLevelCalculator {
 pub struct LoudnessProcessor {
     integration_buffer: VecDeque<f32>,
     integration_samples: usize,
+    #[allow(dead_code)] // Planned for EBU R128 filter frequency calculations
     sample_rate: f32,
 }
 
@@ -740,6 +741,7 @@ pub struct ProfessionalMeterEngine {
     peak_detector: PeakHoldDetector,
     lufs_processor: LoudnessProcessor,
     simd_calculator: SimdLevelCalculator,
+    #[allow(dead_code)] // Planned for sample-rate-dependent ballistics reconfiguration
     sample_rate: f32,
 }
 

@@ -231,8 +231,8 @@ impl SampleDetector {
         for i in 0..rms_values.len() {
             // Check if we have enough consecutive windows above threshold
             let mut consecutive_count = 0;
-            for j in i..rms_values.len().min(i + self.config.confirmation_windows) {
-                if rms_values[j] > threshold {
+            for &rms in rms_values[i..rms_values.len().min(i + self.config.confirmation_windows)].iter() {
+                if rms > threshold {
                     consecutive_count += 1;
                 } else {
                     break;

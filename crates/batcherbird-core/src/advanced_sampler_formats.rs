@@ -616,6 +616,7 @@ impl AdvancedSamplerExporter {
 /// DecentSampler preset structure
 #[derive(Debug)]
 struct DecentSamplerPreset {
+    #[allow(dead_code)] // Used in planned XML serialization output
     name: String,
     groups: Vec<SampleGroup>,
     master_volume: f32,

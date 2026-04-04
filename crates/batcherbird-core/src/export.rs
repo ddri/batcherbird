@@ -162,18 +162,18 @@ impl SampleExporter {
 
         // Apply fade in
         if fade_in_samples > 0 && fade_in_samples < len {
-            for i in 0..fade_in_samples.min(len) {
+            for (i, sample) in audio_data.iter_mut().enumerate().take(fade_in_samples.min(len)) {
                 let fade_factor = i as f32 / fade_in_samples as f32;
-                audio_data[i] *= fade_factor;
+                *sample *= fade_factor;
             }
         }
 
         // Apply fade out
         if fade_out_samples > 0 && fade_out_samples < len {
             let fade_start = len.saturating_sub(fade_out_samples);
-            for i in fade_start..len {
+            for (i, sample) in audio_data.iter_mut().enumerate().skip(fade_start).take(len - fade_start) {
                 let fade_factor = (len - i) as f32 / fade_out_samples as f32;
-                audio_data[i] *= fade_factor;
+                *sample *= fade_factor;
             }
         }
 

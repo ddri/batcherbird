@@ -101,10 +101,13 @@ pub struct AdvancedLoopResult {
     pub algorithm_used: String,
 }
 
+/// Cached FFT buffers: forward and inverse complex buffers keyed by block size
+type FftBufferCache = HashMap<usize, (Vec<Complex<f32>>, Vec<Complex<f32>>)>;
+
 /// FFT-based autocorrelation processor using Wiener-Khinchin theorem
 pub struct FftCorrelator {
     planner: FftPlanner<f32>,
-    cache: HashMap<usize, (Vec<Complex<f32>>, Vec<Complex<f32>>)>,
+    cache: FftBufferCache,
 }
 
 impl Default for FftCorrelator {

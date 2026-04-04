@@ -352,9 +352,9 @@ impl EqualPowerCrossfader {
 
         // Check end boundary (should match original fade-in)
         let mut end_error = 0.0;
-        for i in 0..boundary_samples {
+        for (i, &orig) in original_in.iter().enumerate().take(boundary_samples) {
             let crossfade_idx = self.config.length_samples - boundary_samples + i;
-            let diff = crossfaded[crossfade_idx] - original_in[i];
+            let diff = crossfaded[crossfade_idx] - orig;
             end_error += diff * diff;
         }
         end_error = (end_error / boundary_samples as f32).sqrt();
