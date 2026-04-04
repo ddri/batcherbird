@@ -19,7 +19,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -36,6 +36,9 @@ jobs:
 
       - name: Check
         run: cargo check --workspace
+
+      - name: Check formatting
+        run: cargo fmt --check --all
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets
@@ -118,3 +121,49 @@ jobs:
           name: batcherbird-macos-ci
           path: crates/batcherbird-gui/src-tauri/target/release/bundle/dmg/*.dmg
           retention-days: 7
+
+  rust-linux:
+    name: Rust Linux Build (core + vizia)
+    runs-on: ubuntu-latest
+    continue-on-error: true  # Linux support is experimental
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libxdo-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libwayland-dev \
+            libasound2-dev
+
+      - name: Check (core + vizia)
+        run: cargo check -p batcherbird-core -p batcherbird-vizia
+
+      - name: Clippy (core + vizia)
+        run: cargo clippy -p batcherbird-core -p batcherbird-vizia --all-targets
+
+      - name: Test (core + vizia)
+        run: cargo test -p batcherbird-core -p batcherbird-vizia
