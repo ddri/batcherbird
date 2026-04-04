@@ -48,7 +48,24 @@ fn validate_file_path(path: &str) -> Result<PathBuf, String> {
             .map_err(|_| "Cannot get current directory")?
             .join(path_buf)
     };
-    
+
+    // For existing paths, resolve symlinks; for new paths, canonicalize the parent
+    let check_path = if absolute_path.exists() {
+        absolute_path.canonicalize().map_err(|e| format!("Cannot resolve path: {}", e))?
+    } else {
+        // For new paths, canonicalize the parent
+        if let Some(parent) = absolute_path.parent() {
+            if parent.exists() {
+                let canonical_parent = parent.canonicalize().map_err(|e| format!("Cannot resolve parent: {}", e))?;
+                canonical_parent.join(absolute_path.file_name().unwrap_or_default())
+            } else {
+                absolute_path.clone()
+            }
+        } else {
+            absolute_path.clone()
+        }
+    };
+
     // Get standard user directories (cross-platform)
     let allowed_dirs = [
         dirs::home_dir(),
@@ -59,22 +76,22 @@ fn validate_file_path(path: &str) -> Result<PathBuf, String> {
         dirs::cache_dir(),
         std::env::temp_dir().into(), // Allow temp directory
     ];
-    
+
     // Check if path is within allowed directories
     for allowed_dir in allowed_dirs.iter().flatten() {
-        if absolute_path.starts_with(allowed_dir) {
-            return Ok(absolute_path);
+        if check_path.starts_with(allowed_dir) {
+            return Ok(check_path);
         }
     }
-    
+
     // Allow current working directory and subdirectories (for development)
     if let Ok(cwd) = std::env::current_dir() {
-        if absolute_path.starts_with(&cwd) {
-            return Ok(absolute_path);
+        if check_path.starts_with(&cwd) {
+            return Ok(check_path);
         }
     }
-    
-    Err(format!("Path '{}' is outside allowed user directories", absolute_path.display()))
+
+    Err(format!("Path '{}' is outside allowed user directories", check_path.display()))
 }
 
 /// Serializable version of LoopCandidate for JSON responses
@@ -325,7 +342,8 @@ fn generate_instrument_files(directory: String, export_format: String, sample_na
     use batcherbird_core::sampler::Sample;
     use batcherbird_core::export::{SampleExporter, ExportConfig, AudioFormat};
     use batcherbird_core::detection::DetectionConfig;
-    
+
+    let directory = validate_file_path(&directory)?.to_string_lossy().to_string();
     let dir_path = PathBuf::from(&directory);
     if !dir_path.exists() || !dir_path.is_dir() {
         return Err(format!("Directory does not exist: {}", directory));
@@ -1155,7 +1173,7 @@ fn test_viz_throughput(app_handle: tauri::AppHandle) -> Result<String, String> {
 /// Cancel an ongoing recording
 #[tauri::command]
 fn cancel_recording() -> Result<String, String> {
-    RECORDING_CANCELLED.store(true, std::sync::atomic::Ordering::Relaxed);
+    RECORDING_CANCELLED.store(true, std::sync::atomic::Ordering::Release);
     Ok("Recording cancelled".to_string())
 }
 
@@ -1249,15 +1267,25 @@ async fn record_range_with_velocity_layers(
 ) -> Result<String, String> {
     use batcherbird_core::export::{SampleExporter, ExportConfig, AudioFormat};
     use batcherbird_core::detection::DetectionConfig;
-    
+
     // Validate inputs
+    if start_note > 127 || end_note > 127 {
+        return Err("MIDI notes must be 0-127".into());
+    }
     if velocity_layers.is_empty() {
         return Err("No velocity layers specified".to_string());
+    }
+    for &v in &velocity_layers {
+        if v > 127 {
+            return Err(format!("Velocity value {} exceeds maximum of 127", v));
+        }
     }
     if start_note > end_note {
         return Err("Invalid note range".to_string());
     }
-    
+    let note_to_note_delay = note_to_note_delay.map(|d| d.min(60000));
+    let layer_to_layer_delay = layer_to_layer_delay.map(|d| d.min(60000));
+
     // Get MIDI connection
     let mut connection = {
         let mut connection_guard = MIDI_CONNECTION.lock().unwrap();
@@ -1273,7 +1301,7 @@ async fn record_range_with_velocity_layers(
     let total_samples = note_count * velocity_count;
 
     // Reset cancellation flag
-    RECORDING_CANCELLED.store(false, std::sync::atomic::Ordering::Relaxed);
+    RECORDING_CANCELLED.store(false, std::sync::atomic::Ordering::Release);
     
     // Clone app handle for thread
     let app_handle = app.clone();
@@ -1306,10 +1334,10 @@ async fn record_range_with_velocity_layers(
         // Record each velocity layer
         for (layer_idx, &velocity) in velocity_layers.iter().enumerate() {
             // Check for cancellation
-            if RECORDING_CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
+            if RECORDING_CANCELLED.load(std::sync::atomic::Ordering::Acquire) {
                 break;
             }
-            
+
             // Create new config with updated velocity
             let sampling_config = SamplingConfig {
                 note_duration_ms: duration as u64,
@@ -1320,7 +1348,7 @@ async fn record_range_with_velocity_layers(
                 velocity,
                 ..SamplingConfig::default()
             };
-            
+
             // Recreate engine with new velocity
             sampling_engine = match SamplingEngine::new(sampling_config) {
                 Ok(engine) => engine,
@@ -1333,7 +1361,7 @@ async fn record_range_with_velocity_layers(
             // Record this velocity layer for all notes
             for note in start_note..=end_note {
                 // Check for cancellation
-                if RECORDING_CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
+                if RECORDING_CANCELLED.load(std::sync::atomic::Ordering::Acquire) {
                     break;
                 }
                 
@@ -1455,6 +1483,9 @@ async fn record_range_with_velocity_layers(
 
 #[tauri::command]
 fn record_range(start_note: u8, end_note: u8, velocity: u8, duration: u32, output_directory: Option<String>, sample_name: Option<String>, export_format: Option<String>, creator_name: Option<String>, instrument_description: Option<String>) -> Result<String, String> {
+    if start_note > 127 || end_note > 127 {
+        return Err("MIDI notes must be 0-127".into());
+    }
     // Step 1: Get MIDI connection (GUI responsibility)
     let mut connection = {
         let mut connection_guard = MIDI_CONNECTION.lock().unwrap();

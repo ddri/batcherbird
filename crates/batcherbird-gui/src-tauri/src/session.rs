@@ -151,6 +151,9 @@ fn get_session_dir() -> Result<PathBuf, String> {
 }
 
 fn get_session_path(session_id: &str) -> Result<PathBuf, String> {
+    // Validate session ID is a UUID to prevent path traversal
+    uuid::Uuid::parse_str(session_id)
+        .map_err(|_| format!("Invalid session ID: {}", session_id))?;
     let session_dir = get_session_dir()?;
     Ok(session_dir.join(format!("{}.json", session_id)))
 }

@@ -546,12 +546,6 @@ impl ConfigValidator {
     }
 }
 
-impl Default for SessionManager {
-    fn default() -> Self {
-        Self::new().expect("Failed to create SessionManager")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

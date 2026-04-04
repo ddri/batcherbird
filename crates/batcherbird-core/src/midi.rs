@@ -120,9 +120,12 @@ impl MidiManager {
     }
 
     pub fn connect_input(&mut self, device_index: usize) -> Result<MidiInputConnection<()>> {
-        let midi_in = self.input.take().unwrap_or_else(|| {
-            MidiInput::new("batcherbird-input").expect("Failed to create MIDI input")
-        });
+        let midi_in = match self.input.take() {
+            Some(input) => input,
+            None => MidiInput::new("batcherbird-input").map_err(|e| {
+                BatcherbirdError::Session(format!("Failed to create MIDI input: {:?}", e))
+            })?,
+        };
 
         let ports = midi_in.ports();
         if device_index >= ports.len() {
