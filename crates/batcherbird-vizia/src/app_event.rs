@@ -35,6 +35,9 @@ pub enum AppEvent {
     RecordingComplete,
     RecordingError(String),
 
+    // Error handling
+    DismissError,
+
     // Playback
     PlaySample(usize),
     StopPlayback,

@@ -5,6 +5,19 @@ use vizia::prelude::*;
 
 pub fn stage(cx: &mut Context) {
     VStack::new(cx, |cx| {
+        // --- Error banner (shown when error_message is Some) ---
+        Binding::new(cx, AppData::error_message, |cx, msg| {
+            let msg = msg.get(cx);
+            if let Some(text) = msg {
+                HStack::new(cx, |cx| {
+                    Label::new(cx, &text).color(Color::from("#e53935"));
+                    Button::new(cx, |cx| Label::new(cx, "×"))
+                        .on_press(|cx| cx.emit(AppEvent::DismissError));
+                })
+                .class("error-banner");
+            }
+        });
+
         // --- Meters (always visible) ---
         meters(cx);
 
@@ -38,6 +51,18 @@ pub fn stage(cx: &mut Context) {
 
         // --- Progress bar (only when Recording) ---
         progress_bar(cx);
+
+        // --- Cancel button (only when Recording) ---
+        Button::new(cx, |cx| Label::new(cx, "Cancel"))
+            .class("btn-cancel")
+            .on_press(|cx| cx.emit(AppEvent::CancelRecording))
+            .display(AppData::app_state.map(|s| {
+                if *s == AppState::Recording {
+                    Display::Flex
+                } else {
+                    Display::None
+                }
+            }));
 
         // --- Idle content (only when Idle) ---
         VStack::new(cx, |cx| {
@@ -79,6 +104,10 @@ pub fn stage(cx: &mut Context) {
             Button::new(cx, |cx| Label::new(cx, "RECORD"))
                 .class("btn-record")
                 .on_press(|cx| cx.emit(AppEvent::StartRecording));
+
+            Button::new(cx, |cx| Label::new(cx, "Cancel"))
+                .class("btn-cancel")
+                .on_press(|cx| cx.emit(AppEvent::Disarm));
         })
         .class("armed-content")
         .display(AppData::app_state.map(|s| {

@@ -10,16 +10,28 @@ pub fn sidebar(cx: &mut Context) {
 
             VStack::new(cx, |cx| {
                 Label::new(cx, "MIDI Out").class("device-type");
-                Binding::new(cx, AppData::selected_midi_device, |cx, sel| {
-                    let sel = sel.get(cx);
-                    Binding::new(cx, AppData::midi_devices, move |cx, devs| {
-                        let devs = devs.get(cx);
-                        let name = match sel {
-                            Some(i) if i < devs.len() => devs[i].clone(),
-                            _ if !devs.is_empty() => devs[0].clone(),
-                            _ => "No MIDI devices".to_string(),
-                        };
-                        Label::new(cx, &name).class("device-name");
+                HStack::new(cx, |cx| {
+                    Binding::new(cx, AppData::selected_midi_device, |cx, sel| {
+                        let sel = sel.get(cx);
+                        Binding::new(cx, AppData::midi_devices, move |cx, devs| {
+                            let devs = devs.get(cx);
+                            let name = match sel {
+                                Some(i) if i < devs.len() => devs[i].clone(),
+                                _ if !devs.is_empty() => devs[0].clone(),
+                                _ => "No MIDI devices".to_string(),
+                            };
+                            Label::new(cx, &name).class("device-name");
+                        });
+                    });
+                    Binding::new(cx, AppData::midi_connected, |cx, connected| {
+                        let connected = connected.get(cx);
+                        let dot = Element::new(cx)
+                            .class("signal-dot")
+                            .size(Pixels(7.0))
+                            .corner_radius(Percentage(50.0));
+                        if !connected {
+                            dot.class("disconnected");
+                        }
                     });
                 });
             })
@@ -27,16 +39,28 @@ pub fn sidebar(cx: &mut Context) {
 
             VStack::new(cx, |cx| {
                 Label::new(cx, "Audio In").class("device-type");
-                Binding::new(cx, AppData::selected_audio_input, |cx, sel| {
-                    let sel = sel.get(cx);
-                    Binding::new(cx, AppData::audio_input_devices, move |cx, devs| {
-                        let devs = devs.get(cx);
-                        let name = match sel {
-                            Some(i) if i < devs.len() => devs[i].clone(),
-                            _ if !devs.is_empty() => devs[0].clone(),
-                            _ => "No audio devices".to_string(),
-                        };
-                        Label::new(cx, &name).class("device-name");
+                HStack::new(cx, |cx| {
+                    Binding::new(cx, AppData::selected_audio_input, |cx, sel| {
+                        let sel = sel.get(cx);
+                        Binding::new(cx, AppData::audio_input_devices, move |cx, devs| {
+                            let devs = devs.get(cx);
+                            let name = match sel {
+                                Some(i) if i < devs.len() => devs[i].clone(),
+                                _ if !devs.is_empty() => devs[0].clone(),
+                                _ => "No audio devices".to_string(),
+                            };
+                            Label::new(cx, &name).class("device-name");
+                        });
+                    });
+                    Binding::new(cx, AppData::audio_connected, |cx, connected| {
+                        let connected = connected.get(cx);
+                        let dot = Element::new(cx)
+                            .class("signal-dot")
+                            .size(Pixels(7.0))
+                            .corner_radius(Percentage(50.0));
+                        if !connected {
+                            dot.class("disconnected");
+                        }
                     });
                 });
             })
@@ -114,7 +138,9 @@ pub fn sidebar(cx: &mut Context) {
                 )
                 .class("field-value");
             })
-            .class("field-box");
+            .class("field-box")
+            .cursor(CursorIcon::Hand)
+            .on_press(|cx| cx.emit(AppEvent::SelectOutputDirectory));
         })
         .class("sidebar-section");
 

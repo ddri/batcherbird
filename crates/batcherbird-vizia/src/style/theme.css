@@ -223,6 +223,16 @@
     background-color: #1a2a48;
 }
 
+.btn-cancel {
+    background-color: #1a1a28;
+    border-color: #333333;
+    border-width: 1px;
+    corner-radius: 6px;
+    color: #888888;
+    font-size: 12;
+    child-space: 6px;
+}
+
 /* ------------------------------------------------------------------ */
 /* PROGRESS                                                             */
 /* ------------------------------------------------------------------ */
@@ -247,4 +257,74 @@
 .idle-subtext {
     color: #555555;
     font-size: 13;
+}
+
+/* ------------------------------------------------------------------ */
+/* ERROR BANNER                                                         */
+/* ------------------------------------------------------------------ */
+
+.error-banner {
+    background-color: #2a1015;
+    border-color: #e53935;
+    border-width: 1px;
+    corner-radius: 6px;
+    child-space: 8px;
+    col-between: 8px;
+}
+
+/* ------------------------------------------------------------------ */
+/* METERS                                                               */
+/* ------------------------------------------------------------------ */
+
+.meter-row {
+    col-between: 6px;
+    height: auto;
+}
+
+/* ------------------------------------------------------------------ */
+/* IDLE / ARMED / RECORDING STATE CLASSES                              */
+/* ------------------------------------------------------------------ */
+
+.idle-heading {
+    font-size: 18;
+    color: #cccccc;
+}
+
+.idle-summary {
+    font-size: 12;
+    color: #666666;
+}
+
+.idle-content {
+    row-between: 8px;
+    child-space: auto;
+}
+
+.armed-heading {
+    font-size: 14;
+    color: #888888;
+}
+
+.armed-content {
+    row-between: 12px;
+    child-space: auto;
+}
+
+.note-display {
+    col-between: 10px;
+}
+
+.progress-bar-row {
+    col-between: 10px;
+    height: auto;
+}
+
+.progress-count {
+    font-size: 12;
+    color: #cccccc;
+}
+
+.progress-pct {
+    font-size: 12;
+    color: #888888;
 }

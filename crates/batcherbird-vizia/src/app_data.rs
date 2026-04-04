@@ -37,6 +37,7 @@ pub struct AppData {
 
     // App state
     pub app_state: AppState,
+    pub error_message: Option<String>,
 
     // Real-time meters
     pub meter_left: f32,
@@ -88,6 +89,7 @@ impl Default for AppData {
             output_directory: dirs::document_dir().unwrap_or_else(|| PathBuf::from(".")),
 
             app_state: AppState::Idle,
+            error_message: None,
 
             meter_left: 0.0,
             meter_right: 0.0,
@@ -216,9 +218,13 @@ impl Model for AppData {
                                 self.sampling_engine = Some(engine);
                                 self.app_state = AppState::Armed;
                             }
-                            Err(e) => eprintln!("Failed to start monitoring: {}", e),
+                            Err(e) => {
+                            self.error_message = Some(format!("Failed to start monitoring: {}", e));
+                        }
                         },
-                        Err(e) => eprintln!("Failed to create engine: {}", e),
+                        Err(e) => {
+                            self.error_message = Some(format!("Failed to create engine: {}", e));
+                        }
                     }
                 }
             }
@@ -327,8 +333,12 @@ impl Model for AppData {
             AppEvent::RecordingComplete => {
                 self.app_state = AppState::Review;
             }
-            AppEvent::RecordingError(_msg) => {
+            AppEvent::RecordingError(msg) => {
                 self.app_state = AppState::Idle;
+                self.error_message = Some(msg.clone());
+            }
+            AppEvent::DismissError => {
+                self.error_message = None;
             }
 
             AppEvent::SelectOutputDirectory => {
