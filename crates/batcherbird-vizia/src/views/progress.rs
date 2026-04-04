@@ -1,6 +1,6 @@
+use crate::app_data::{AppData, AppState};
 use vizia::prelude::*;
 use vizia::vg;
-use crate::app_data::{AppData, AppState};
 
 pub struct ProgressBarView;
 
@@ -67,26 +67,24 @@ pub fn progress_bar(cx: &mut Context) {
                     .height(Pixels(8.0));
 
                 // "X / Y" count
-                Label::new(
-                    cx,
-                    AppData::notes_completed.map(|n: &u32| n.to_string()),
-                )
-                .class("progress-count");
+                Label::new(cx, AppData::notes_completed.map(|n: &u32| n.to_string()))
+                    .class("progress-count");
 
                 Label::new(cx, " / ").class("progress-count");
 
-                Label::new(
-                    cx,
-                    AppData::notes_total.map(|n: &u32| n.to_string()),
-                )
-                .class("progress-count");
+                Label::new(cx, AppData::notes_total.map(|n: &u32| n.to_string()))
+                    .class("progress-count");
 
                 // Percentage
                 Binding::new(cx, AppData::notes_completed, |cx, completed| {
                     let completed = completed.get(cx);
                     Binding::new(cx, AppData::notes_total, move |cx, total| {
                         let total = total.get(cx);
-                        let pct = if total > 0 { (completed * 100) / total } else { 0 };
+                        let pct = if total > 0 {
+                            (completed * 100) / total
+                        } else {
+                            0
+                        };
                         Label::new(cx, &format!("{}%", pct)).class("progress-pct");
                     });
                 });

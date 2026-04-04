@@ -1,6 +1,6 @@
+use crate::app_data::AppData;
 use vizia::prelude::*;
 use vizia::vg;
-use crate::app_data::AppData;
 
 fn is_black_key(note: u8) -> bool {
     matches!(note % 12, 1 | 3 | 6 | 8 | 10)
@@ -104,10 +104,8 @@ impl View for KeyboardView {
                     vg::Color::from_rgb(0x18, 0x18, 0x22)
                 };
 
-                let key_path = vg::Path::rect(
-                    vg::Rect::from_xywh(bx, bounds.y, black_w, black_h),
-                    None,
-                );
+                let key_path =
+                    vg::Path::rect(vg::Rect::from_xywh(bx, bounds.y, black_w, black_h), None);
                 let mut key_paint = vg::Paint::default();
                 key_paint.set_color(color);
                 canvas.draw_path(&key_path, &key_paint);

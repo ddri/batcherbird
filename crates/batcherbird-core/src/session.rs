@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -31,7 +31,7 @@ pub struct AudioSessionConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MidiSessionConfig {
     pub output_device: Option<String>,
-    pub channel: u8,             // 0-15 (MIDI channels 1-16)
+    pub channel: u8, // 0-15 (MIDI channels 1-16)
     pub velocity_curve: VelocityCurve,
     pub program_change_delay_ms: u32,
 }
@@ -39,10 +39,10 @@ pub struct MidiSessionConfig {
 /// Recording parameters following professional standards
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordingSessionConfig {
-    pub note_duration_ms: u64,   // 100-30000ms
-    pub release_time_ms: u64,    // 0-10000ms
-    pub pre_delay_ms: u64,       // 0-1000ms
-    pub post_delay_ms: u64,      // 0-1000ms
+    pub note_duration_ms: u64, // 100-30000ms
+    pub release_time_ms: u64,  // 0-10000ms
+    pub pre_delay_ms: u64,     // 0-1000ms
+    pub post_delay_ms: u64,    // 0-1000ms
     pub auto_detect_silence: bool,
     pub detection_threshold_db: f32, // -60.0 to -6.0
 }
@@ -146,7 +146,7 @@ impl ValidationReport {
             is_valid: true,
         }
     }
-    
+
     pub fn add_error(&mut self, field: &str, message: &str) {
         self.errors.push(ValidationError {
             field: field.to_string(),
@@ -155,7 +155,7 @@ impl ValidationReport {
         });
         self.is_valid = false;
     }
-    
+
     pub fn add_warning(&mut self, field: &str, message: &str) {
         self.warnings.push(ValidationError {
             field: field.to_string(),
@@ -185,7 +185,7 @@ impl Default for MidiSessionConfig {
     fn default() -> Self {
         Self {
             output_device: None,
-            channel: 0,              // MIDI channel 1 (0-indexed)
+            channel: 0, // MIDI channel 1 (0-indexed)
             velocity_curve: VelocityCurve::Linear,
             program_change_delay_ms: 50,
         }
@@ -195,10 +195,10 @@ impl Default for MidiSessionConfig {
 impl Default for RecordingSessionConfig {
     fn default() -> Self {
         Self {
-            note_duration_ms: 2500,  // 2.5s captures full decay
-            release_time_ms: 1000,   // 1s professional standard
-            pre_delay_ms: 100,       // Eliminates MIDI latency
-            post_delay_ms: 100,      // Clean buffer flush
+            note_duration_ms: 2500, // 2.5s captures full decay
+            release_time_ms: 1000,  // 1s professional standard
+            pre_delay_ms: 100,      // Eliminates MIDI latency
+            post_delay_ms: 100,     // Clean buffer flush
             auto_detect_silence: true,
             detection_threshold_db: -35.0, // Professional threshold
         }
@@ -213,7 +213,7 @@ impl Default for ExportSessionConfig {
             sample_format: AudioFormat::Wav16Bit,
             normalize: false,
             fade_in_ms: 0.0,
-            fade_out_ms: 10.0,       // Professional fade-out
+            fade_out_ms: 10.0, // Professional fade-out
             creator_name: None,
             project_description: None,
         }
@@ -225,24 +225,27 @@ pub fn get_professional_audio_defaults(_device_name: Option<&str>) -> AudioSessi
     // TODO: Query actual device capabilities when device manager is available
     // For now, return conservative professional defaults
     AudioSessionConfig {
-        sample_rate: 44100,  // Music industry standard  
-        bit_depth: 16,       // Music industry standard
-        buffer_size: 512,    // Good latency/stability balance
+        sample_rate: 44100, // Music industry standard
+        bit_depth: 16,      // Music industry standard
+        buffer_size: 512,   // Good latency/stability balance
         ..Default::default()
     }
 }
 
 /// Create professional project structure
-pub fn create_project_structure(project_name: &str, base_directory: Option<PathBuf>) -> Result<ProjectStructure, std::io::Error> {
+pub fn create_project_structure(
+    project_name: &str,
+    base_directory: Option<PathBuf>,
+) -> Result<ProjectStructure, std::io::Error> {
     // Use Documents/BatcherBird Projects as default location
     let base = base_directory.unwrap_or_else(|| {
         dirs::document_dir()
             .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
             .join("BatcherBird Projects")
     });
-    
+
     let project_root = base.join(sanitize_filename(project_name));
-    
+
     let structure = ProjectStructure {
         samples_dir: project_root.join("Samples"),
         exports_dir: project_root.join("Exports"),
@@ -250,14 +253,14 @@ pub fn create_project_structure(project_name: &str, base_directory: Option<PathB
         sessions_dir: project_root.join("Sessions"),
         project_root: project_root.clone(),
     };
-    
+
     // Create all directories
     std::fs::create_dir_all(&structure.project_root)?;
     std::fs::create_dir_all(&structure.samples_dir)?;
     std::fs::create_dir_all(&structure.exports_dir)?;
     std::fs::create_dir_all(&structure.templates_dir)?;
     std::fs::create_dir_all(&structure.sessions_dir)?;
-    
+
     Ok(structure)
 }
 
@@ -278,21 +281,21 @@ fn sanitize_filename(name: &str) -> String {
 pub fn get_export_format_recommendations(target: ExportTarget) -> Vec<AudioFormat> {
     match target {
         ExportTarget::LivePerformance => vec![
-            AudioFormat::DecentSampler,  // Free, widely supported
-            AudioFormat::Wav24Bit,       // Universal compatibility
+            AudioFormat::DecentSampler, // Free, widely supported
+            AudioFormat::Wav24Bit,      // Universal compatibility
         ],
         ExportTarget::StudioProduction => vec![
-            AudioFormat::Wav32BitFloat,  // Maximum quality
-            AudioFormat::DecentSampler,  // Instant playback
-            AudioFormat::SFZ,            // Professional standard
+            AudioFormat::Wav32BitFloat, // Maximum quality
+            AudioFormat::DecentSampler, // Instant playback
+            AudioFormat::SFZ,           // Professional standard
         ],
         ExportTarget::Distribution => vec![
-            AudioFormat::DecentSampler,  // User-friendly
-            AudioFormat::SFZ,            // Professional option
-            AudioFormat::Wav24Bit,       // Source files
+            AudioFormat::DecentSampler, // User-friendly
+            AudioFormat::SFZ,           // Professional option
+            AudioFormat::Wav24Bit,      // Source files
         ],
         ExportTarget::Archival => vec![
-            AudioFormat::Wav32BitFloat,  // Future-proof
+            AudioFormat::Wav32BitFloat, // Future-proof
         ],
     }
 }
@@ -300,39 +303,42 @@ pub fn get_export_format_recommendations(target: ExportTarget) -> Vec<AudioForma
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_default_configs() {
         let audio_config = AudioSessionConfig::default();
         assert_eq!(audio_config.sample_rate, 44100);
         assert_eq!(audio_config.bit_depth, 16);
         assert_eq!(audio_config.buffer_size, 512);
-        
+
         let midi_config = MidiSessionConfig::default();
         assert_eq!(midi_config.channel, 0);
-        
+
         let recording_config = RecordingSessionConfig::default();
         assert_eq!(recording_config.note_duration_ms, 2500);
         assert_eq!(recording_config.release_time_ms, 1000);
     }
-    
+
     #[test]
     fn test_filename_sanitization() {
         assert_eq!(sanitize_filename("My Project"), "My Project");
-        assert_eq!(sanitize_filename("Bad/Name\\With:*?\"<>|"), "Bad_Name_With_______");
+        assert_eq!(
+            sanitize_filename("Bad/Name\\With:*?\"<>|"),
+            "Bad_Name_With_______"
+        );
         assert_eq!(sanitize_filename(" \t Spaces \n "), "_ Spaces _");
     }
-    
+
     #[test]
     fn test_validation_report() {
         let mut report = ValidationReport::new();
         assert!(report.is_valid);
         assert_eq!(report.errors.len(), 0);
-        
+
         report.add_error("test_field", "Test error");
         assert!(!report.is_valid);
         assert_eq!(report.errors.len(), 1);
-        
+
         report.add_warning("test_field", "Test warning");
         assert_eq!(report.warnings.len(), 1);
         assert!(!report.is_valid); // Still invalid due to error

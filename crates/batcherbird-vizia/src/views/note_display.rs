@@ -1,5 +1,5 @@
-use vizia::prelude::*;
 use crate::app_data::{AppData, AppState};
+use vizia::prelude::*;
 
 pub fn note_display(cx: &mut Context) {
     Binding::new(cx, AppData::app_state, |cx, state| {

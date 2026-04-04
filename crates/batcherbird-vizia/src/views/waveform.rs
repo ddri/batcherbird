@@ -1,6 +1,6 @@
+use crate::app_data::AppData;
 use vizia::prelude::*;
 use vizia::vg;
-use crate::app_data::AppData;
 
 pub struct WaveformView;
 
@@ -112,4 +112,3 @@ impl View for WaveformView {
         canvas.draw_path(&bot_path, &stroke_paint);
     }
 }
-

@@ -1,14 +1,13 @@
+use crate::detection::{DetectionConfig, DetectionResult};
 /// Intelligent Sample Detection and Auto-Trimming Engine
-/// 
+///
 /// Epic 3.2: Multi-algorithm detection system with synthesizer-specific profiles
 /// Implements professional-grade sample boundary detection using multiple algorithms:
 /// - Enhanced RMS Detection: Adaptive windowing with synthesizer-aware thresholds
 /// - Spectral Flux Detection: Magnitude spectrum difference for onset detection  
 /// - Phase Deviation Detection: Complex domain analysis for transient detection
 /// - Adaptive Thresholding: Dynamic thresholds based on signal characteristics
-
-use crate::{Result, BatcherbirdError};
-use crate::detection::{DetectionConfig, DetectionResult};
+use crate::{BatcherbirdError, Result};
 use std::collections::VecDeque;
 
 /// Advanced detection algorithms for different types of synthesizer content
@@ -167,7 +166,7 @@ impl SpectralFluxDetector {
     pub fn calculate_flux(&mut self, samples: &[f32]) -> f32 {
         // For now, implement a simplified magnitude-based spectral flux
         // In a full implementation, this would use FFT analysis
-        
+
         // Calculate current magnitude (simplified as RMS)
         let current_magnitude = if samples.is_empty() {
             0.0
@@ -217,13 +216,14 @@ impl PhaseDeviationDetector {
     pub fn calculate_deviation(&mut self, samples: &[f32]) -> f32 {
         // Simplified phase deviation using sample differences
         // In a full implementation, this would use complex FFT analysis
-        
+
         if samples.len() < 2 {
             return 0.0;
         }
 
         // Calculate instantaneous phase approximation using sample differences
-        let phase_diffs: Vec<f32> = samples.windows(2)
+        let phase_diffs: Vec<f32> = samples
+            .windows(2)
             .map(|window| (window[1] - window[0]).abs())
             .collect();
 
@@ -282,9 +282,12 @@ impl AdaptiveThreshold {
 
         // Calculate statistics
         let mean = self.history.iter().sum::<f32>() / self.history.len() as f32;
-        let variance = self.history.iter()
+        let variance = self
+            .history
+            .iter()
             .map(|&x| (x - mean).powi(2))
-            .sum::<f32>() / self.history.len() as f32;
+            .sum::<f32>()
+            / self.history.len() as f32;
         let std_dev = variance.sqrt();
 
         // Adaptive threshold: base + 2 * standard deviations above mean
@@ -334,8 +337,8 @@ impl Default for TrimmingConfig {
             enable_zero_crossing: true,
             zero_crossing_search_range: 64, // ~1.5ms at 44.1kHz
             enable_micro_fades: true,
-            fade_duration_samples: 4,       // Short crossfade
-            fade_threshold_db: -40.0,       // Only fade above this level
+            fade_duration_samples: 4, // Short crossfade
+            fade_threshold_db: -40.0, // Only fade above this level
             enable_quality_validation: true,
         }
     }
@@ -379,22 +382,30 @@ impl ProfessionalTrimmer {
     }
 
     /// Apply professional trimming to audio based on detection result
-    pub fn trim_audio(&self, audio_data: &[f32], detection_result: &IntelligentDetectionResult, sample_rate: u32) -> Result<TrimmingResult> {
+    pub fn trim_audio(
+        &self,
+        audio_data: &[f32],
+        detection_result: &IntelligentDetectionResult,
+        sample_rate: u32,
+    ) -> Result<TrimmingResult> {
         let start_idx = detection_result.base_result.start_sample;
         let end_idx = detection_result.base_result.end_sample;
 
         if start_idx >= end_idx || end_idx > audio_data.len() {
-            return Err(BatcherbirdError::Audio("Invalid detection boundaries".to_string()));
+            return Err(BatcherbirdError::Audio(
+                "Invalid detection boundaries".to_string(),
+            ));
         }
 
         // Apply zero-crossing alignment if enabled
-        let (aligned_start, aligned_end, zero_crossing_applied) = if self.config.enable_zero_crossing {
-            let aligned_start = self.find_zero_crossing(audio_data, start_idx, true);
-            let aligned_end = self.find_zero_crossing(audio_data, end_idx, false);
-            (aligned_start, aligned_end, true)
-        } else {
-            (start_idx, end_idx, false)
-        };
+        let (aligned_start, aligned_end, zero_crossing_applied) =
+            if self.config.enable_zero_crossing {
+                let aligned_start = self.find_zero_crossing(audio_data, start_idx, true);
+                let aligned_end = self.find_zero_crossing(audio_data, end_idx, false);
+                (aligned_start, aligned_end, true)
+            } else {
+                (start_idx, end_idx, false)
+            };
 
         // Extract the trimmed audio
         let mut trimmed_audio = audio_data[aligned_start..aligned_end].to_vec();
@@ -407,9 +418,13 @@ impl ProfessionalTrimmer {
         };
 
         // Calculate preservation times
-        let pre_trigger_samples = detection_result.base_result.detected_start.saturating_sub(aligned_start);
-        let post_trigger_samples = aligned_end.saturating_sub(detection_result.base_result.detected_end);
-        
+        let pre_trigger_samples = detection_result
+            .base_result
+            .detected_start
+            .saturating_sub(aligned_start);
+        let post_trigger_samples =
+            aligned_end.saturating_sub(detection_result.base_result.detected_end);
+
         let attack_preserved_ms = (pre_trigger_samples as f32 / sample_rate as f32) * 1000.0;
         let decay_preserved_ms = (post_trigger_samples as f32 / sample_rate as f32) * 1000.0;
 
@@ -434,9 +449,14 @@ impl ProfessionalTrimmer {
     }
 
     /// Find nearest zero crossing within search range
-    fn find_zero_crossing(&self, audio_data: &[f32], target_idx: usize, search_forward: bool) -> usize {
+    fn find_zero_crossing(
+        &self,
+        audio_data: &[f32],
+        target_idx: usize,
+        search_forward: bool,
+    ) -> usize {
         let search_range = self.config.zero_crossing_search_range;
-        
+
         if search_forward {
             // Search forward from target_idx
             for i in 0..search_range {
@@ -444,10 +464,11 @@ impl ProfessionalTrimmer {
                 if idx + 1 >= audio_data.len() {
                     break;
                 }
-                
+
                 // Check for zero crossing (sign change)
-                if (audio_data[idx] >= 0.0 && audio_data[idx + 1] < 0.0) ||
-                   (audio_data[idx] < 0.0 && audio_data[idx + 1] >= 0.0) {
+                if (audio_data[idx] >= 0.0 && audio_data[idx + 1] < 0.0)
+                    || (audio_data[idx] < 0.0 && audio_data[idx + 1] >= 0.0)
+                {
                     return idx + 1; // Return position after zero crossing
                 }
             }
@@ -461,10 +482,11 @@ impl ProfessionalTrimmer {
                 if idx == 0 {
                     break;
                 }
-                
+
                 // Check for zero crossing (sign change)
-                if (audio_data[idx - 1] >= 0.0 && audio_data[idx] < 0.0) ||
-                   (audio_data[idx - 1] < 0.0 && audio_data[idx] >= 0.0) {
+                if (audio_data[idx - 1] >= 0.0 && audio_data[idx] < 0.0)
+                    || (audio_data[idx - 1] < 0.0 && audio_data[idx] >= 0.0)
+                {
                     return idx; // Return position of zero crossing
                 }
             }
@@ -482,7 +504,7 @@ impl ProfessionalTrimmer {
 
         let fade_samples = self.config.fade_duration_samples;
         let threshold_linear = self.db_to_linear(self.config.fade_threshold_db);
-        
+
         let mut fades_applied = false;
 
         // Apply fade-in if start level is above threshold
@@ -511,14 +533,19 @@ impl ProfessionalTrimmer {
     }
 
     /// Validate trimming quality and provide feedback
-    fn validate_quality(&self, trimmed_audio: &[f32], detection_result: &IntelligentDetectionResult, sample_rate: u32) -> (f32, Vec<String>) {
+    fn validate_quality(
+        &self,
+        trimmed_audio: &[f32],
+        detection_result: &IntelligentDetectionResult,
+        sample_rate: u32,
+    ) -> (f32, Vec<String>) {
         let mut quality_score: f32 = 1.0;
         let mut notes = Vec::new();
 
         // Check for clicks and pops (sudden level changes)
         let click_threshold = 0.1; // 10% sudden change threshold
         let mut click_count = 0;
-        
+
         for window in trimmed_audio.windows(2) {
             let level_change = (window[1] - window[0]).abs();
             if level_change > click_threshold {
@@ -601,10 +628,8 @@ impl IntelligentSampleDetector {
             config.spectral_flux_threshold,
         );
 
-        let phase_deviation = PhaseDeviationDetector::new(
-            config.phase_deviation_threshold,
-            config.fft_size / 4,
-        );
+        let phase_deviation =
+            PhaseDeviationDetector::new(config.phase_deviation_threshold, config.fft_size / 4);
 
         let adaptive_threshold = AdaptiveThreshold::new(
             0.001, // Base threshold for adaptive calculation
@@ -637,7 +662,11 @@ impl IntelligentSampleDetector {
     }
 
     /// Perform intelligent sample detection using multiple algorithms
-    pub fn detect_intelligent_boundaries(&mut self, audio_data: &[f32], sample_rate: u32) -> Result<IntelligentDetectionResult> {
+    pub fn detect_intelligent_boundaries(
+        &mut self,
+        audio_data: &[f32],
+        sample_rate: u32,
+    ) -> Result<IntelligentDetectionResult> {
         if audio_data.is_empty() {
             return Ok(IntelligentDetectionResult {
                 base_result: DetectionResult {
@@ -662,11 +691,14 @@ impl IntelligentSampleDetector {
         self.adaptive_threshold.reset();
 
         // Calculate window parameters
-        let window_size_samples = ((self.config.base_config.window_size_ms / 1000.0) * sample_rate as f32) as usize;
+        let window_size_samples =
+            ((self.config.base_config.window_size_ms / 1000.0) * sample_rate as f32) as usize;
         let num_windows = audio_data.len() / window_size_samples;
 
         if num_windows < 2 {
-            return Err(BatcherbirdError::Audio("Audio too short for analysis".to_string()));
+            return Err(BatcherbirdError::Audio(
+                "Audio too short for analysis".to_string(),
+            ));
         }
 
         // Analyze each window with multiple algorithms
@@ -702,19 +734,23 @@ impl IntelligentSampleDetector {
             DetectionAlgorithm::AdaptiveRMS => {
                 let (start, end) = self.find_boundaries_rms(&rms_values)?;
                 (start, end, [0.8, 0.0, 0.0]) // High RMS confidence
-            },
+            }
             DetectionAlgorithm::SpectralFlux => {
                 let (start, end) = self.find_boundaries_spectral(&spectral_flux_values)?;
                 (start, end, [0.0, 0.8, 0.0]) // High spectral confidence
-            },
+            }
             DetectionAlgorithm::PhaseDeviation => {
                 let (start, end) = self.find_boundaries_phase(&phase_deviation_values)?;
                 (start, end, [0.0, 0.0, 0.8]) // High phase confidence
-            },
+            }
             DetectionAlgorithm::MultiFusion => {
-                let ((start, end), conf) = self.find_boundaries_fusion(&rms_values, &spectral_flux_values, &phase_deviation_values)?;
+                let ((start, end), conf) = self.find_boundaries_fusion(
+                    &rms_values,
+                    &spectral_flux_values,
+                    &phase_deviation_values,
+                )?;
                 (start, end, conf)
-            },
+            }
         };
 
         // Convert window indices to sample indices
@@ -722,16 +758,18 @@ impl IntelligentSampleDetector {
         let detected_end_sample = (end_window * window_size_samples).min(audio_data.len());
 
         // Apply pre/post trigger
-        let pre_trigger_samples = ((self.config.base_config.pre_trigger_ms / 1000.0) * sample_rate as f32) as usize;
-        let post_trigger_samples = ((self.config.base_config.post_trigger_ms / 1000.0) * sample_rate as f32) as usize;
+        let pre_trigger_samples =
+            ((self.config.base_config.pre_trigger_ms / 1000.0) * sample_rate as f32) as usize;
+        let post_trigger_samples =
+            ((self.config.base_config.post_trigger_ms / 1000.0) * sample_rate as f32) as usize;
 
         let final_start = detected_start_sample.saturating_sub(pre_trigger_samples);
         let final_end = (detected_end_sample + post_trigger_samples).min(audio_data.len());
 
         // Calculate overall confidence
-        let overall_confidence = confidence[0] * self.config.fusion_weights[0] +
-                                confidence[1] * self.config.fusion_weights[1] +
-                                confidence[2] * self.config.fusion_weights[2];
+        let overall_confidence = confidence[0] * self.config.fusion_weights[0]
+            + confidence[1] * self.config.fusion_weights[1]
+            + confidence[2] * self.config.fusion_weights[2];
 
         // Determine primary algorithm
         let primary_algorithm = if confidence[0] > confidence[1] && confidence[0] > confidence[2] {
@@ -764,13 +802,19 @@ impl IntelligentSampleDetector {
     /// Find boundaries using enhanced RMS analysis
     fn find_boundaries_rms(&mut self, rms_values: &[f32]) -> Result<(usize, usize)> {
         let threshold = self.db_to_linear(self.config.base_config.threshold_db);
-        
+
         // Find start: first window above threshold
-        let start = rms_values.iter().position(|&rms| rms > threshold)
-            .ok_or_else(|| BatcherbirdError::Audio("No signal found above threshold".to_string()))?;
+        let start = rms_values
+            .iter()
+            .position(|&rms| rms > threshold)
+            .ok_or_else(|| {
+                BatcherbirdError::Audio("No signal found above threshold".to_string())
+            })?;
 
         // Find end: last window above threshold
-        let end = rms_values.iter().rposition(|&rms| rms > threshold)
+        let end = rms_values
+            .iter()
+            .rposition(|&rms| rms > threshold)
             .ok_or_else(|| BatcherbirdError::Audio("No signal end found".to_string()))?;
 
         Ok((start, end))
@@ -779,7 +823,9 @@ impl IntelligentSampleDetector {
     /// Find boundaries using spectral flux analysis
     fn find_boundaries_spectral(&mut self, flux_values: &[f32]) -> Result<(usize, usize)> {
         if flux_values.len() < 2 {
-            return Err(BatcherbirdError::Audio("Insufficient data for spectral analysis".to_string()));
+            return Err(BatcherbirdError::Audio(
+                "Insufficient data for spectral analysis".to_string(),
+            ));
         }
 
         // Calculate adaptive threshold for flux
@@ -787,11 +833,15 @@ impl IntelligentSampleDetector {
         let threshold = max_flux * self.config.spectral_flux_threshold;
 
         // Find start: first significant flux increase (onset)
-        let start = flux_values.iter().position(|&flux| flux > threshold)
+        let start = flux_values
+            .iter()
+            .position(|&flux| flux > threshold)
             .unwrap_or(0);
 
         // Find end: last significant flux (activity end)
-        let end = flux_values.iter().rposition(|&flux| flux > threshold * 0.5) // Lower threshold for end
+        let end = flux_values
+            .iter()
+            .rposition(|&flux| flux > threshold * 0.5) // Lower threshold for end
             .unwrap_or(flux_values.len().saturating_sub(1));
 
         Ok((start, end))
@@ -800,7 +850,9 @@ impl IntelligentSampleDetector {
     /// Find boundaries using phase deviation analysis
     fn find_boundaries_phase(&mut self, deviation_values: &[f32]) -> Result<(usize, usize)> {
         if deviation_values.len() < 2 {
-            return Err(BatcherbirdError::Audio("Insufficient data for phase analysis".to_string()));
+            return Err(BatcherbirdError::Audio(
+                "Insufficient data for phase analysis".to_string(),
+            ));
         }
 
         // Calculate threshold based on signal statistics
@@ -808,18 +860,27 @@ impl IntelligentSampleDetector {
         let threshold = max_deviation * self.config.phase_deviation_threshold;
 
         // Find start: first significant phase change (transient)
-        let start = deviation_values.iter().position(|&dev| dev > threshold)
+        let start = deviation_values
+            .iter()
+            .position(|&dev| dev > threshold)
             .unwrap_or(0);
 
         // Find end: last significant phase activity
-        let end = deviation_values.iter().rposition(|&dev| dev > threshold * 0.3)
+        let end = deviation_values
+            .iter()
+            .rposition(|&dev| dev > threshold * 0.3)
             .unwrap_or(deviation_values.len().saturating_sub(1));
 
         Ok((start, end))
     }
 
     /// Find boundaries using multi-algorithm fusion
-    fn find_boundaries_fusion(&mut self, rms_values: &[f32], flux_values: &[f32], deviation_values: &[f32]) -> Result<((usize, usize), [f32; 3])> {
+    fn find_boundaries_fusion(
+        &mut self,
+        rms_values: &[f32],
+        flux_values: &[f32],
+        deviation_values: &[f32],
+    ) -> Result<((usize, usize), [f32; 3])> {
         // Get boundaries from each algorithm
         let (rms_start, rms_end) = self.find_boundaries_rms(rms_values)?;
         let (flux_start, flux_end) = self.find_boundaries_spectral(flux_values)?;
@@ -831,13 +892,13 @@ impl IntelligentSampleDetector {
 
         // Weighted fusion of start/end points
         let weights = self.config.fusion_weights;
-        let fused_start = (rms_start as f32 * weights[0] + 
-                          flux_start as f32 * weights[1] + 
-                          phase_start as f32 * weights[2]) as usize;
-        
-        let fused_end = (rms_end as f32 * weights[0] + 
-                        flux_end as f32 * weights[1] + 
-                        phase_end as f32 * weights[2]) as usize;
+        let fused_start = (rms_start as f32 * weights[0]
+            + flux_start as f32 * weights[1]
+            + phase_start as f32 * weights[2]) as usize;
+
+        let fused_end = (rms_end as f32 * weights[0]
+            + flux_end as f32 * weights[1]
+            + phase_end as f32 * weights[2]) as usize;
 
         // Calculate confidence scores
         let confidence = [
@@ -852,10 +913,12 @@ impl IntelligentSampleDetector {
     /// Calculate agreement between multiple boundary estimates
     fn calculate_agreement(&self, boundaries: [usize; 3]) -> f32 {
         let mean = boundaries.iter().sum::<usize>() as f32 / 3.0;
-        let variance = boundaries.iter()
+        let variance = boundaries
+            .iter()
             .map(|&x| (x as f32 - mean).powi(2))
-            .sum::<f32>() / 3.0;
-        
+            .sum::<f32>()
+            / 3.0;
+
         // High agreement = low variance, convert to 0-1 confidence score
         let normalized_variance = variance / (boundaries.iter().max().unwrap_or(&1) + 1) as f32;
         (1.0 - normalized_variance.min(1.0)).max(0.0)
@@ -874,32 +937,32 @@ mod tests {
     #[test]
     fn test_spectral_flux_detector() {
         let mut detector = SpectralFluxDetector::new(1024, 0.75, 0.1);
-        
+
         // Test with increasing magnitude
         let samples1 = vec![0.1; 100];
         let samples2 = vec![0.5; 100];
-        
+
         let flux1 = detector.calculate_flux(&samples1);
         let flux2 = detector.calculate_flux(&samples2);
-        
+
         assert!(flux2 > flux1); // Should detect increase
     }
 
     #[test]
     fn test_phase_deviation_detector() {
         let mut detector = PhaseDeviationDetector::new(0.15, 256);
-        
+
         // Test with changing signal
         let samples = vec![0.0, 0.1, 0.3, 0.1, 0.0];
         let deviation = detector.calculate_deviation(&samples);
-        
+
         assert!(deviation > 0.0); // Should detect phase changes
     }
 
     #[test]
     fn test_adaptive_threshold() {
         let mut threshold = AdaptiveThreshold::new(0.01, 10);
-        
+
         // Feed increasing levels
         for level in [0.1, 0.2, 0.3, 0.4, 0.5] {
             let adaptive_thresh = threshold.calculate_threshold(level);
@@ -912,19 +975,21 @@ mod tests {
         let pads_config = IntelligentDetectionConfig::for_pads();
         let leads_config = IntelligentDetectionConfig::for_leads();
         let percussive_config = IntelligentDetectionConfig::for_percussive();
-        
+
         // Pads should have lower threshold than leads
         assert!(pads_config.base_config.threshold_db < leads_config.base_config.threshold_db);
-        
+
         // Percussive should have shortest window
-        assert!(percussive_config.base_config.window_size_ms < pads_config.base_config.window_size_ms);
+        assert!(
+            percussive_config.base_config.window_size_ms < pads_config.base_config.window_size_ms
+        );
     }
 
     #[test]
     fn test_intelligent_detector_creation() {
         let detector = IntelligentSampleDetector::for_profile(SynthesizerProfile::Leads);
         assert_eq!(detector.config.profile, SynthesizerProfile::Leads);
-        
+
         let default_detector = IntelligentSampleDetector::default();
         assert_eq!(default_detector.config.profile, SynthesizerProfile::General);
     }
@@ -932,13 +997,13 @@ mod tests {
     #[test]
     fn test_professional_trimmer() {
         let trimmer = ProfessionalTrimmer::default();
-        
+
         // Create test audio with silence at start/end
         let mut audio = vec![0.0; 1000];
         for i in 200..800 {
             audio[i] = 0.5 * (i as f32 * 0.01).sin(); // Sine wave in middle
         }
-        
+
         // Create mock detection result
         let detection_result = IntelligentDetectionResult {
             base_result: crate::detection::DetectionResult {
@@ -955,9 +1020,11 @@ mod tests {
             primary_algorithm: DetectionAlgorithm::AdaptiveRMS,
             profile_used: SynthesizerProfile::General,
         };
-        
-        let result = trimmer.trim_audio(&audio, &detection_result, 44100).unwrap();
-        
+
+        let result = trimmer
+            .trim_audio(&audio, &detection_result, 44100)
+            .unwrap();
+
         // Should trim to roughly the detected boundaries
         assert!(result.audio_data.len() <= 600); // Original was 800-200=600
         assert!(result.quality_score > 0.0);
@@ -967,15 +1034,15 @@ mod tests {
     #[test]
     fn test_zero_crossing_alignment() {
         let trimmer = ProfessionalTrimmer::default();
-        
+
         // Create audio with known zero crossings
         let audio = vec![0.1, 0.05, 0.0, -0.05, -0.1, 0.0, 0.1]; // Zero crossings at indices 2 and 5
-        
+
         // Test forward search
         let zero_crossing = trimmer.find_zero_crossing(&audio, 1, true);
         assert_eq!(zero_crossing, 3); // Should find crossing at index 3 (after 2)
-        
-        // Test backward search  
+
+        // Test backward search
         let zero_crossing = trimmer.find_zero_crossing(&audio, 4, false);
         assert_eq!(zero_crossing, 3); // Should find crossing at index 3
     }
@@ -983,25 +1050,25 @@ mod tests {
     #[test]
     fn test_micro_fades() {
         let trimmer = ProfessionalTrimmer::default();
-        
+
         // Create audio with sudden start/end (will need fades)
         let mut audio = vec![0.5; 100]; // High level throughout
-        
+
         let applied = trimmer.apply_micro_fades(&mut audio, 44100);
         assert!(applied); // Should apply fades to high-level audio
-        
+
         // Check that fades were applied
         assert!(audio[0] < 0.5); // First sample should be faded
         assert!(audio[audio.len() - 1] < 0.5); // Last sample should be faded
     }
 
-    #[test] 
+    #[test]
     fn test_quality_validation() {
         let trimmer = ProfessionalTrimmer::default();
-        
+
         // Good quality audio (smooth sine wave)
         let good_audio: Vec<f32> = (0..1000).map(|i| 0.1 * (i as f32 * 0.01).sin()).collect();
-        
+
         let detection_result = IntelligentDetectionResult {
             base_result: crate::detection::DetectionResult {
                 start_sample: 0,
@@ -1017,14 +1084,16 @@ mod tests {
             primary_algorithm: DetectionAlgorithm::AdaptiveRMS,
             profile_used: SynthesizerProfile::General,
         };
-        
-        let (quality_score, notes) = trimmer.validate_quality(&good_audio, &detection_result, 44100);
+
+        let (quality_score, notes) =
+            trimmer.validate_quality(&good_audio, &detection_result, 44100);
         assert!(quality_score > 0.5); // Should be decent quality (adjusted threshold)
         assert!(!notes.is_empty()); // Should have some feedback
-        
+
         // Poor quality audio (very short and noisy)
         let poor_audio = vec![0.9, -0.8, 0.7]; // Very short with sudden changes
-        let (poor_quality, poor_notes) = trimmer.validate_quality(&poor_audio, &detection_result, 44100);
+        let (poor_quality, poor_notes) =
+            trimmer.validate_quality(&poor_audio, &detection_result, 44100);
         assert!(poor_quality < 0.8); // Should be lower quality than good audio
         assert!(poor_notes.iter().any(|note| note.contains("short")));
     }

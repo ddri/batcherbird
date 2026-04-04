@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use batcherbird_core::export::AudioFormat;
 use batcherbird_core::sampler::VizChunk;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {

@@ -1,69 +1,72 @@
 //! Batcherbird Core Library
-//! 
+//!
 //! Core library for hardware synthesizer sampling automation.
 
-pub mod error;
-pub mod midi;
+pub mod advanced_loop_detection;
+pub mod advanced_sampler_formats;
 pub mod audio;
+pub mod audio_diagnostics;
+pub mod batch_processing;
+pub mod config;
+pub mod crossfading;
+pub mod detection;
 pub mod device;
+pub mod error;
+pub mod export;
+pub mod intelligent_detection;
+pub mod lock_free_recording;
+pub mod loop_detection;
+pub mod midi;
+pub mod playback;
+pub mod professional_metadata;
+pub mod professional_meters;
+pub mod quality_validation;
+pub mod sampler;
 pub mod session;
 pub mod session_manager;
-pub mod config;
-pub mod sampler;
-pub mod export;
-pub mod detection;
-pub mod intelligent_detection;
-pub mod loop_detection;
-pub mod advanced_loop_detection;
-pub mod professional_metadata;
-pub mod crossfading;
-pub mod batch_processing;
-pub mod advanced_sampler_formats;
-pub mod quality_validation;
-pub mod playback;
-pub mod professional_meters;
-pub mod audio_diagnostics;
-pub mod lock_free_recording;
 
-pub use error::{BatcherbirdError, Result};
-pub use sampler::{AudioLevels, LevelMeterState};
-pub use professional_meters::{
-    ProfessionalMeterEngine, ProfessionalMeterReadings, GainStagingStatus,
-    GainStagingAssistant, GainStagingAnalysis, GainRecommendation, HeadroomStatus
-};
-pub use intelligent_detection::{
-    IntelligentSampleDetector, IntelligentDetectionConfig, IntelligentDetectionResult,
-    DetectionAlgorithm, SynthesizerProfile, ProfessionalTrimmer, TrimmingConfig, TrimmingResult
-};
 pub use advanced_loop_detection::{
-    AdvancedLoopDetector, AdvancedLoopConfig, AdvancedLoopResult, LoopCandidate, LoopQualityMetrics
-};
-pub use professional_metadata::{
-    ProfessionalMetadata, MetadataEngine, SmplChunk, BroadcastWavChunk, QualityMetrics, SamplerCompatibility
-};
-pub use crossfading::{
-    EqualPowerCrossfader, CrossfadeConfig, CrossfadeResult, CrossfadeQuality, CrossfadeCurve, PhaseAlignment
-};
-pub use batch_processing::{
-    BatchProcessor, BatchConfig, BatchResult, BatchProgress, SampleData, BatchPerformanceMetrics,
-    StreamingProcessor, StreamConfig, MemoryManager
+    AdvancedLoopConfig, AdvancedLoopDetector, AdvancedLoopResult, LoopCandidate, LoopQualityMetrics,
 };
 pub use advanced_sampler_formats::{
-    AdvancedInstrument, AdvancedSamplerExporter, VelocityLayer, VelocityLayerEngine, 
-    RoundRobinGroup, RoundRobinProcessor, ReleaseSample, Articulation, ArticulationTrigger,
-    LoopPoints, SampleInfo, InstrumentSettings, ADSREnvelope, FilterSettings
-};
-pub use quality_validation::{
-    ProfessionalQualityValidator, QualityValidationConfig, QualityThresholds, ValidationResult,
-    ValidationStatus, AudioQualityMetrics, QualityRecommendation, RecommendationSeverity
+    ADSREnvelope, AdvancedInstrument, AdvancedSamplerExporter, Articulation, ArticulationTrigger,
+    FilterSettings, InstrumentSettings, LoopPoints, ReleaseSample, RoundRobinGroup,
+    RoundRobinProcessor, SampleInfo, VelocityLayer, VelocityLayerEngine,
 };
 pub use audio_diagnostics::{
-    AudioDiagnostics, AudioPerformanceReport, CallbackTimer, LockTimer, PerformanceStatus
+    AudioDiagnostics, AudioPerformanceReport, CallbackTimer, LockTimer, PerformanceStatus,
+};
+pub use batch_processing::{
+    BatchConfig, BatchPerformanceMetrics, BatchProcessor, BatchProgress, BatchResult,
+    MemoryManager, SampleData, StreamConfig, StreamingProcessor,
+};
+pub use crossfading::{
+    CrossfadeConfig, CrossfadeCurve, CrossfadeQuality, CrossfadeResult, EqualPowerCrossfader,
+    PhaseAlignment,
+};
+pub use error::{BatcherbirdError, Result};
+pub use intelligent_detection::{
+    DetectionAlgorithm, IntelligentDetectionConfig, IntelligentDetectionResult,
+    IntelligentSampleDetector, ProfessionalTrimmer, SynthesizerProfile, TrimmingConfig,
+    TrimmingResult,
 };
 pub use lock_free_recording::{
-    LockFreeRecorder, LockFreeRecordingConfig, RecordingStats, RecordingPerformanceGrade,
-    RealtimeMeterData
+    LockFreeRecorder, LockFreeRecordingConfig, RealtimeMeterData, RecordingPerformanceGrade,
+    RecordingStats,
 };
+pub use professional_metadata::{
+    BroadcastWavChunk, MetadataEngine, ProfessionalMetadata, QualityMetrics, SamplerCompatibility,
+    SmplChunk,
+};
+pub use professional_meters::{
+    GainRecommendation, GainStagingAnalysis, GainStagingAssistant, GainStagingStatus,
+    HeadroomStatus, ProfessionalMeterEngine, ProfessionalMeterReadings,
+};
+pub use quality_validation::{
+    AudioQualityMetrics, ProfessionalQualityValidator, QualityRecommendation, QualityThresholds,
+    QualityValidationConfig, RecommendationSeverity, ValidationResult, ValidationStatus,
+};
+pub use sampler::{AudioLevels, LevelMeterState};
 
 #[cfg(test)]
 mod tests {

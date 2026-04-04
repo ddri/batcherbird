@@ -1,9 +1,9 @@
-use crate::{Result, BatcherbirdError};
-use crate::sampler::Sample;
 use crate::detection::DetectionConfig;
-use hound::{WavWriter, WavSpec, SampleFormat};
-use std::path::{Path, PathBuf};
+use crate::sampler::Sample;
+use crate::{BatcherbirdError, Result};
+use hound::{SampleFormat, WavSpec, WavWriter};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct ExportConfig {
@@ -26,7 +26,7 @@ pub enum AudioFormat {
     Wav24Bit,
     Wav32BitFloat,
     DecentSampler, // Generates .dspreset XML file with WAV samples
-    SFZ, // Generates .sfz file with WAV samples
+    SFZ,           // Generates .sfz file with WAV samples
 }
 
 impl Default for ExportConfig {
@@ -38,7 +38,7 @@ impl Default for ExportConfig {
             normalize: false,
             fade_in_ms: 0.0,
             fade_out_ms: 10.0,
-            apply_detection: true,  // Enable detection by default
+            apply_detection: true, // Enable detection by default
             detection_config: DetectionConfig::default(),
             creator_name: None,
             instrument_description: None,
@@ -54,10 +54,9 @@ impl SampleExporter {
     pub fn new(config: ExportConfig) -> Result<Self> {
         // Create output directory if it doesn't exist
         if !config.output_directory.exists() {
-            fs::create_dir_all(&config.output_directory)
-                .map_err(BatcherbirdError::Export)?;
+            fs::create_dir_all(&config.output_directory).map_err(BatcherbirdError::Export)?;
         }
-        
+
         Ok(Self { config })
     }
 
@@ -67,26 +66,26 @@ impl SampleExporter {
 
         // Clone sample for processing (detection may modify audio data)
         let mut sample_copy = sample.clone();
-        
+
         // Apply sample detection if enabled
         if self.config.apply_detection {
             // Attempt detection, but continue with export regardless of result
             let _ = sample_copy.apply_detection(self.config.detection_config.clone());
         }
-        
+
         // Process audio data
         let mut audio_data = sample_copy.audio_data.clone();
-        
+
         // Apply fades if configured
         if self.config.fade_in_ms > 0.0 || self.config.fade_out_ms > 0.0 {
             self.apply_fades(&mut audio_data, sample.sample_rate)?;
         }
-        
+
         // Normalize if configured
         if self.config.normalize {
             self.normalize_audio(&mut audio_data)?;
         }
-        
+
         // Handle different export formats
         match self.config.sample_format {
             AudioFormat::DecentSampler => {
@@ -98,7 +97,7 @@ impl SampleExporter {
                 };
                 let temp_exporter = SampleExporter { config: wav_config };
                 temp_exporter.write_wav_file(&filepath, &audio_data, sample)?;
-            },
+            }
             AudioFormat::SFZ => {
                 // For SFZ, we only write WAV files here
                 // The .sfz file will be generated separately via export_samples()
@@ -108,7 +107,7 @@ impl SampleExporter {
                 };
                 let temp_exporter = SampleExporter { config: wav_config };
                 temp_exporter.write_wav_file(&filepath, &audio_data, sample)?;
-            },
+            }
             _ => {
                 // Standard WAV export
                 self.write_wav_file(&filepath, &audio_data, sample)?;
@@ -125,7 +124,7 @@ impl SampleExporter {
             let filepath = self.export_sample(sample)?;
             exported_files.push(filepath);
         }
-        
+
         // Generate .dspreset XML file for DecentSampler format
         if matches!(self.config.sample_format, AudioFormat::DecentSampler) {
             let dspreset_path = self.generate_dspreset_file(samples, &exported_files)?;
@@ -144,9 +143,10 @@ impl SampleExporter {
     fn generate_filename(&self, sample: &Sample) -> String {
         let note_name = Self::note_to_name(sample.note);
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-        
+
         // Consistent "vel" prefix naming for all samples: C4_60_vel127.wav
-        self.config.naming_pattern
+        self.config
+            .naming_pattern
             .replace("{note}", &sample.note.to_string())
             .replace("{note_name}", &note_name)
             .replace("{velocity}", &format!("vel{:03}", sample.velocity)) // vel064, vel127
@@ -157,9 +157,9 @@ impl SampleExporter {
     fn apply_fades(&self, audio_data: &mut [f32], sample_rate: u32) -> Result<()> {
         let fade_in_samples = ((self.config.fade_in_ms / 1000.0) * sample_rate as f32) as usize;
         let fade_out_samples = ((self.config.fade_out_ms / 1000.0) * sample_rate as f32) as usize;
-        
+
         let len = audio_data.len();
-        
+
         // Apply fade in
         if fade_in_samples > 0 && fade_in_samples < len {
             for i in 0..fade_in_samples.min(len) {
@@ -167,7 +167,7 @@ impl SampleExporter {
                 audio_data[i] *= fade_factor;
             }
         }
-        
+
         // Apply fade out
         if fade_out_samples > 0 && fade_out_samples < len {
             let fade_start = len.saturating_sub(fade_out_samples);
@@ -176,16 +176,17 @@ impl SampleExporter {
                 audio_data[i] *= fade_factor;
             }
         }
-        
+
         Ok(())
     }
 
     fn normalize_audio(&self, audio_data: &mut [f32]) -> Result<()> {
         // Find peak amplitude
-        let peak = audio_data.iter()
+        let peak = audio_data
+            .iter()
             .map(|&sample| sample.abs())
             .fold(0.0f32, f32::max);
-        
+
         if peak > 0.0 && peak < 1.0 {
             let gain = 0.95 / peak; // Normalize to 95% to avoid clipping
             for sample in audio_data.iter_mut() {
@@ -200,11 +201,11 @@ impl SampleExporter {
         // Validate audio data first
         if audio_data.is_empty() {
             return Err(BatcherbirdError::Export(std::io::Error::new(
-                std::io::ErrorKind::InvalidData, 
-                "Cannot export empty audio data"
+                std::io::ErrorKind::InvalidData,
+                "Cannot export empty audio data",
             )));
         }
-        
+
         let spec = match self.config.sample_format {
             AudioFormat::Wav16Bit => WavSpec {
                 channels: sample.channels,
@@ -227,13 +228,13 @@ impl SampleExporter {
             AudioFormat::DecentSampler => {
                 return Err(BatcherbirdError::Export(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "DecentSampler format should be handled separately, not in WAV writing"
+                    "DecentSampler format should be handled separately, not in WAV writing",
                 )));
-            },
+            }
             AudioFormat::SFZ => {
                 return Err(BatcherbirdError::Export(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "SFZ format should not reach write_wav_file - this is a logic error"
+                    "SFZ format should not reach write_wav_file - this is a logic error",
                 )));
             }
         };
@@ -247,39 +248,43 @@ impl SampleExporter {
             AudioFormat::Wav16Bit => {
                 for &sample in audio_data.iter() {
                     let sample_i16 = (sample * i16::MAX as f32) as i16;
-                    writer.write_sample(sample_i16)
+                    writer
+                        .write_sample(sample_i16)
                         .map_err(|e| BatcherbirdError::Export(std::io::Error::other(e)))?;
                 }
             }
             AudioFormat::Wav24Bit => {
                 for &sample in audio_data.iter() {
                     let sample_i32 = (sample * 8_388_607.0) as i32; // 24-bit max value
-                    writer.write_sample(sample_i32)
+                    writer
+                        .write_sample(sample_i32)
                         .map_err(|e| BatcherbirdError::Export(std::io::Error::other(e)))?;
                 }
             }
             AudioFormat::Wav32BitFloat => {
                 for &sample in audio_data.iter() {
-                    writer.write_sample(sample)
+                    writer
+                        .write_sample(sample)
                         .map_err(|e| BatcherbirdError::Export(std::io::Error::other(e)))?;
                 }
             }
             AudioFormat::DecentSampler => {
                 return Err(BatcherbirdError::Export(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "DecentSampler format should not reach write_wav_file - this is a logic error"
+                    "DecentSampler format should not reach write_wav_file - this is a logic error",
                 )));
-            },
+            }
             AudioFormat::SFZ => {
                 return Err(BatcherbirdError::Export(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "SFZ format should not reach write_wav_file - this is a logic error"
+                    "SFZ format should not reach write_wav_file - this is a logic error",
                 )));
             }
         }
 
         // Finalize with explicit error handling
-        writer.finalize()
+        writer
+            .finalize()
             .map_err(|e| BatcherbirdError::Export(std::io::Error::other(e)))?;
 
         // Explicitly sync file to disk to prevent corruption during rapid batch exports
@@ -294,119 +299,26 @@ impl SampleExporter {
     }
 
     fn note_to_name(note: u8) -> String {
-        let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        let note_names = [
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+        ];
         let octave = (note / 12).saturating_sub(1);
         let note_name = note_names[(note % 12) as usize];
         format!("{}{}", note_name, octave)
     }
 
     /// Generate a Decent Sampler .dspreset XML file
-    pub fn generate_dspreset_file(&self, samples: &[Sample], wav_files: &[PathBuf]) -> Result<PathBuf> {
+    pub fn generate_dspreset_file(
+        &self,
+        samples: &[Sample],
+        wav_files: &[PathBuf],
+    ) -> Result<PathBuf> {
         use std::io::Write;
-        
-        // Create the .dspreset filename (use the sample name from config or default)
-        let preset_name = self.config.naming_pattern
-            .replace("{note}", "")
-            .replace("{note_name}", "")  
-            .replace("{velocity}", "")
-            .replace("_", "")
-            .replace(".wav", "")
-            .trim_matches('_')
-            .to_string();
-            
-        let preset_name = if preset_name.is_empty() { 
-            "Batcherbird_Instrument".to_string() 
-        } else { 
-            preset_name 
-        };
-        
-        let dspreset_filename = format!("{}.dspreset", preset_name);
-        let dspreset_path = self.config.output_directory.join(&dspreset_filename);
-        
-        // Group samples by velocity for layering
-        let mut velocity_groups = std::collections::HashMap::new();
-        for (i, sample) in samples.iter().enumerate() {
-            if i < wav_files.len() {
-                velocity_groups.entry(sample.velocity)
-                    .or_insert_with(Vec::new)
-                    .push((sample, &wav_files[i]));
-            }
-        }
-        
-        // Generate XML content
-        let xml_content = self.generate_dspreset_xml(&preset_name, &velocity_groups)?;
-        
-        // Write XML file
-        let mut file = std::fs::File::create(&dspreset_path)
-            .map_err(BatcherbirdError::Export)?;
-        
-        file.write_all(xml_content.as_bytes())
-            .map_err(BatcherbirdError::Export)?;
 
-        Ok(dspreset_path)
-    }
-    
-    /// Generate the XML content for a Decent Sampler .dspreset file
-    fn generate_dspreset_xml(&self, preset_name: &str, velocity_groups: &std::collections::HashMap<u8, Vec<(&Sample, &PathBuf)>>) -> Result<String> {
-        let mut xml = String::new();
-        
-        // XML Declaration and root element following official template
-        xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        xml.push_str(&format!("<!-- {} - Generated by Batcherbird -->\n", preset_name));
-        
-        // Add creator and description in comment if provided
-        if let Some(ref creator) = self.config.creator_name {
-            xml.push_str(&format!("<!-- Creator: {} -->\n", creator));
-        }
-        if let Some(ref description) = self.config.instrument_description {
-            xml.push_str(&format!("<!-- Description: {} -->\n", description));
-        }
-        
-        xml.push_str("<DecentSampler>\n");
-        
-        // UI Section following official template structure
-        xml.push_str("  <ui width=\"812\" height=\"375\">\n");
-        xml.push_str("    <tab name=\"main\">\n");
-        xml.push_str("      <labeled-knob x=\"50\" y=\"50\" label=\"Volume\" type=\"float\" minValue=\"0\" maxValue=\"1\" value=\"0.7\">\n");
-        xml.push_str("        <binding type=\"amp\" level=\"instrument\" parameter=\"VOLUME\" />\n");
-        xml.push_str("      </labeled-knob>\n");
-        xml.push_str("    </tab>\n");
-        xml.push_str("  </ui>\n");
-        
-        // Groups Section following official template
-        xml.push_str("  <groups>\n");
-        xml.push_str("    <group>\n");
-        
-        // Add all samples following the working example format
-        for samples in velocity_groups.values() {
-            for (sample, wav_file) in samples {
-                let filename = wav_file.file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("sample.wav");
-                
-                // Use official template sample format
-                xml.push_str(&format!(
-                    "      <sample path=\"{}\" loNote=\"{}\" hiNote=\"{}\" rootNote=\"{}\" />\n",
-                    filename, sample.note, sample.note, sample.note
-                ));
-            }
-        }
-        
-        xml.push_str("    </group>\n");
-        xml.push_str("  </groups>\n");
-        
-        // Close root element
-        xml.push_str("</DecentSampler>\n");
-        
-        Ok(xml)
-    }
-    
-    /// Generate an SFZ .sfz file
-    pub fn generate_sfz_file(&self, samples: &[Sample], wav_files: &[PathBuf]) -> Result<PathBuf> {
-        use std::io::Write;
-        
-        // Create the .sfz filename (use the sample name from config or default)
-        let preset_name = self.config.naming_pattern
+        // Create the .dspreset filename (use the sample name from config or default)
+        let preset_name = self
+            .config
+            .naming_pattern
             .replace("{note}", "")
             .replace("{note_name}", "")
             .replace("{velocity}", "")
@@ -414,46 +326,163 @@ impl SampleExporter {
             .replace(".wav", "")
             .trim_matches('_')
             .to_string();
-            
+
         let preset_name = if preset_name.is_empty() {
             "Batcherbird_Instrument".to_string()
         } else {
             preset_name
         };
-        
-        let sfz_filename = format!("{}.sfz", preset_name);
-        let sfz_path = self.config.output_directory.join(&sfz_filename);
-        
+
+        let dspreset_filename = format!("{}.dspreset", preset_name);
+        let dspreset_path = self.config.output_directory.join(&dspreset_filename);
+
         // Group samples by velocity for layering
         let mut velocity_groups = std::collections::HashMap::new();
         for (i, sample) in samples.iter().enumerate() {
             if i < wav_files.len() {
-                velocity_groups.entry(sample.velocity)
+                velocity_groups
+                    .entry(sample.velocity)
                     .or_insert_with(Vec::new)
                     .push((sample, &wav_files[i]));
             }
         }
-        
+
+        // Generate XML content
+        let xml_content = self.generate_dspreset_xml(&preset_name, &velocity_groups)?;
+
+        // Write XML file
+        let mut file = std::fs::File::create(&dspreset_path).map_err(BatcherbirdError::Export)?;
+
+        file.write_all(xml_content.as_bytes())
+            .map_err(BatcherbirdError::Export)?;
+
+        Ok(dspreset_path)
+    }
+
+    /// Generate the XML content for a Decent Sampler .dspreset file
+    fn generate_dspreset_xml(
+        &self,
+        preset_name: &str,
+        velocity_groups: &std::collections::HashMap<u8, Vec<(&Sample, &PathBuf)>>,
+    ) -> Result<String> {
+        let mut xml = String::new();
+
+        // XML Declaration and root element following official template
+        xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        xml.push_str(&format!(
+            "<!-- {} - Generated by Batcherbird -->\n",
+            preset_name
+        ));
+
+        // Add creator and description in comment if provided
+        if let Some(ref creator) = self.config.creator_name {
+            xml.push_str(&format!("<!-- Creator: {} -->\n", creator));
+        }
+        if let Some(ref description) = self.config.instrument_description {
+            xml.push_str(&format!("<!-- Description: {} -->\n", description));
+        }
+
+        xml.push_str("<DecentSampler>\n");
+
+        // UI Section following official template structure
+        xml.push_str("  <ui width=\"812\" height=\"375\">\n");
+        xml.push_str("    <tab name=\"main\">\n");
+        xml.push_str("      <labeled-knob x=\"50\" y=\"50\" label=\"Volume\" type=\"float\" minValue=\"0\" maxValue=\"1\" value=\"0.7\">\n");
+        xml.push_str(
+            "        <binding type=\"amp\" level=\"instrument\" parameter=\"VOLUME\" />\n",
+        );
+        xml.push_str("      </labeled-knob>\n");
+        xml.push_str("    </tab>\n");
+        xml.push_str("  </ui>\n");
+
+        // Groups Section following official template
+        xml.push_str("  <groups>\n");
+        xml.push_str("    <group>\n");
+
+        // Add all samples following the working example format
+        for samples in velocity_groups.values() {
+            for (sample, wav_file) in samples {
+                let filename = wav_file
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("sample.wav");
+
+                // Use official template sample format
+                xml.push_str(&format!(
+                    "      <sample path=\"{}\" loNote=\"{}\" hiNote=\"{}\" rootNote=\"{}\" />\n",
+                    filename, sample.note, sample.note, sample.note
+                ));
+            }
+        }
+
+        xml.push_str("    </group>\n");
+        xml.push_str("  </groups>\n");
+
+        // Close root element
+        xml.push_str("</DecentSampler>\n");
+
+        Ok(xml)
+    }
+
+    /// Generate an SFZ .sfz file
+    pub fn generate_sfz_file(&self, samples: &[Sample], wav_files: &[PathBuf]) -> Result<PathBuf> {
+        use std::io::Write;
+
+        // Create the .sfz filename (use the sample name from config or default)
+        let preset_name = self
+            .config
+            .naming_pattern
+            .replace("{note}", "")
+            .replace("{note_name}", "")
+            .replace("{velocity}", "")
+            .replace("_", "")
+            .replace(".wav", "")
+            .trim_matches('_')
+            .to_string();
+
+        let preset_name = if preset_name.is_empty() {
+            "Batcherbird_Instrument".to_string()
+        } else {
+            preset_name
+        };
+
+        let sfz_filename = format!("{}.sfz", preset_name);
+        let sfz_path = self.config.output_directory.join(&sfz_filename);
+
+        // Group samples by velocity for layering
+        let mut velocity_groups = std::collections::HashMap::new();
+        for (i, sample) in samples.iter().enumerate() {
+            if i < wav_files.len() {
+                velocity_groups
+                    .entry(sample.velocity)
+                    .or_insert_with(Vec::new)
+                    .push((sample, &wav_files[i]));
+            }
+        }
+
         // Generate SFZ content
         let sfz_content = self.generate_sfz_content(&preset_name, &velocity_groups)?;
-        
+
         // Write SFZ file
-        let mut file = std::fs::File::create(&sfz_path)
-            .map_err(BatcherbirdError::Export)?;
-        
+        let mut file = std::fs::File::create(&sfz_path).map_err(BatcherbirdError::Export)?;
+
         file.write_all(sfz_content.as_bytes())
             .map_err(BatcherbirdError::Export)?;
 
         Ok(sfz_path)
     }
-    
+
     /// Generate the SFZ content
-    fn generate_sfz_content(&self, preset_name: &str, velocity_groups: &std::collections::HashMap<u8, Vec<(&Sample, &PathBuf)>>) -> Result<String> {
+    fn generate_sfz_content(
+        &self,
+        preset_name: &str,
+        velocity_groups: &std::collections::HashMap<u8, Vec<(&Sample, &PathBuf)>>,
+    ) -> Result<String> {
         let mut sfz = String::new();
-        
+
         // SFZ Header with comments
         sfz.push_str(&format!("// {} - Generated by Batcherbird\n", preset_name));
-        
+
         // Add creator and description in comments if provided
         if let Some(ref creator) = self.config.creator_name {
             sfz.push_str(&format!("// Creator: {}\n", creator));
@@ -461,30 +490,30 @@ impl SampleExporter {
         if let Some(ref description) = self.config.instrument_description {
             sfz.push_str(&format!("// Description: {}\n", description));
         }
-        
+
         sfz.push('\n');
-        
+
         // Control section - path settings
         sfz.push_str("<control>\n");
         sfz.push_str("default_path=samples/\n");
         sfz.push('\n');
-        
+
         // Global section - overall settings
         sfz.push_str("<global>\n");
         sfz.push_str("ampeg_release=0.5\n");
         sfz.push('\n');
-        
+
         // Sort velocity groups for consistent output
         let mut sorted_velocities: Vec<_> = velocity_groups.keys().collect();
         sorted_velocities.sort();
-        
+
         // Generate regions for each velocity layer
         for (group_index, &velocity) in sorted_velocities.iter().enumerate() {
             if let Some(samples) = velocity_groups.get(velocity) {
                 // Group header for this velocity layer
                 if sorted_velocities.len() > 1 {
                     sfz.push_str("<group>\n");
-                    
+
                     // Calculate velocity range for this layer
                     let (lo_vel, hi_vel) = if sorted_velocities.len() == 1 {
                         (1, 127) // Single velocity covers full range
@@ -495,33 +524,34 @@ impl SampleExporter {
                         let hi = (((group_index + 1) as f32 * vel_range) as u8).min(127);
                         (lo, hi)
                     };
-                    
+
                     sfz.push_str(&format!("lovel={}\n", lo_vel));
                     sfz.push_str(&format!("hivel={}\n", hi_vel));
                     sfz.push('\n');
                 }
-                
+
                 // Add regions (samples) for this velocity group
                 for (sample, wav_file) in samples {
-                    let filename = wav_file.file_name()
+                    let filename = wav_file
+                        .file_name()
                         .and_then(|name| name.to_str())
                         .unwrap_or("sample.wav");
-                    
+
                     sfz.push_str("<region>\n");
                     sfz.push_str(&format!("sample={}\n", filename));
                     sfz.push_str(&format!("key={}\n", sample.note));
-                    
+
                     // Add velocity range for single-layer instruments
                     if sorted_velocities.len() == 1 {
                         sfz.push_str("lovel=1\n");
                         sfz.push_str("hivel=127\n");
                     }
-                    
+
                     sfz.push('\n');
                 }
             }
         }
-        
+
         Ok(sfz)
     }
 

@@ -1,6 +1,6 @@
-use vizia::prelude::*;
 use crate::app_data::AppData;
 use crate::app_event::AppEvent;
+use vizia::prelude::*;
 
 pub fn sidebar(cx: &mut Context) {
     VStack::new(cx, |cx| {
@@ -53,21 +53,15 @@ pub fn sidebar(cx: &mut Context) {
             HStack::new(cx, |cx| {
                 VStack::new(cx, |cx| {
                     Label::new(cx, "START").class("field-label");
-                    Label::new(
-                        cx,
-                        AppData::start_note.map(|n: &u8| AppData::note_name(*n)),
-                    )
-                    .class("field-value");
+                    Label::new(cx, AppData::start_note.map(|n: &u8| AppData::note_name(*n)))
+                        .class("field-value");
                 })
                 .class("field-box");
 
                 VStack::new(cx, |cx| {
                     Label::new(cx, "END").class("field-label");
-                    Label::new(
-                        cx,
-                        AppData::end_note.map(|n: &u8| AppData::note_name(*n)),
-                    )
-                    .class("field-value");
+                    Label::new(cx, AppData::end_note.map(|n: &u8| AppData::note_name(*n)))
+                        .class("field-value");
                 })
                 .class("field-box");
             })
@@ -76,11 +70,8 @@ pub fn sidebar(cx: &mut Context) {
             HStack::new(cx, |cx| {
                 VStack::new(cx, |cx| {
                     Label::new(cx, "LAYERS").class("field-label");
-                    Label::new(
-                        cx,
-                        AppData::velocity_layers.map(|n: &u8| n.to_string()),
-                    )
-                    .class("field-value");
+                    Label::new(cx, AppData::velocity_layers.map(|n: &u8| n.to_string()))
+                        .class("field-value");
                 })
                 .class("field-box");
 
@@ -88,9 +79,8 @@ pub fn sidebar(cx: &mut Context) {
                     Label::new(cx, "DURATION").class("field-label");
                     Label::new(
                         cx,
-                        AppData::note_duration_ms.map(|ms: &u32| {
-                            format!("{:.1}s", *ms as f32 / 1000.0)
-                        }),
+                        AppData::note_duration_ms
+                            .map(|ms: &u32| format!("{:.1}s", *ms as f32 / 1000.0)),
                     )
                     .class("field-value");
                 })

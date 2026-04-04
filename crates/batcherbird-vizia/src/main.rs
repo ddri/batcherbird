@@ -1,8 +1,8 @@
-use std::time::Duration;
-use vizia::prelude::*;
 use batcherbird_vizia::app_data::AppData;
 use batcherbird_vizia::app_event::AppEvent;
 use batcherbird_vizia::views::{sidebar, stage};
+use std::time::Duration;
+use vizia::prelude::*;
 
 fn main() -> Result<(), ApplicationError> {
     Application::new(|cx| {

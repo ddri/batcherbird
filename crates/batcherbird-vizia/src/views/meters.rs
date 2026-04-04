@@ -1,6 +1,6 @@
+use crate::app_data::AppData;
 use vizia::prelude::*;
 use vizia::vg;
-use crate::app_data::AppData;
 
 fn meter_color(level: f32) -> vg::Color {
     if level > 0.8 {

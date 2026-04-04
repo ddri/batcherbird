@@ -1,7 +1,7 @@
-use vizia::prelude::*;
+use super::{keyboard, meters, note_display, progress_bar, WaveformView};
 use crate::app_data::{AppData, AppState};
 use crate::app_event::AppEvent;
-use super::{meters, keyboard, note_display, progress_bar, WaveformView};
+use vizia::prelude::*;
 
 pub fn stage(cx: &mut Context) {
     VStack::new(cx, |cx| {
@@ -52,10 +52,8 @@ pub fn stage(cx: &mut Context) {
                         let layers = AppData::velocity_layers.get(cx);
                         let num_notes = (end as u32).saturating_sub(start as u32) + 1;
                         let total = num_notes * layers as u32;
-                        let text = format!(
-                            "{} notes · {} layers · {} total",
-                            num_notes, layers, total
-                        );
+                        let text =
+                            format!("{} notes · {} layers · {} total", num_notes, layers, total);
                         Label::new(cx, &text).class("idle-summary");
                     });
                 });
