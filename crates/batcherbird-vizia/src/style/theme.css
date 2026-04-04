@@ -99,6 +99,44 @@
     width: 1s;
 }
 
+.field-controls {
+    width: 1s;
+    height: auto;
+    col-between: 2px;
+    child-top: auto;
+    child-bottom: auto;
+}
+
+.field-box-interactive {
+    background-color: #161620;
+    border-color: #252530;
+    border-width: 1px;
+    corner-radius: 4px;
+    child-space: 6px;
+    cursor: pointer;
+}
+
+.field-box-interactive:hover {
+    border-color: #4a9eff;
+}
+
+.btn-sm {
+    width: 20px;
+    height: 20px;
+    background-color: #252530;
+    border-color: #333333;
+    border-width: 1px;
+    corner-radius: 3px;
+    color: #888888;
+    font-size: 12;
+    child-space: 0px;
+}
+
+.btn-sm:hover {
+    background-color: #333340;
+    color: #cccccc;
+}
+
 /* ------------------------------------------------------------------ */
 /* DIVIDER                                                              */
 /* ------------------------------------------------------------------ */

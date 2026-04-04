@@ -2,12 +2,20 @@ use crate::app_data::AppData;
 use crate::app_event::AppEvent;
 use vizia::prelude::*;
 
+/// Small +/- button helper
+fn increment_button(cx: &mut Context, label: &str, event: AppEvent) {
+    Button::new(cx, |cx| Label::new(cx, label))
+        .class("btn-sm")
+        .on_press(move |cx| cx.emit(event.clone()));
+}
+
 pub fn sidebar(cx: &mut Context) {
     VStack::new(cx, |cx| {
         // DEVICES section
         VStack::new(cx, |cx| {
             Label::new(cx, "DEVICES").class("sidebar-label");
 
+            // MIDI device row
             VStack::new(cx, |cx| {
                 Label::new(cx, "MIDI Out").class("device-type");
                 HStack::new(cx, |cx| {
@@ -20,7 +28,10 @@ pub fn sidebar(cx: &mut Context) {
                                 _ if !devs.is_empty() => devs[0].clone(),
                                 _ => "No MIDI devices".to_string(),
                             };
-                            Label::new(cx, &name).class("device-name");
+                            Label::new(cx, &name)
+                                .class("device-name")
+                                .cursor(CursorIcon::Hand)
+                                .on_press(|cx| cx.emit(AppEvent::CycleNextMidiDevice));
                         });
                     });
                     Binding::new(cx, AppData::midi_connected, |cx, connected| {
@@ -37,6 +48,7 @@ pub fn sidebar(cx: &mut Context) {
             })
             .class("device-row");
 
+            // Audio input row
             VStack::new(cx, |cx| {
                 Label::new(cx, "Audio In").class("device-type");
                 HStack::new(cx, |cx| {
@@ -49,7 +61,10 @@ pub fn sidebar(cx: &mut Context) {
                                 _ if !devs.is_empty() => devs[0].clone(),
                                 _ => "No audio devices".to_string(),
                             };
-                            Label::new(cx, &name).class("device-name");
+                            Label::new(cx, &name)
+                                .class("device-name")
+                                .cursor(CursorIcon::Hand)
+                                .on_press(|cx| cx.emit(AppEvent::CycleNextAudioInput));
                         });
                     });
                     Binding::new(cx, AppData::audio_connected, |cx, connected| {
@@ -75,40 +90,64 @@ pub fn sidebar(cx: &mut Context) {
             Label::new(cx, "SAMPLING").class("sidebar-label");
 
             HStack::new(cx, |cx| {
+                // START note
                 VStack::new(cx, |cx| {
                     Label::new(cx, "START").class("field-label");
-                    Label::new(cx, AppData::start_note.map(|n: &u8| AppData::note_name(*n)))
-                        .class("field-value");
+                    HStack::new(cx, |cx| {
+                        increment_button(cx, "-", AppEvent::DecrementStartNote);
+                        Label::new(cx, AppData::start_note.map(|n: &u8| AppData::note_name(*n)))
+                            .class("field-value");
+                        increment_button(cx, "+", AppEvent::IncrementStartNote);
+                    })
+                    .class("field-controls");
                 })
-                .class("field-box");
+                .class("field-box field-box-interactive");
 
+                // END note
                 VStack::new(cx, |cx| {
                     Label::new(cx, "END").class("field-label");
-                    Label::new(cx, AppData::end_note.map(|n: &u8| AppData::note_name(*n)))
-                        .class("field-value");
+                    HStack::new(cx, |cx| {
+                        increment_button(cx, "-", AppEvent::DecrementEndNote);
+                        Label::new(cx, AppData::end_note.map(|n: &u8| AppData::note_name(*n)))
+                            .class("field-value");
+                        increment_button(cx, "+", AppEvent::IncrementEndNote);
+                    })
+                    .class("field-controls");
                 })
-                .class("field-box");
+                .class("field-box field-box-interactive");
             })
             .gap(Pixels(8.0));
 
             HStack::new(cx, |cx| {
+                // LAYERS
                 VStack::new(cx, |cx| {
                     Label::new(cx, "LAYERS").class("field-label");
-                    Label::new(cx, AppData::velocity_layers.map(|n: &u8| n.to_string()))
-                        .class("field-value");
+                    HStack::new(cx, |cx| {
+                        increment_button(cx, "-", AppEvent::DecrementVelocityLayers);
+                        Label::new(cx, AppData::velocity_layers.map(|n: &u8| n.to_string()))
+                            .class("field-value");
+                        increment_button(cx, "+", AppEvent::IncrementVelocityLayers);
+                    })
+                    .class("field-controls");
                 })
-                .class("field-box");
+                .class("field-box field-box-interactive");
 
+                // DURATION
                 VStack::new(cx, |cx| {
                     Label::new(cx, "DURATION").class("field-label");
-                    Label::new(
-                        cx,
-                        AppData::note_duration_ms
-                            .map(|ms: &u32| format!("{:.1}s", *ms as f32 / 1000.0)),
-                    )
-                    .class("field-value");
+                    HStack::new(cx, |cx| {
+                        increment_button(cx, "-", AppEvent::DecrementDuration);
+                        Label::new(
+                            cx,
+                            AppData::note_duration_ms
+                                .map(|ms: &u32| format!("{:.1}s", *ms as f32 / 1000.0)),
+                        )
+                        .class("field-value");
+                        increment_button(cx, "+", AppEvent::IncrementDuration);
+                    })
+                    .class("field-controls");
                 })
-                .class("field-box");
+                .class("field-box field-box-interactive");
             })
             .gap(Pixels(8.0));
         })
@@ -120,12 +159,19 @@ pub fn sidebar(cx: &mut Context) {
         VStack::new(cx, |cx| {
             Label::new(cx, "EXPORT").class("sidebar-label");
 
+            // FORMAT — click to cycle
             VStack::new(cx, |cx| {
                 Label::new(cx, "FORMAT").class("field-label");
-                Label::new(cx, "Wav24Bit").class("field-value");
+                Label::new(cx, AppData::export_format_display)
+                    .class("field-value")
+                    .cursor(CursorIcon::Hand)
+                    .on_press(|cx| cx.emit(AppEvent::CycleExportFormat));
             })
-            .class("field-box");
+            .class("field-box field-box-interactive")
+            .cursor(CursorIcon::Hand)
+            .on_press(|cx| cx.emit(AppEvent::CycleExportFormat));
 
+            // OUTPUT directory
             VStack::new(cx, |cx| {
                 Label::new(cx, "OUTPUT").class("field-label");
                 Label::new(
