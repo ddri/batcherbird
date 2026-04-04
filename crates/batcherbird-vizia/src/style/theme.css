@@ -1,29 +1,24 @@
-/* BatcherBird Dark Theme — VIZIA-native properties */
+/* BatcherBird Dark Theme */
+/* Uses VIZIA CSS properties verified from vizia-sample-browser */
 
 :root {
     background-color: #111118;
     color: #e0e0e0;
+    font-size: 12;
 }
-
-/* ------------------------------------------------------------------ */
-/* SIDEBAR                                                              */
-/* ------------------------------------------------------------------ */
 
 .sidebar {
     width: 220px;
     height: 1s;
     background-color: #0e0e15;
-    row-between: 0px;
+    vertical-gap: 0px;
 }
 
 .sidebar-section {
     width: 1s;
     height: auto;
-    child-left: 14px;
-    child-right: 14px;
-    child-top: 12px;
-    child-bottom: 8px;
-    row-between: 8px;
+    padding: 14px;
+    vertical-gap: 10px;
 }
 
 .sidebar-label {
@@ -33,11 +28,10 @@
     height: auto;
 }
 
-/* Device rows */
 .device-row {
     width: 1s;
     height: auto;
-    row-between: 2px;
+    vertical-gap: 2px;
 }
 
 .device-type {
@@ -50,9 +44,9 @@
     color: #cccccc;
     font-size: 12;
     height: auto;
+    cursor: hand;
 }
 
-/* Signal dots */
 .signal-dot {
     width: 7px;
     height: 7px;
@@ -64,9 +58,11 @@
     background-color: #555555;
 }
 
-/* ------------------------------------------------------------------ */
-/* FIELD BOXES                                                          */
-/* ------------------------------------------------------------------ */
+.divider {
+    width: 1s;
+    height: 1px;
+    background-color: #222230;
+}
 
 .field-box {
     width: 1s;
@@ -75,11 +71,23 @@
     border-width: 1px;
     border-color: #252530;
     corner-radius: 4px;
-    child-left: 6px;
-    child-right: 6px;
-    child-top: 4px;
-    child-bottom: 4px;
-    row-between: 2px;
+    padding: 6px;
+    vertical-gap: 2px;
+}
+
+.field-box-interactive {
+    width: 1s;
+    height: auto;
+    background-color: #161620;
+    border-width: 1px;
+    border-color: #252530;
+    corner-radius: 4px;
+    padding: 6px;
+    vertical-gap: 2px;
+}
+
+.field-box-interactive:hover {
+    border-color: #4a9eff;
 }
 
 .field-label {
@@ -92,36 +100,19 @@
     color: #dddddd;
     font-size: 13;
     height: auto;
-    child-top: auto;
-    child-bottom: auto;
-}
-
-.field-controls {
-    width: 1s;
-    height: auto;
-    col-between: 4px;
 }
 
 .field-row {
     width: 1s;
     height: auto;
-    col-between: 8px;
+    horizontal-gap: 8px;
 }
 
-.field-box-interactive {
-    background-color: #161620;
-    border-color: #252530;
-    border-width: 1px;
-    corner-radius: 4px;
-    child-left: 6px;
-    child-right: 6px;
-    child-top: 4px;
-    child-bottom: 4px;
-    row-between: 2px;
-}
-
-.field-box-interactive:hover {
-    border-color: #4a9eff;
+.field-controls {
+    width: 1s;
+    height: auto;
+    horizontal-gap: 4px;
+    alignment: left;
 }
 
 .btn-sm {
@@ -133,7 +124,8 @@
     corner-radius: 3px;
     color: #888888;
     font-size: 11;
-    child-space: auto;
+    alignment: center;
+    cursor: hand;
 }
 
 .btn-sm:hover {
@@ -141,45 +133,25 @@
     color: #cccccc;
 }
 
-/* ------------------------------------------------------------------ */
-/* DIVIDER                                                              */
-/* ------------------------------------------------------------------ */
-
-.divider {
-    width: 1s;
-    height: 1px;
-    background-color: #222230;
-}
-
-/* ------------------------------------------------------------------ */
-/* STAGE (main area)                                                    */
-/* ------------------------------------------------------------------ */
-
 .stage {
     width: 1s;
     height: 1s;
     background-color: #111118;
-    child-left: 20px;
-    child-right: 20px;
-    child-top: 16px;
-    child-bottom: 16px;
-    row-between: 12px;
+    padding: 20px;
+    vertical-gap: 12px;
 }
-
-/* ------------------------------------------------------------------ */
-/* METERS                                                               */
-/* ------------------------------------------------------------------ */
 
 .meters {
     width: 1s;
     height: auto;
-    row-between: 4px;
+    vertical-gap: 4px;
 }
 
 .meter-row {
     width: 1s;
     height: auto;
-    col-between: 8px;
+    horizontal-gap: 8px;
+    alignment: left;
 }
 
 .meter-label {
@@ -187,8 +159,6 @@
     font-size: 10;
     width: 14px;
     height: auto;
-    child-top: auto;
-    child-bottom: auto;
 }
 
 .meter-db {
@@ -196,13 +166,7 @@
     font-size: 10;
     width: 36px;
     height: auto;
-    child-top: auto;
-    child-bottom: auto;
 }
-
-/* ------------------------------------------------------------------ */
-/* NOTE DISPLAY                                                         */
-/* ------------------------------------------------------------------ */
 
 .note-name {
     color: #ffffff;
@@ -214,36 +178,26 @@
     color: #666666;
     font-size: 13;
     height: auto;
-    child-top: auto;
-    child-bottom: auto;
 }
 
 .note-display {
     width: 1s;
     height: auto;
-    col-between: 10px;
+    horizontal-gap: 10px;
+    alignment: left;
 }
-
-/* ------------------------------------------------------------------ */
-/* RECORDING INDICATOR                                                  */
-/* ------------------------------------------------------------------ */
 
 .rec-indicator {
     height: auto;
-    col-between: 6px;
+    horizontal-gap: 6px;
+    alignment: left;
 }
 
 .rec-text {
     color: #e53935;
     font-size: 12;
     height: auto;
-    child-top: auto;
-    child-bottom: auto;
 }
-
-/* ------------------------------------------------------------------ */
-/* BUTTONS                                                              */
-/* ------------------------------------------------------------------ */
 
 .btn-arm {
     width: 1s;
@@ -254,7 +208,7 @@
     corner-radius: 8px;
     color: #e53935;
     font-size: 16;
-    child-space: auto;
+    alignment: center;
     cursor: hand;
 }
 
@@ -270,7 +224,7 @@
     corner-radius: 8px;
     color: #ffffff;
     font-size: 16;
-    child-space: auto;
+    alignment: center;
     cursor: hand;
 }
 
@@ -287,7 +241,7 @@
     corner-radius: 5px;
     color: #666666;
     font-size: 12;
-    child-space: auto;
+    alignment: center;
     cursor: hand;
 }
 
@@ -305,7 +259,7 @@
     corner-radius: 6px;
     color: #888888;
     font-size: 12;
-    child-space: auto;
+    alignment: center;
     cursor: hand;
 }
 
@@ -314,78 +268,87 @@
     color: #cccccc;
 }
 
-/* ------------------------------------------------------------------ */
-/* IDLE STATE                                                           */
-/* ------------------------------------------------------------------ */
+.btn-play {
+    height: 32px;
+    background-color: #28c840;
+    color: #ffffff;
+    corner-radius: 6px;
+    font-size: 13;
+    alignment: center;
+    padding-left: 16px;
+    padding-right: 16px;
+    cursor: hand;
+}
+
+.btn-play:hover {
+    background-color: #32d94e;
+}
+
+.btn-stop {
+    height: 32px;
+    background-color: #333333;
+    color: #cccccc;
+    corner-radius: 6px;
+    font-size: 13;
+    alignment: center;
+    padding-left: 16px;
+    padding-right: 16px;
+    cursor: hand;
+}
+
+.btn-stop:hover {
+    background-color: #444444;
+}
 
 .idle-heading {
     color: #444444;
     font-size: 14;
     height: auto;
-    child-space: auto;
 }
 
 .idle-summary {
     color: #333333;
     font-size: 12;
     height: auto;
-    child-space: auto;
 }
 
 .idle-content {
     width: 1s;
     height: auto;
-    row-between: 8px;
-    child-left: auto;
-    child-right: auto;
+    vertical-gap: 8px;
+    alignment: center;
 }
-
-/* ------------------------------------------------------------------ */
-/* ARMED STATE                                                          */
-/* ------------------------------------------------------------------ */
 
 .armed-heading {
     color: #888888;
     font-size: 14;
     height: auto;
-    child-space: auto;
 }
 
 .armed-content {
     width: 1s;
     height: auto;
-    row-between: 12px;
+    vertical-gap: 12px;
 }
-
-/* ------------------------------------------------------------------ */
-/* PROGRESS                                                             */
-/* ------------------------------------------------------------------ */
 
 .progress-bar-row {
     width: 1s;
     height: auto;
-    col-between: 10px;
+    horizontal-gap: 10px;
+    alignment: left;
 }
 
 .progress-count {
     font-size: 12;
     color: #cccccc;
     height: auto;
-    child-top: auto;
-    child-bottom: auto;
 }
 
 .progress-pct {
     font-size: 12;
     color: #555555;
     height: auto;
-    child-top: auto;
-    child-bottom: auto;
 }
-
-/* ------------------------------------------------------------------ */
-/* ERROR BANNER                                                         */
-/* ------------------------------------------------------------------ */
 
 .error-banner {
     width: 1s;
@@ -394,21 +357,15 @@
     border-color: #e53935;
     border-width: 1px;
     corner-radius: 6px;
-    child-left: 12px;
-    child-right: 12px;
-    child-top: 8px;
-    child-bottom: 8px;
-    col-between: 8px;
+    padding: 8px;
+    horizontal-gap: 8px;
+    alignment: left;
 }
-
-/* ------------------------------------------------------------------ */
-/* REVIEW STATE                                                         */
-/* ------------------------------------------------------------------ */
 
 .review-content {
     width: 1s;
     height: auto;
-    row-between: 12px;
+    vertical-gap: 12px;
 }
 
 .review-heading {
@@ -425,42 +382,10 @@
 
 .review-controls {
     height: auto;
-    col-between: 8px;
+    horizontal-gap: 8px;
 }
 
 .review-actions {
     height: auto;
-    col-between: 8px;
-}
-
-.btn-play {
-    height: 32px;
-    background-color: #28c840;
-    color: #ffffff;
-    corner-radius: 6px;
-    font-size: 13;
-    child-space: auto;
-    child-left: 16px;
-    child-right: 16px;
-    cursor: hand;
-}
-
-.btn-play:hover {
-    background-color: #32d94e;
-}
-
-.btn-stop {
-    height: 32px;
-    background-color: #333333;
-    color: #cccccc;
-    corner-radius: 6px;
-    font-size: 13;
-    child-space: auto;
-    child-left: 16px;
-    child-right: 16px;
-    cursor: hand;
-}
-
-.btn-stop:hover {
-    background-color: #444444;
+    horizontal-gap: 8px;
 }
