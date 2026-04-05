@@ -66,7 +66,7 @@ impl View for KeyboardView {
             } else if note >= start_note && note <= end_note {
                 vg::Color::from_rgb(0x6a, 0x8a, 0xaa) // subtle blue-gray
             } else {
-                vg::Color::from_rgb(0xcc, 0xcc, 0xcc) // dimmer white
+                vg::Color::from_rgb(0x88, 0x88, 0x88) // muted gray
             };
 
             let key_path = vg::Path::rect(
@@ -101,7 +101,7 @@ impl View for KeyboardView {
                 } else if note >= start_note && note <= end_note {
                     vg::Color::from_rgb(0x2a, 0x3a, 0x55) // subtle dark blue
                 } else {
-                    vg::Color::from_rgb(0x18, 0x18, 0x22)
+                    vg::Color::from_rgb(0x22, 0x22, 0x2a)
                 };
 
                 let key_path =
@@ -118,9 +118,7 @@ impl View for KeyboardView {
 
 pub fn keyboard(cx: &mut Context) {
     KeyboardView::new(cx)
-        .height(Pixels(18.0))
+        .height(Pixels(16.0))
         .width(Stretch(1.0))
-        .border_width(Pixels(1.0))
-        .border_color(Color::from("#1e1e28"))
         .corner_radius(Pixels(2.0));
 }

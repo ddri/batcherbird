@@ -2,146 +2,111 @@ use crate::app_data::AppData;
 use vizia::prelude::*;
 use vizia::vg;
 
-fn meter_color(level: f32) -> vg::Color {
-    if level > 0.8 {
-        vg::Color::from_rgb(0xe5, 0x39, 0x35) // red
-    } else if level > 0.6 {
-        vg::Color::from_rgb(0xfe, 0xbc, 0x2e) // yellow
-    } else {
-        vg::Color::from_rgb(0x28, 0xc8, 0x40) // green
-    }
-}
-
 fn draw_meter_bar(level: f32, bounds: &BoundingBox, canvas: &Canvas) {
-    // Background
+    // Background track
     let bg_path = vg::Path::rect(
         vg::Rect::from_xywh(bounds.x, bounds.y, bounds.w, bounds.h),
         None,
     );
     let mut bg_paint = vg::Paint::default();
-    bg_paint.set_color(vg::Color::from_rgb(0x1a, 0x1a, 0x25));
+    bg_paint.set_color(vg::Color::from_rgb(0x16, 0x16, 0x20));
     canvas.draw_path(&bg_path, &bg_paint);
 
-    // Fill — only show if there's meaningful signal
+    // Only draw fill if signal is meaningful
     if level > 0.005 {
-        let filled_w = bounds.w * level.clamp(0.0, 1.0);
+        let clamped = level.clamp(0.0, 1.0);
+        let filled_w = bounds.w * clamped;
         let fill_path = vg::Path::rect(
             vg::Rect::from_xywh(bounds.x, bounds.y, filled_w, bounds.h),
             None,
         );
         let mut fill_paint = vg::Paint::default();
-        fill_paint.set_color(meter_color(level));
+        // Color by level: green < 0.6, yellow < 0.8, red >= 0.8
+        fill_paint.set_color(if clamped > 0.8 {
+            vg::Color::from_rgb(0xe5, 0x39, 0x35)
+        } else if clamped > 0.6 {
+            vg::Color::from_rgb(0xfe, 0xbc, 0x2e)
+        } else {
+            vg::Color::from_rgb(0x28, 0xc8, 0x40)
+        });
         canvas.draw_path(&fill_path, &fill_paint);
     }
 }
 
-// ---- Left meter bar ----
-
 pub struct MeterBarLeft;
-
 impl MeterBarLeft {
     pub fn new(cx: &mut Context) -> Handle<'_, Self> {
-        let entity = Self.build(cx, |cx| {
-            // Bind to meter_left so we redraw when it changes
+        Self.build(cx, |cx| {
             let id = cx.current();
-            Binding::new(cx, AppData::meter_left, move |cx, _val| {
-                cx.needs_redraw(id);
-            });
-        });
-        entity
+            Binding::new(cx, AppData::meter_left, move |cx, _| cx.needs_redraw(id));
+        })
     }
 }
-
 impl View for MeterBarLeft {
     fn draw(&self, cx: &mut DrawContext, canvas: &Canvas) {
-        let level = AppData::meter_left.get(cx);
-        let bounds = cx.bounds();
-        draw_meter_bar(level, &bounds, canvas);
+        draw_meter_bar(AppData::meter_left.get(cx), &cx.bounds(), canvas);
     }
 }
 
-// ---- Right meter bar ----
-
 pub struct MeterBarRight;
-
 impl MeterBarRight {
     pub fn new(cx: &mut Context) -> Handle<'_, Self> {
         Self.build(cx, |cx| {
             let id = cx.current();
-            Binding::new(cx, AppData::meter_right, move |cx, _val| {
-                cx.needs_redraw(id);
-            });
+            Binding::new(cx, AppData::meter_right, move |cx, _| cx.needs_redraw(id));
         })
     }
 }
-
 impl View for MeterBarRight {
     fn draw(&self, cx: &mut DrawContext, canvas: &Canvas) {
-        let level = AppData::meter_right.get(cx);
-        let bounds = cx.bounds();
-        draw_meter_bar(level, &bounds, canvas);
+        draw_meter_bar(AppData::meter_right.get(cx), &cx.bounds(), canvas);
     }
 }
 
-// ---- meters() layout function ----
+fn meter_row(
+    cx: &mut Context,
+    label: &str,
+    bar: impl FnOnce(&mut Context),
+    db_lens: impl Lens<Target = f32>,
+) {
+    HStack::new(cx, |cx| {
+        Label::new(cx, label)
+            .font_size(10.0)
+            .color(Color::from("#444444"))
+            .width(Pixels(12.0));
+        bar(cx);
+        Label::new(
+            cx,
+            db_lens.map(|db: &f32| {
+                if *db <= -60.0 {
+                    String::new() // show nothing at idle
+                } else {
+                    format!("{:.0}dB", db)
+                }
+            }),
+        )
+        .font_size(9.0)
+        .color(Color::from("#444444"))
+        .width(Pixels(32.0));
+    })
+    .width(Stretch(1.0))
+    .height(Auto)
+    .horizontal_gap(Pixels(6.0))
+    .alignment(Alignment::Left);
+}
 
 pub fn meters(cx: &mut Context) {
     VStack::new(cx, |cx| {
-        // Left channel row
-        HStack::new(cx, |cx| {
-            Label::new(cx, "L")
-                .color(Color::from("#444444"))
-                .font_size(10.0)
-                .width(Pixels(12.0));
+        meter_row(cx, "L", |cx| {
             MeterBarLeft::new(cx)
                 .width(Stretch(1.0))
-                .height(Pixels(6.0));
-            Label::new(
-                cx,
-                AppData::meter_left_db.map(|db: &f32| {
-                    if *db <= -60.0 {
-                        "-inf".to_string()
-                    } else {
-                        format!("{:.0}", db)
-                    }
-                }),
-            )
-            .color(Color::from("#444444"))
-            .font_size(10.0)
-            .width(Pixels(36.0));
-        })
-        .width(Stretch(1.0))
-        .height(Auto)
-        .horizontal_gap(Pixels(8.0))
-        .alignment(Alignment::Left);
-
-        // Right channel row
-        HStack::new(cx, |cx| {
-            Label::new(cx, "R")
-                .color(Color::from("#444444"))
-                .font_size(10.0)
-                .width(Pixels(12.0));
+                .height(Pixels(4.0));
+        }, AppData::meter_left_db);
+        meter_row(cx, "R", |cx| {
             MeterBarRight::new(cx)
                 .width(Stretch(1.0))
-                .height(Pixels(6.0));
-            Label::new(
-                cx,
-                AppData::meter_right_db.map(|db: &f32| {
-                    if *db <= -60.0 {
-                        "-inf".to_string()
-                    } else {
-                        format!("{:.0}", db)
-                    }
-                }),
-            )
-            .color(Color::from("#444444"))
-            .font_size(10.0)
-            .width(Pixels(36.0));
-        })
-        .width(Stretch(1.0))
-        .height(Auto)
-        .horizontal_gap(Pixels(8.0))
-        .alignment(Alignment::Left);
+                .height(Pixels(4.0));
+        }, AppData::meter_right_db);
     })
     .width(Stretch(1.0))
     .height(Auto)

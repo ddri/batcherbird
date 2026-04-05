@@ -2,219 +2,268 @@ use crate::app_data::AppData;
 use crate::app_event::AppEvent;
 use vizia::prelude::*;
 
-fn increment_button(cx: &mut Context, label: &str, event: AppEvent) {
-    Button::new(cx, |cx| Label::new(cx, label))
-        .width(Pixels(22.0))
-        .height(Pixels(22.0))
-        .class("btn-sm")
-        .on_press(move |cx| cx.emit(event.clone()));
+fn section_label(cx: &mut Context, text: &str) {
+    Label::new(cx, text)
+        .font_size(10.0)
+        .color(Color::from("#555555"));
 }
 
-fn field_box(cx: &mut Context, label_text: &str, content: impl FnOnce(&mut Context)) {
+fn device_row(
+    cx: &mut Context,
+    type_label: &str,
+    name_lens: impl Lens<Target = Vec<String>> + Copy,
+    sel_lens: impl Lens<Target = Option<usize>> + Copy,
+    connected_lens: impl Lens<Target = bool> + Copy,
+    cycle_event: AppEvent,
+) {
     VStack::new(cx, |cx| {
-        Label::new(cx, label_text).class("field-label");
+        Label::new(cx, type_label)
+            .font_size(10.0)
+            .color(Color::from("#666666"));
+        HStack::new(cx, |cx| {
+            Binding::new(cx, sel_lens, move |cx, sel| {
+                let sel = sel.get(cx);
+                Binding::new(cx, name_lens, move |cx, devs| {
+                    let devs = devs.get(cx);
+                    let name = match sel {
+                        Some(i) if i < devs.len() => devs[i].clone(),
+                        _ if !devs.is_empty() => devs[0].clone(),
+                        _ => format!("No devices"),
+                    };
+                    Label::new(cx, &name)
+                        .font_size(12.0)
+                        .color(Color::from("#cccccc"))
+                        .width(Stretch(1.0))
+                        .cursor(CursorIcon::Hand);
+                });
+            });
+            Binding::new(cx, connected_lens, |cx, c| {
+                let connected = c.get(cx);
+                Element::new(cx)
+                    .width(Pixels(6.0))
+                    .height(Pixels(6.0))
+                    .corner_radius(Percentage(50.0))
+                    .background_color(if connected {
+                        Color::from("#28c840")
+                    } else {
+                        Color::from("#444444")
+                    });
+            });
+        })
+        .height(Auto)
+        .horizontal_gap(Pixels(8.0))
+        .alignment(Alignment::Left);
+    })
+    .height(Auto)
+    .vertical_gap(Pixels(1.0));
+}
+
+fn field_pair(
+    cx: &mut Context,
+    label_a: &str,
+    value_a: impl FnOnce(&mut Context),
+    dec_a: AppEvent,
+    inc_a: AppEvent,
+    label_b: &str,
+    value_b: impl FnOnce(&mut Context),
+    dec_b: AppEvent,
+    inc_b: AppEvent,
+) {
+    HStack::new(cx, |cx| {
+        compact_field(cx, label_a, value_a, dec_a, inc_a);
+        compact_field(cx, label_b, value_b, dec_b, inc_b);
+    })
+    .width(Stretch(1.0))
+    .height(Auto)
+    .horizontal_gap(Pixels(6.0));
+}
+
+fn compact_field(
+    cx: &mut Context,
+    label: &str,
+    value: impl FnOnce(&mut Context),
+    dec: AppEvent,
+    inc: AppEvent,
+) {
+    VStack::new(cx, |cx| {
+        Label::new(cx, label)
+            .font_size(9.0)
+            .color(Color::from("#555555"));
+        HStack::new(cx, |cx| {
+            // Minus button
+            Label::new(cx, "-")
+                .font_size(12.0)
+                .color(Color::from("#666666"))
+                .width(Pixels(18.0))
+                .height(Pixels(18.0))
+                .alignment(Alignment::Center)
+                .background_color(Color::from("#1a1a25"))
+                .corner_radius(Pixels(2.0))
+                .cursor(CursorIcon::Hand)
+                .on_press(move |cx| cx.emit(dec.clone()));
+            // Value
+            value(cx);
+            // Plus button
+            Label::new(cx, "+")
+                .font_size(12.0)
+                .color(Color::from("#666666"))
+                .width(Pixels(18.0))
+                .height(Pixels(18.0))
+                .alignment(Alignment::Center)
+                .background_color(Color::from("#1a1a25"))
+                .corner_radius(Pixels(2.0))
+                .cursor(CursorIcon::Hand)
+                .on_press(move |cx| cx.emit(inc.clone()));
+        })
+        .height(Auto)
+        .horizontal_gap(Pixels(3.0))
+        .alignment(Alignment::Center);
+    })
+    .width(Stretch(1.0))
+    .height(Auto)
+    .background_color(Color::from("#131318"))
+    .border_width(Pixels(1.0))
+    .border_color(Color::from("#1e1e28"))
+    .corner_radius(Pixels(3.0))
+    .padding_left(Pixels(6.0))
+    .padding_right(Pixels(6.0))
+    .padding_top(Pixels(5.0))
+    .padding_bottom(Pixels(5.0))
+    .vertical_gap(Pixels(2.0));
+}
+
+fn info_field(cx: &mut Context, label: &str, content: impl FnOnce(&mut Context)) {
+    VStack::new(cx, |cx| {
+        Label::new(cx, label)
+            .font_size(9.0)
+            .color(Color::from("#555555"));
         content(cx);
     })
     .width(Stretch(1.0))
     .height(Auto)
-    .background_color(Color::from("#161620"))
+    .background_color(Color::from("#131318"))
     .border_width(Pixels(1.0))
-    .border_color(Color::from("#1e1e2a"))
-    .corner_radius(Pixels(4.0))
-    .padding(Pixels(8.0))
-    .vertical_gap(Pixels(3.0));
+    .border_color(Color::from("#1e1e28"))
+    .corner_radius(Pixels(3.0))
+    .padding_left(Pixels(8.0))
+    .padding_right(Pixels(8.0))
+    .padding_top(Pixels(5.0))
+    .padding_bottom(Pixels(5.0))
+    .vertical_gap(Pixels(2.0));
+}
+
+fn divider(cx: &mut Context) {
+    Element::new(cx)
+        .width(Stretch(1.0))
+        .height(Pixels(1.0))
+        .background_color(Color::from("#1a1a25"));
 }
 
 pub fn sidebar(cx: &mut Context) {
     VStack::new(cx, |cx| {
         // ---- DEVICES ----
         VStack::new(cx, |cx| {
-            Label::new(cx, "DEVICES").class("sidebar-label");
-
-            // MIDI Out
-            VStack::new(cx, |cx| {
-                Label::new(cx, "MIDI Out").class("device-type");
-                HStack::new(cx, |cx| {
-                    Binding::new(cx, AppData::selected_midi_device, |cx, sel| {
-                        let sel = sel.get(cx);
-                        Binding::new(cx, AppData::midi_devices, move |cx, devs| {
-                            let devs = devs.get(cx);
-                            let name = match sel {
-                                Some(i) if i < devs.len() => devs[i].clone(),
-                                _ if !devs.is_empty() => devs[0].clone(),
-                                _ => "No MIDI devices".to_string(),
-                            };
-                            Label::new(cx, &name)
-                                .class("device-name")
-                                .cursor(CursorIcon::Hand)
-                                .on_press(|cx| cx.emit(AppEvent::CycleNextMidiDevice));
-                        });
-                    });
-                    Binding::new(cx, AppData::midi_connected, |cx, connected| {
-                        let connected = connected.get(cx);
-                        let dot = Element::new(cx)
-                            .width(Pixels(7.0))
-                            .height(Pixels(7.0))
-                            .corner_radius(Percentage(50.0))
-                            .background_color(if connected {
-                                Color::from("#28c840")
-                            } else {
-                                Color::from("#555555")
-                            });
-                    });
-                })
-                .height(Auto)
-                .horizontal_gap(Pixels(6.0));
-            })
-            .height(Auto)
-            .vertical_gap(Pixels(2.0));
-
-            // Audio In
-            VStack::new(cx, |cx| {
-                Label::new(cx, "Audio In").class("device-type");
-                HStack::new(cx, |cx| {
-                    Binding::new(cx, AppData::selected_audio_input, |cx, sel| {
-                        let sel = sel.get(cx);
-                        Binding::new(cx, AppData::audio_input_devices, move |cx, devs| {
-                            let devs = devs.get(cx);
-                            let name = match sel {
-                                Some(i) if i < devs.len() => devs[i].clone(),
-                                _ if !devs.is_empty() => devs[0].clone(),
-                                _ => "No audio devices".to_string(),
-                            };
-                            Label::new(cx, &name)
-                                .class("device-name")
-                                .cursor(CursorIcon::Hand)
-                                .on_press(|cx| cx.emit(AppEvent::CycleNextAudioInput));
-                        });
-                    });
-                    Binding::new(cx, AppData::audio_connected, |cx, connected| {
-                        let connected = connected.get(cx);
-                        let dot = Element::new(cx)
-                            .width(Pixels(7.0))
-                            .height(Pixels(7.0))
-                            .corner_radius(Percentage(50.0))
-                            .background_color(if connected {
-                                Color::from("#28c840")
-                            } else {
-                                Color::from("#555555")
-                            });
-                    });
-                })
-                .height(Auto)
-                .horizontal_gap(Pixels(6.0));
-            })
-            .height(Auto)
-            .vertical_gap(Pixels(2.0));
+            section_label(cx, "DEVICES");
+            device_row(
+                cx,
+                "MIDI Out",
+                AppData::midi_devices,
+                AppData::selected_midi_device,
+                AppData::midi_connected,
+                AppEvent::CycleNextMidiDevice,
+            );
+            device_row(
+                cx,
+                "Audio In",
+                AppData::audio_input_devices,
+                AppData::selected_audio_input,
+                AppData::audio_connected,
+                AppEvent::CycleNextAudioInput,
+            );
         })
         .width(Stretch(1.0))
         .height(Auto)
-        .padding(Pixels(14.0))
-        .vertical_gap(Pixels(10.0));
+        .padding(Pixels(12.0))
+        .vertical_gap(Pixels(8.0));
 
-        Element::new(cx)
-            .width(Stretch(1.0))
-            .height(Pixels(1.0))
-            .background_color(Color::from("#222230"));
+        divider(cx);
 
         // ---- SAMPLING ----
         VStack::new(cx, |cx| {
-            Label::new(cx, "SAMPLING").class("sidebar-label");
+            section_label(cx, "SAMPLING");
 
-            // START / END row
-            HStack::new(cx, |cx| {
-                field_box(cx, "START", |cx| {
-                    HStack::new(cx, |cx| {
-                        increment_button(cx, "-", AppEvent::DecrementStartNote);
-                        Label::new(cx, AppData::start_note.map(|n: &u8| AppData::note_name(*n)))
-                            .class("field-value")
-                            .width(Stretch(1.0))
-                            .alignment(Alignment::Center);
-                        increment_button(cx, "+", AppEvent::IncrementStartNote);
-                    })
-                    .height(Auto)
-                    .horizontal_gap(Pixels(4.0))
-                    .alignment(Alignment::Center);
-                });
-
-                field_box(cx, "END", |cx| {
-                    HStack::new(cx, |cx| {
-                        increment_button(cx, "-", AppEvent::DecrementEndNote);
-                        Label::new(cx, AppData::end_note.map(|n: &u8| AppData::note_name(*n)))
-                            .class("field-value")
-                            .width(Stretch(1.0))
-                            .alignment(Alignment::Center);
-                        increment_button(cx, "+", AppEvent::IncrementEndNote);
-                    })
-                    .height(Auto)
-                    .horizontal_gap(Pixels(4.0))
-                    .alignment(Alignment::Center);
-                });
-            })
-            .width(Stretch(1.0))
-            .height(Auto)
-            .horizontal_gap(Pixels(8.0));
-
-            // LAYERS / DURATION row
-            HStack::new(cx, |cx| {
-                field_box(cx, "LAYERS", |cx| {
-                    HStack::new(cx, |cx| {
-                        increment_button(cx, "-", AppEvent::DecrementVelocityLayers);
-                        Label::new(cx, AppData::velocity_layers.map(|n: &u8| n.to_string()))
-                            .class("field-value")
-                            .width(Stretch(1.0))
-                            .alignment(Alignment::Center);
-                        increment_button(cx, "+", AppEvent::IncrementVelocityLayers);
-                    })
-                    .height(Auto)
-                    .horizontal_gap(Pixels(4.0))
-                    .alignment(Alignment::Center);
-                });
-
-                field_box(cx, "DURATION", |cx| {
-                    HStack::new(cx, |cx| {
-                        increment_button(cx, "-", AppEvent::DecrementDuration);
-                        Label::new(
-                            cx,
-                            AppData::note_duration_ms
-                                .map(|ms: &u32| format!("{:.1}s", *ms as f32 / 1000.0)),
-                        )
-                        .class("field-value")
+            field_pair(
+                cx,
+                "START",
+                |cx| {
+                    Label::new(cx, AppData::start_note.map(|n: &u8| AppData::note_name(*n)))
+                        .font_size(14.0)
+                        .color(Color::from("#dddddd"))
                         .width(Stretch(1.0))
                         .alignment(Alignment::Center);
-                        increment_button(cx, "+", AppEvent::IncrementDuration);
-                    })
-                    .height(Auto)
-                    .horizontal_gap(Pixels(4.0))
+                },
+                AppEvent::DecrementStartNote,
+                AppEvent::IncrementStartNote,
+                "END",
+                |cx| {
+                    Label::new(cx, AppData::end_note.map(|n: &u8| AppData::note_name(*n)))
+                        .font_size(14.0)
+                        .color(Color::from("#dddddd"))
+                        .width(Stretch(1.0))
+                        .alignment(Alignment::Center);
+                },
+                AppEvent::DecrementEndNote,
+                AppEvent::IncrementEndNote,
+            );
+
+            field_pair(
+                cx,
+                "LAYERS",
+                |cx| {
+                    Label::new(cx, AppData::velocity_layers.map(|n: &u8| n.to_string()))
+                        .font_size(14.0)
+                        .color(Color::from("#dddddd"))
+                        .width(Stretch(1.0))
+                        .alignment(Alignment::Center);
+                },
+                AppEvent::DecrementVelocityLayers,
+                AppEvent::IncrementVelocityLayers,
+                "DURATION",
+                |cx| {
+                    Label::new(
+                        cx,
+                        AppData::note_duration_ms
+                            .map(|ms: &u32| format!("{:.1}s", *ms as f32 / 1000.0)),
+                    )
+                    .font_size(14.0)
+                    .color(Color::from("#dddddd"))
+                    .width(Stretch(1.0))
                     .alignment(Alignment::Center);
-                });
-            })
-            .width(Stretch(1.0))
-            .height(Auto)
-            .horizontal_gap(Pixels(8.0));
+                },
+                AppEvent::DecrementDuration,
+                AppEvent::IncrementDuration,
+            );
         })
         .width(Stretch(1.0))
         .height(Auto)
-        .padding(Pixels(14.0))
-        .vertical_gap(Pixels(10.0));
+        .padding(Pixels(12.0))
+        .vertical_gap(Pixels(8.0));
 
-        Element::new(cx)
-            .width(Stretch(1.0))
-            .height(Pixels(1.0))
-            .background_color(Color::from("#222230"));
+        divider(cx);
 
         // ---- EXPORT ----
         VStack::new(cx, |cx| {
-            Label::new(cx, "EXPORT").class("sidebar-label");
+            section_label(cx, "EXPORT");
 
-            field_box(cx, "FORMAT", |cx| {
+            info_field(cx, "FORMAT", |cx| {
                 Label::new(cx, AppData::export_format_display)
-                    .class("field-value")
+                    .font_size(12.0)
+                    .color(Color::from("#cccccc"))
                     .cursor(CursorIcon::Hand)
                     .on_press(|cx| cx.emit(AppEvent::CycleExportFormat));
             });
 
-            field_box(cx, "OUTPUT", |cx| {
+            info_field(cx, "OUTPUT", |cx| {
                 Label::new(
                     cx,
                     AppData::output_directory.map(|p: &std::path::PathBuf| {
@@ -223,31 +272,42 @@ pub fn sidebar(cx: &mut Context) {
                             .unwrap_or_else(|| p.to_string_lossy().to_string())
                     }),
                 )
-                .class("field-value")
+                .font_size(12.0)
+                .color(Color::from("#cccccc"))
                 .cursor(CursorIcon::Hand)
                 .on_press(|cx| cx.emit(AppEvent::SelectOutputDirectory));
             });
         })
         .width(Stretch(1.0))
         .height(Auto)
-        .padding(Pixels(14.0))
-        .vertical_gap(Pixels(10.0));
+        .padding(Pixels(12.0))
+        .vertical_gap(Pixels(8.0));
 
-        // Spacer to push export button to bottom
+        // Push export button to bottom
         Element::new(cx).height(Stretch(1.0));
 
         // Export button
-        Button::new(cx, |cx| Label::new(cx, "Export All"))
-            .class("btn-export")
-            .height(Pixels(32.0))
-            .left(Pixels(14.0))
-            .right(Pixels(14.0))
-            .bottom(Pixels(14.0))
-            .on_press(|cx| cx.emit(AppEvent::ExportAll));
+        VStack::new(cx, |cx| {
+            Label::new(cx, "Export All")
+                .font_size(12.0)
+                .color(Color::from("#666666"))
+                .width(Stretch(1.0))
+                .alignment(Alignment::Center)
+                .cursor(CursorIcon::Hand)
+                .on_press(|cx| cx.emit(AppEvent::ExportAll));
+        })
+        .width(Stretch(1.0))
+        .height(Pixels(32.0))
+        .background_color(Color::from("#131318"))
+        .border_width(Pixels(1.0))
+        .border_color(Color::from("#1e1e28"))
+        .corner_radius(Pixels(4.0))
+        .alignment(Alignment::Center)
+        .left(Pixels(12.0))
+        .right(Pixels(12.0))
+        .bottom(Pixels(12.0));
     })
-    .width(Pixels(220.0))
+    .width(Pixels(210.0))
     .height(Stretch(1.0))
-    .background_color(Color::from("#0e0e15"))
-    .border_width(Pixels(1.0))
-    .border_color(Color::from("#1e1e28"));
+    .background_color(Color::from("#0c0c12"));
 }
