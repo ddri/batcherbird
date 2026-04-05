@@ -19,8 +19,8 @@ pub struct AppData {
     // Devices
     pub midi_devices: Vec<String>,
     pub audio_input_devices: Vec<String>,
-    pub selected_midi_device: Option<usize>,
-    pub selected_audio_input: Option<usize>,
+    pub selected_midi_device: usize,
+    pub selected_audio_input: usize,
     pub midi_connected: bool,
     pub audio_connected: bool,
 
@@ -34,6 +34,8 @@ pub struct AppData {
     #[lens(ignore)]
     pub export_format: AudioFormat,
     pub export_format_display: String,
+    pub format_options: Vec<String>,
+    pub selected_format_index: usize,
     pub output_directory: PathBuf,
 
     // App state
@@ -81,8 +83,8 @@ impl Default for AppData {
         Self {
             midi_devices: Vec::new(),
             audio_input_devices: Vec::new(),
-            selected_midi_device: None,
-            selected_audio_input: None,
+            selected_midi_device: 0,
+            selected_audio_input: 0,
             midi_connected: false,
             audio_connected: false,
 
@@ -93,6 +95,14 @@ impl Default for AppData {
 
             export_format: AudioFormat::Wav24Bit,
             export_format_display: "Wav24Bit".to_string(),
+            format_options: vec![
+                "WAV 16-bit".to_string(),
+                "WAV 24-bit".to_string(),
+                "WAV 32-float".to_string(),
+                "DecentSampler".to_string(),
+                "SFZ".to_string(),
+            ],
+            selected_format_index: 1, // Wav24Bit
             output_directory: dirs::document_dir().unwrap_or_else(|| PathBuf::from(".")),
 
             app_state: AppState::Idle,
@@ -203,12 +213,6 @@ impl Model for AppData {
                     }
                 }
             }
-            AppEvent::SelectMidiDevice(idx) => {
-                self.selected_midi_device = Some(*idx);
-            }
-            AppEvent::SelectAudioInput(idx) => {
-                self.selected_audio_input = Some(*idx);
-            }
             AppEvent::Tick => {
                 if let Some(consumer) = &mut self.meter_consumer {
                     let mut latest: Option<RealtimeMeterData> = None;
@@ -254,26 +258,38 @@ impl Model for AppData {
 
             AppEvent::CycleNextMidiDevice => {
                 if !self.midi_devices.is_empty() {
-                    let next = match self.selected_midi_device {
-                        Some(i) => (i + 1) % self.midi_devices.len(),
-                        None => 0,
-                    };
-                    self.selected_midi_device = Some(next);
+                    self.selected_midi_device = (self.selected_midi_device + 1) % self.midi_devices.len();
                 }
             }
             AppEvent::CycleNextAudioInput => {
                 if !self.audio_input_devices.is_empty() {
-                    let next = match self.selected_audio_input {
-                        Some(i) => (i + 1) % self.audio_input_devices.len(),
-                        None => 0,
-                    };
-                    self.selected_audio_input = Some(next);
+                    self.selected_audio_input = (self.selected_audio_input + 1) % self.audio_input_devices.len();
                 }
+            }
+            AppEvent::SelectMidiDevice(idx) => {
+                self.selected_midi_device = *idx;
+            }
+            AppEvent::SelectAudioInput(idx) => {
+                self.selected_audio_input = *idx;
             }
             AppEvent::CycleExportFormat => {
                 let next = Self::next_format(&self.export_format);
                 self.export_format_display = Self::format_display(&next).to_string();
                 self.export_format = next;
+            }
+            AppEvent::SelectFormatByIndex(idx) => {
+                let formats = [
+                    AudioFormat::Wav16Bit,
+                    AudioFormat::Wav24Bit,
+                    AudioFormat::Wav32BitFloat,
+                    AudioFormat::DecentSampler,
+                    AudioFormat::SFZ,
+                ];
+                if *idx < formats.len() {
+                    self.selected_format_index = *idx;
+                    self.export_format = formats[*idx].clone();
+                    self.export_format_display = Self::format_display(&formats[*idx]).to_string();
+                }
             }
             AppEvent::CycleExportFormatBack => {
                 let prev = Self::prev_format(&self.export_format);
@@ -282,20 +298,20 @@ impl Model for AppData {
             }
             AppEvent::CyclePrevMidiDevice => {
                 if !self.midi_devices.is_empty() {
-                    let prev = match self.selected_midi_device {
-                        Some(0) | None => self.midi_devices.len() - 1,
-                        Some(i) => i - 1,
+                    self.selected_midi_device = if self.selected_midi_device == 0 {
+                        self.midi_devices.len() - 1
+                    } else {
+                        self.selected_midi_device - 1
                     };
-                    self.selected_midi_device = Some(prev);
                 }
             }
             AppEvent::CyclePrevAudioInput => {
                 if !self.audio_input_devices.is_empty() {
-                    let prev = match self.selected_audio_input {
-                        Some(0) | None => self.audio_input_devices.len() - 1,
-                        Some(i) => i - 1,
+                    self.selected_audio_input = if self.selected_audio_input == 0 {
+                        self.audio_input_devices.len() - 1
+                    } else {
+                        self.selected_audio_input - 1
                     };
-                    self.selected_audio_input = Some(prev);
                 }
             }
 
@@ -383,7 +399,7 @@ impl Model for AppData {
 
                     let start_note = self.start_note;
                     let end_note = self.end_note;
-                    let midi_device_idx = self.selected_midi_device.unwrap_or(0);
+                    let midi_device_idx = self.selected_midi_device;
                     let mut proxy = cx.get_proxy();
 
                     std::thread::spawn(move || {

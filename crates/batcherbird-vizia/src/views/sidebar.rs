@@ -8,117 +8,6 @@ fn section_label(cx: &mut Context, text: &str) {
         .color(Color::from("#555555"));
 }
 
-fn device_row_midi(cx: &mut Context) {
-    VStack::new(cx, |cx| {
-        Label::new(cx, "MIDI Out")
-            .font_size(10.0)
-            .color(Color::from("#666666"));
-        HStack::new(cx, |cx| {
-            Label::new(cx, "<")
-                .font_size(10.0)
-                .color(Color::from("#555555"))
-                .width(Pixels(14.0))
-                .alignment(Alignment::Center)
-                .cursor(CursorIcon::Hand)
-                .on_press(|cx| cx.emit(AppEvent::CyclePrevMidiDevice));
-            Binding::new(cx, AppData::selected_midi_device, |cx, sel| {
-                let sel = sel.get(cx);
-                Binding::new(cx, AppData::midi_devices, move |cx, devs| {
-                    let devs = devs.get(cx);
-                    let name = match sel {
-                        Some(i) if i < devs.len() => devs[i].clone(),
-                        _ if !devs.is_empty() => devs[0].clone(),
-                        _ => "No devices".to_string(),
-                    };
-                    Label::new(cx, &name)
-                        .font_size(12.0)
-                        .color(Color::from("#cccccc"))
-                        .width(Stretch(1.0));
-                });
-            });
-            Label::new(cx, ">")
-                .font_size(10.0)
-                .color(Color::from("#555555"))
-                .width(Pixels(14.0))
-                .alignment(Alignment::Center)
-                .cursor(CursorIcon::Hand)
-                .on_press(|cx| cx.emit(AppEvent::CycleNextMidiDevice));
-            Binding::new(cx, AppData::midi_connected, |cx, c| {
-                let connected = c.get(cx);
-                Element::new(cx)
-                    .width(Pixels(6.0))
-                    .height(Pixels(6.0))
-                    .corner_radius(Percentage(50.0))
-                    .background_color(if connected {
-                        Color::from("#28c840")
-                    } else {
-                        Color::from("#444444")
-                    });
-            });
-        })
-        .height(Auto)
-        .horizontal_gap(Pixels(4.0))
-        .alignment(Alignment::Left);
-    })
-    .height(Auto)
-    .vertical_gap(Pixels(1.0));
-}
-
-fn device_row_audio(cx: &mut Context) {
-    VStack::new(cx, |cx| {
-        Label::new(cx, "Audio In")
-            .font_size(10.0)
-            .color(Color::from("#666666"));
-        HStack::new(cx, |cx| {
-            Label::new(cx, "<")
-                .font_size(10.0)
-                .color(Color::from("#555555"))
-                .width(Pixels(14.0))
-                .alignment(Alignment::Center)
-                .cursor(CursorIcon::Hand)
-                .on_press(|cx| cx.emit(AppEvent::CyclePrevAudioInput));
-            Binding::new(cx, AppData::selected_audio_input, |cx, sel| {
-                let sel = sel.get(cx);
-                Binding::new(cx, AppData::audio_input_devices, move |cx, devs| {
-                    let devs = devs.get(cx);
-                    let name = match sel {
-                        Some(i) if i < devs.len() => devs[i].clone(),
-                        _ if !devs.is_empty() => devs[0].clone(),
-                        _ => "No devices".to_string(),
-                    };
-                    Label::new(cx, &name)
-                        .font_size(12.0)
-                        .color(Color::from("#cccccc"))
-                        .width(Stretch(1.0));
-                });
-            });
-            Label::new(cx, ">")
-                .font_size(10.0)
-                .color(Color::from("#555555"))
-                .width(Pixels(14.0))
-                .alignment(Alignment::Center)
-                .cursor(CursorIcon::Hand)
-                .on_press(|cx| cx.emit(AppEvent::CycleNextAudioInput));
-            Binding::new(cx, AppData::audio_connected, |cx, c| {
-                let connected = c.get(cx);
-                Element::new(cx)
-                    .width(Pixels(6.0))
-                    .height(Pixels(6.0))
-                    .corner_radius(Percentage(50.0))
-                    .background_color(if connected {
-                        Color::from("#28c840")
-                    } else {
-                        Color::from("#444444")
-                    });
-            });
-        })
-        .height(Auto)
-        .horizontal_gap(Pixels(4.0))
-        .alignment(Alignment::Left);
-    })
-    .height(Auto)
-    .vertical_gap(Pixels(1.0));
-}
 
 fn field_pair(
     cx: &mut Context,
@@ -194,26 +83,6 @@ fn compact_field(
     .vertical_gap(Pixels(2.0));
 }
 
-fn info_field(cx: &mut Context, label: &str, content: impl FnOnce(&mut Context)) {
-    VStack::new(cx, |cx| {
-        Label::new(cx, label)
-            .font_size(9.0)
-            .color(Color::from("#555555"));
-        content(cx);
-    })
-    .width(Stretch(1.0))
-    .height(Auto)
-    .background_color(Color::from("#131318"))
-    .border_width(Pixels(1.0))
-    .border_color(Color::from("#1e1e28"))
-    .corner_radius(Pixels(3.0))
-    .padding_left(Pixels(8.0))
-    .padding_right(Pixels(8.0))
-    .padding_top(Pixels(5.0))
-    .padding_bottom(Pixels(5.0))
-    .vertical_gap(Pixels(2.0));
-}
-
 fn divider(cx: &mut Context) {
     Element::new(cx)
         .width(Stretch(1.0))
@@ -226,8 +95,30 @@ pub fn sidebar(cx: &mut Context) {
         // ---- DEVICES ----
         VStack::new(cx, |cx| {
             section_label(cx, "DEVICES");
-            device_row_midi(cx);
-            device_row_audio(cx);
+
+            // MIDI Out
+            VStack::new(cx, |cx| {
+                Label::new(cx, "MIDI Out")
+                    .font_size(9.0)
+                    .color(Color::from("#555555"));
+                PickList::new(cx, AppData::midi_devices, AppData::selected_midi_device, true)
+                    .on_select(|cx, idx| cx.emit(AppEvent::SelectMidiDevice(idx)))
+                    .width(Stretch(1.0));
+            })
+            .height(Auto)
+            .vertical_gap(Pixels(2.0));
+
+            // Audio In
+            VStack::new(cx, |cx| {
+                Label::new(cx, "Audio In")
+                    .font_size(9.0)
+                    .color(Color::from("#555555"));
+                PickList::new(cx, AppData::audio_input_devices, AppData::selected_audio_input, true)
+                    .on_select(|cx, idx| cx.emit(AppEvent::SelectAudioInput(idx)))
+                    .width(Stretch(1.0));
+            })
+            .height(Auto)
+            .vertical_gap(Pixels(2.0));
         })
         .width(Stretch(1.0))
         .height(Auto)
@@ -303,21 +194,21 @@ pub fn sidebar(cx: &mut Context) {
         VStack::new(cx, |cx| {
             section_label(cx, "EXPORT");
 
-            compact_field(
-                cx,
-                "FORMAT",
-                |cx| {
-                    Label::new(cx, AppData::export_format_display)
-                        .font_size(12.0)
-                        .color(Color::from("#dddddd"))
-                        .width(Stretch(1.0))
-                        .alignment(Alignment::Center);
-                },
-                AppEvent::CycleExportFormatBack,
-                AppEvent::CycleExportFormat,
-            );
+            VStack::new(cx, |cx| {
+                Label::new(cx, "FORMAT")
+                    .font_size(9.0)
+                    .color(Color::from("#555555"));
+                PickList::new(cx, AppData::format_options, AppData::selected_format_index, true)
+                    .on_select(|cx, idx| cx.emit(AppEvent::SelectFormatByIndex(idx)))
+                    .width(Stretch(1.0));
+            })
+            .height(Auto)
+            .vertical_gap(Pixels(2.0));
 
-            info_field(cx, "OUTPUT", |cx| {
+            VStack::new(cx, |cx| {
+                Label::new(cx, "OUTPUT")
+                    .font_size(9.0)
+                    .color(Color::from("#555555"));
                 Label::new(
                     cx,
                     AppData::output_directory.map(|p: &std::path::PathBuf| {
@@ -330,7 +221,17 @@ pub fn sidebar(cx: &mut Context) {
                 .color(Color::from("#cccccc"))
                 .cursor(CursorIcon::Hand)
                 .on_press(|cx| cx.emit(AppEvent::SelectOutputDirectory));
-            });
+            })
+            .width(Stretch(1.0))
+            .height(Auto)
+            .background_color(Color::from("#131318"))
+            .border_width(Pixels(1.0))
+            .border_color(Color::from("#1e1e28"))
+            .corner_radius(Pixels(3.0))
+            .padding(Pixels(8.0))
+            .vertical_gap(Pixels(2.0))
+            .cursor(CursorIcon::Hand)
+            .on_press(|cx| cx.emit(AppEvent::SelectOutputDirectory));
         })
         .width(Stretch(1.0))
         .height(Auto)

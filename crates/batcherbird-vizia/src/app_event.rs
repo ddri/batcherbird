@@ -23,6 +23,7 @@ pub enum AppEvent {
     CycleExportFormatBack,
     CyclePrevMidiDevice,
     CyclePrevAudioInput,
+    SelectFormatByIndex(usize),
 
     // Increment/decrement events
     IncrementStartNote,
