@@ -20,6 +20,9 @@ pub enum AppEvent {
     SetOutputDirectory(PathBuf),
     SelectOutputDirectory,
     CycleExportFormat,
+    CycleExportFormatBack,
+    CyclePrevMidiDevice,
+    CyclePrevAudioInput,
 
     // Increment/decrement events
     IncrementStartNote,

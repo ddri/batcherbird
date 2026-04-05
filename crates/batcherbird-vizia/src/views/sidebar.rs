@@ -8,36 +8,42 @@ fn section_label(cx: &mut Context, text: &str) {
         .color(Color::from("#555555"));
 }
 
-fn device_row(
-    cx: &mut Context,
-    type_label: &str,
-    name_lens: impl Lens<Target = Vec<String>> + Copy,
-    sel_lens: impl Lens<Target = Option<usize>> + Copy,
-    connected_lens: impl Lens<Target = bool> + Copy,
-    cycle_event: AppEvent,
-) {
+fn device_row_midi(cx: &mut Context) {
     VStack::new(cx, |cx| {
-        Label::new(cx, type_label)
+        Label::new(cx, "MIDI Out")
             .font_size(10.0)
             .color(Color::from("#666666"));
         HStack::new(cx, |cx| {
-            Binding::new(cx, sel_lens, move |cx, sel| {
+            Label::new(cx, "<")
+                .font_size(10.0)
+                .color(Color::from("#555555"))
+                .width(Pixels(14.0))
+                .alignment(Alignment::Center)
+                .cursor(CursorIcon::Hand)
+                .on_press(|cx| cx.emit(AppEvent::CyclePrevMidiDevice));
+            Binding::new(cx, AppData::selected_midi_device, |cx, sel| {
                 let sel = sel.get(cx);
-                Binding::new(cx, name_lens, move |cx, devs| {
+                Binding::new(cx, AppData::midi_devices, move |cx, devs| {
                     let devs = devs.get(cx);
                     let name = match sel {
                         Some(i) if i < devs.len() => devs[i].clone(),
                         _ if !devs.is_empty() => devs[0].clone(),
-                        _ => format!("No devices"),
+                        _ => "No devices".to_string(),
                     };
                     Label::new(cx, &name)
                         .font_size(12.0)
                         .color(Color::from("#cccccc"))
-                        .width(Stretch(1.0))
-                        .cursor(CursorIcon::Hand);
+                        .width(Stretch(1.0));
                 });
             });
-            Binding::new(cx, connected_lens, |cx, c| {
+            Label::new(cx, ">")
+                .font_size(10.0)
+                .color(Color::from("#555555"))
+                .width(Pixels(14.0))
+                .alignment(Alignment::Center)
+                .cursor(CursorIcon::Hand)
+                .on_press(|cx| cx.emit(AppEvent::CycleNextMidiDevice));
+            Binding::new(cx, AppData::midi_connected, |cx, c| {
                 let connected = c.get(cx);
                 Element::new(cx)
                     .width(Pixels(6.0))
@@ -51,7 +57,63 @@ fn device_row(
             });
         })
         .height(Auto)
-        .horizontal_gap(Pixels(8.0))
+        .horizontal_gap(Pixels(4.0))
+        .alignment(Alignment::Left);
+    })
+    .height(Auto)
+    .vertical_gap(Pixels(1.0));
+}
+
+fn device_row_audio(cx: &mut Context) {
+    VStack::new(cx, |cx| {
+        Label::new(cx, "Audio In")
+            .font_size(10.0)
+            .color(Color::from("#666666"));
+        HStack::new(cx, |cx| {
+            Label::new(cx, "<")
+                .font_size(10.0)
+                .color(Color::from("#555555"))
+                .width(Pixels(14.0))
+                .alignment(Alignment::Center)
+                .cursor(CursorIcon::Hand)
+                .on_press(|cx| cx.emit(AppEvent::CyclePrevAudioInput));
+            Binding::new(cx, AppData::selected_audio_input, |cx, sel| {
+                let sel = sel.get(cx);
+                Binding::new(cx, AppData::audio_input_devices, move |cx, devs| {
+                    let devs = devs.get(cx);
+                    let name = match sel {
+                        Some(i) if i < devs.len() => devs[i].clone(),
+                        _ if !devs.is_empty() => devs[0].clone(),
+                        _ => "No devices".to_string(),
+                    };
+                    Label::new(cx, &name)
+                        .font_size(12.0)
+                        .color(Color::from("#cccccc"))
+                        .width(Stretch(1.0));
+                });
+            });
+            Label::new(cx, ">")
+                .font_size(10.0)
+                .color(Color::from("#555555"))
+                .width(Pixels(14.0))
+                .alignment(Alignment::Center)
+                .cursor(CursorIcon::Hand)
+                .on_press(|cx| cx.emit(AppEvent::CycleNextAudioInput));
+            Binding::new(cx, AppData::audio_connected, |cx, c| {
+                let connected = c.get(cx);
+                Element::new(cx)
+                    .width(Pixels(6.0))
+                    .height(Pixels(6.0))
+                    .corner_radius(Percentage(50.0))
+                    .background_color(if connected {
+                        Color::from("#28c840")
+                    } else {
+                        Color::from("#444444")
+                    });
+            });
+        })
+        .height(Auto)
+        .horizontal_gap(Pixels(4.0))
         .alignment(Alignment::Left);
     })
     .height(Auto)
@@ -164,22 +226,8 @@ pub fn sidebar(cx: &mut Context) {
         // ---- DEVICES ----
         VStack::new(cx, |cx| {
             section_label(cx, "DEVICES");
-            device_row(
-                cx,
-                "MIDI Out",
-                AppData::midi_devices,
-                AppData::selected_midi_device,
-                AppData::midi_connected,
-                AppEvent::CycleNextMidiDevice,
-            );
-            device_row(
-                cx,
-                "Audio In",
-                AppData::audio_input_devices,
-                AppData::selected_audio_input,
-                AppData::audio_connected,
-                AppEvent::CycleNextAudioInput,
-            );
+            device_row_midi(cx);
+            device_row_audio(cx);
         })
         .width(Stretch(1.0))
         .height(Auto)
@@ -255,13 +303,19 @@ pub fn sidebar(cx: &mut Context) {
         VStack::new(cx, |cx| {
             section_label(cx, "EXPORT");
 
-            info_field(cx, "FORMAT", |cx| {
-                Label::new(cx, AppData::export_format_display)
-                    .font_size(12.0)
-                    .color(Color::from("#cccccc"))
-                    .cursor(CursorIcon::Hand)
-                    .on_press(|cx| cx.emit(AppEvent::CycleExportFormat));
-            });
+            compact_field(
+                cx,
+                "FORMAT",
+                |cx| {
+                    Label::new(cx, AppData::export_format_display)
+                        .font_size(12.0)
+                        .color(Color::from("#dddddd"))
+                        .width(Stretch(1.0))
+                        .alignment(Alignment::Center);
+                },
+                AppEvent::CycleExportFormatBack,
+                AppEvent::CycleExportFormat,
+            );
 
             info_field(cx, "OUTPUT", |cx| {
                 Label::new(

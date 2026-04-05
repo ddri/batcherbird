@@ -171,6 +171,16 @@ impl AppData {
         }
     }
 
+    pub fn prev_format(fmt: &AudioFormat) -> AudioFormat {
+        match fmt {
+            AudioFormat::Wav16Bit => AudioFormat::SFZ,
+            AudioFormat::Wav24Bit => AudioFormat::Wav16Bit,
+            AudioFormat::Wav32BitFloat => AudioFormat::Wav24Bit,
+            AudioFormat::DecentSampler => AudioFormat::Wav32BitFloat,
+            AudioFormat::SFZ => AudioFormat::DecentSampler,
+        }
+    }
+
     pub fn estimated_duration_secs(&self) -> f32 {
         let total = self.total_samples() as f32;
         let per_note_secs = self.note_duration_ms as f32 / 1000.0 + 1.5;
@@ -264,6 +274,29 @@ impl Model for AppData {
                 let next = Self::next_format(&self.export_format);
                 self.export_format_display = Self::format_display(&next).to_string();
                 self.export_format = next;
+            }
+            AppEvent::CycleExportFormatBack => {
+                let prev = Self::prev_format(&self.export_format);
+                self.export_format_display = Self::format_display(&prev).to_string();
+                self.export_format = prev;
+            }
+            AppEvent::CyclePrevMidiDevice => {
+                if !self.midi_devices.is_empty() {
+                    let prev = match self.selected_midi_device {
+                        Some(0) | None => self.midi_devices.len() - 1,
+                        Some(i) => i - 1,
+                    };
+                    self.selected_midi_device = Some(prev);
+                }
+            }
+            AppEvent::CyclePrevAudioInput => {
+                if !self.audio_input_devices.is_empty() {
+                    let prev = match self.selected_audio_input {
+                        Some(0) | None => self.audio_input_devices.len() - 1,
+                        Some(i) => i - 1,
+                    };
+                    self.selected_audio_input = Some(prev);
+                }
             }
 
             AppEvent::IncrementStartNote => {
