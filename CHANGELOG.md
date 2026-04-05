@@ -6,54 +6,47 @@ All notable changes to BatcherBird are documented here.
 
 ### Added
 
-- Native VIZIA GUI replacing the Tauri + React frontend — single Rust binary, no webview, no Node.js
-- Hybrid sidebar + stage layout with everything visible on one screen
-- PickList dropdowns for MIDI device, audio device, and export format selection
-- Increment/decrement controls for note range, velocity layers, and duration
-- Custom-drawn meter bars, waveform display, and piano keyboard range visualization
-- State-driven stage that adapts to Idle, Armed, Recording, and Review phases
-- Error banner with dismiss button (errors were previously only printed to stderr)
-- Cancel and Disarm buttons for all interruptible states
-- Review state with playback controls and recording summary
-- Native file dialog for output directory selection
-- 60fps timer for real-time meter updates via lock-free ring buffer polling
-- Linux CI build matrix (experimental)
-- Formatting check (cargo fmt) in CI pipeline
+- New native GUI built from scratch — faster startup, smaller app, no browser engine running underneath
+- Sidebar shows all settings at once: devices, note range, velocity layers, duration, export format, and output directory
+- MIDI and audio devices are now selectable from dropdown menus
+- Export format (WAV 16/24/32, DecentSampler, SFZ) is selectable from a dropdown
+- Note range, layers, and duration have +/- controls for quick adjustment
+- Real-time level meters in the main stage area
+- Piano keyboard strip showing the selected note range
+- Waveform display area for monitoring recordings
+- Clear error messages shown in the app when something goes wrong (previously errors were invisible)
+- Cancel button during recording and a way to back out of armed state
+- Review screen after recording completes with playback controls and sample count
+- Output directory can be changed by clicking the OUTPUT field
+- Linux build support in CI (experimental)
 
 ### Improved
 
-- Replaced Arc<Mutex> with lock-free ring buffer in range sampling audio callbacks — no more mutex in the audio thread
-- Path validation uses canonicalize() instead of string checks (prevents symlink traversal)
-- MIDI note and velocity inputs are bounds-checked on all commands
-- Session IDs validated as UUID before constructing file paths
-- Atomic ordering on recording cancellation flag changed from Relaxed to Acquire/Release
-- Replaced eprintln! with tracing::error! across all audio code
-- Release binaries are now stripped (smaller file size)
+- Recording no longer risks audio dropouts during batch range sampling
+- File path handling is more secure against directory traversal
+- MIDI and audio input values are validated before recording starts
+- App binary is smaller thanks to symbol stripping
 
 ### Fixed
 
-- CVE-2026-25541 (bytes integer overflow) and RUSTSEC-2025-0047 (slab out-of-bounds access)
-- Panic in MIDI input creation now returns an error instead of crashing
-- SessionManager::default() no longer panics on failure
-- Path validation added to generate_instrument_files (was missing entirely)
-- All clippy warnings resolved (27 → 0)
+- Two dependency vulnerabilities patched (memory safety issues in upstream libraries)
+- App no longer crashes if the MIDI subsystem is unavailable at startup
+- Formatting applied consistently across all source code
 
 ### Removed
 
-- 562 lines of dead code (deprecated async recording methods, three duplicate note_to_name functions)
-- Stale frontend-backup/ directory and duplicate samplesss/ samples
-- Tracked .DS_Store file
+- Old Tauri/React frontend (replaced by the new native GUI)
+- Leftover backup files and duplicate sample recordings from the repository
 
 ## February 13, 2026
 
 ### Added
 
+- Record samples from hardware synthesizers with real-time waveform visualization
+- Single note, note range, and velocity layer recording modes
 - 32-bit float WAV export with sub-millisecond MIDI timing
-- Zero-dropout recording with lock-free architecture
-- Single note, range, and velocity layer recording modes
-- 60fps waveform display during recording
-- Professional meters with peak/RMS and clipping detection
-- FFT-based loop detection (5-10x faster than traditional methods)
-- DecentSampler and SFZ export formats
-- Dark theme UI with device auto-detection
-- Keyboard shortcuts (spacebar play/pause, ESC cancel)
+- Automatic loop detection using FFT analysis
+- Export to DecentSampler and SFZ formats
+- Professional metering with peak, RMS, and clipping detection
+- Dark theme interface with device auto-detection
+- Keyboard shortcuts: spacebar to play/pause, ESC to cancel
