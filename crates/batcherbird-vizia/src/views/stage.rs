@@ -58,7 +58,10 @@ pub fn stage(cx: &mut Context) {
         // --- Waveform (always visible) ---
         WaveformView::new(cx)
             .width(Stretch(1.0))
-            .height(Pixels(100.0));
+            .height(Pixels(140.0))
+            .border_width(Pixels(1.0))
+            .border_color(Color::from("#1e1e28"))
+            .corner_radius(Pixels(4.0));
 
         // --- Progress bar (only when Recording) ---
         progress_bar(cx);
@@ -107,7 +110,7 @@ pub fn stage(cx: &mut Context) {
         })
         .width(Stretch(1.0))
         .height(Auto)
-        .vertical_gap(Pixels(8.0))
+        .vertical_gap(Pixels(6.0))
         .display(AppData::app_state.map(|s| {
             if *s == AppState::Idle { Display::Flex } else { Display::None }
         }));
@@ -190,6 +193,6 @@ pub fn stage(cx: &mut Context) {
     .width(Stretch(1.0))
     .height(Stretch(1.0))
     .background_color(Color::from("#111118"))
-    .padding(Pixels(20.0))
-    .vertical_gap(Pixels(12.0));
+    .padding(Pixels(24.0))
+    .vertical_gap(Pixels(16.0));
 }

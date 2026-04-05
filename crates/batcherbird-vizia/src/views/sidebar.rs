@@ -19,10 +19,10 @@ fn field_box(cx: &mut Context, label_text: &str, content: impl FnOnce(&mut Conte
     .height(Auto)
     .background_color(Color::from("#161620"))
     .border_width(Pixels(1.0))
-    .border_color(Color::from("#252530"))
+    .border_color(Color::from("#1e1e2a"))
     .corner_radius(Pixels(4.0))
-    .padding(Pixels(6.0))
-    .vertical_gap(Pixels(2.0));
+    .padding(Pixels(8.0))
+    .vertical_gap(Pixels(3.0));
 }
 
 pub fn sidebar(cx: &mut Context) {
@@ -247,5 +247,7 @@ pub fn sidebar(cx: &mut Context) {
     })
     .width(Pixels(220.0))
     .height(Stretch(1.0))
-    .background_color(Color::from("#0e0e15"));
+    .background_color(Color::from("#0e0e15"))
+    .border_width(Pixels(1.0))
+    .border_color(Color::from("#1e1e28"));
 }

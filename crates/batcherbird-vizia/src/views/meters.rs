@@ -22,8 +22,8 @@ fn draw_meter_bar(level: f32, bounds: &BoundingBox, canvas: &Canvas) {
     bg_paint.set_color(vg::Color::from_rgb(0x1a, 0x1a, 0x25));
     canvas.draw_path(&bg_path, &bg_paint);
 
-    // Fill
-    if level > 0.0 {
+    // Fill — only show if there's meaningful signal
+    if level > 0.005 {
         let filled_w = bounds.w * level.clamp(0.0, 1.0);
         let fill_path = vg::Path::rect(
             vg::Rect::from_xywh(bounds.x, bounds.y, filled_w, bounds.h),
@@ -89,10 +89,13 @@ pub fn meters(cx: &mut Context) {
     VStack::new(cx, |cx| {
         // Left channel row
         HStack::new(cx, |cx| {
-            Label::new(cx, "L").class("meter-label");
+            Label::new(cx, "L")
+                .color(Color::from("#444444"))
+                .font_size(10.0)
+                .width(Pixels(12.0));
             MeterBarLeft::new(cx)
                 .width(Stretch(1.0))
-                .height(Pixels(8.0));
+                .height(Pixels(6.0));
             Label::new(
                 cx,
                 AppData::meter_left_db.map(|db: &f32| {
@@ -103,16 +106,24 @@ pub fn meters(cx: &mut Context) {
                     }
                 }),
             )
-            .class("meter-db");
+            .color(Color::from("#444444"))
+            .font_size(10.0)
+            .width(Pixels(36.0));
         })
-        .class("meter-row");
+        .width(Stretch(1.0))
+        .height(Auto)
+        .horizontal_gap(Pixels(8.0))
+        .alignment(Alignment::Left);
 
         // Right channel row
         HStack::new(cx, |cx| {
-            Label::new(cx, "R").class("meter-label");
+            Label::new(cx, "R")
+                .color(Color::from("#444444"))
+                .font_size(10.0)
+                .width(Pixels(12.0));
             MeterBarRight::new(cx)
                 .width(Stretch(1.0))
-                .height(Pixels(8.0));
+                .height(Pixels(6.0));
             Label::new(
                 cx,
                 AppData::meter_right_db.map(|db: &f32| {
@@ -123,9 +134,16 @@ pub fn meters(cx: &mut Context) {
                     }
                 }),
             )
-            .class("meter-db");
+            .color(Color::from("#444444"))
+            .font_size(10.0)
+            .width(Pixels(36.0));
         })
-        .class("meter-row");
+        .width(Stretch(1.0))
+        .height(Auto)
+        .horizontal_gap(Pixels(8.0))
+        .alignment(Alignment::Left);
     })
-    .class("meters");
+    .width(Stretch(1.0))
+    .height(Auto)
+    .vertical_gap(Pixels(3.0));
 }
