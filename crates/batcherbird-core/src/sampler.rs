@@ -726,6 +726,17 @@ impl SamplingEngine {
         rt.block_on(self.sample_note_range_async(midi_conn, start_note, end_note))
     }
 
+    /// Validate a MIDI note range for range sampling
+    fn validate_note_range(start_note: u8, end_note: u8) -> Result<()> {
+        if start_note > end_note {
+            return Err(BatcherbirdError::Config(format!(
+                "start_note ({}) must be <= end_note ({})",
+                start_note, end_note
+            )));
+        }
+        Ok(())
+    }
+
     /// Internal async implementation for range sampling with persistent stream (Ableton-style)
     async fn sample_note_range_async(
         &self,
@@ -733,6 +744,8 @@ impl SamplingEngine {
         start_note: u8,
         end_note: u8,
     ) -> Result<Vec<Sample>> {
+        Self::validate_note_range(start_note, end_note)?;
+
         let mut samples = Vec::new();
         let total_notes = end_note - start_note + 1;
 
@@ -894,21 +907,26 @@ impl SamplingEngine {
         note: u8,
         velocity: u8,
     ) -> Result<(Sample, RecordingStats, AudioPerformanceReport)> {
-        // Create lock-free recorder with professional configuration
-        let recording_config = LockFreeRecordingConfig {
-            ring_buffer_size: 44100 * 4, // 4 seconds buffer (professional standard)
-            sample_rate: 44100,          // Industry standard
-            channels: 2,                 // Stereo
-            max_recording_samples: 44100 * 30, // 30 second safety limit
-        };
-
-        let mut recorder = LockFreeRecorder::new(recording_config)?;
-
-        // Get audio device and configuration
+        // Get audio device and configuration first so the recorder (and the
+        // exported sample metadata) match the device that actually captures
         let device = self.audio_manager.get_default_input_device()?;
         let config = device
             .default_input_config()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
+
+        let sample_rate = config.sample_rate().0;
+        let channels = config.channels();
+        let samples_per_second = sample_rate as usize * channels as usize;
+
+        // Create lock-free recorder with professional configuration
+        let recording_config = LockFreeRecordingConfig {
+            ring_buffer_size: samples_per_second * 4, // 4 seconds buffer (professional standard)
+            sample_rate,
+            channels,
+            max_recording_samples: samples_per_second * 30, // 30 second safety limit
+        };
+
+        let mut recorder = LockFreeRecorder::new(recording_config)?;
 
         // Start lock-free recording session
         recorder.start_recording()?;
@@ -953,13 +971,13 @@ impl SamplingEngine {
         // Get performance diagnostics
         let performance_report = self.get_performance_diagnostics();
 
-        // Create sample with metadata
+        // Create sample with metadata matching the device config used for capture
         let sample = Sample {
             note,
             velocity,
             audio_data,
-            sample_rate: 44100,
-            channels: 2,
+            sample_rate,
+            channels,
             recorded_at: std::time::SystemTime::now(),
             midi_timing: midi_end.duration_since(midi_start),
             audio_timing: end_time.duration_since(start_time),
@@ -1012,6 +1030,17 @@ mod tests {
     use rtrb::RingBuffer;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn test_note_range_validation() {
+        // Valid ranges
+        assert!(SamplingEngine::validate_note_range(0, 127).is_ok());
+        assert!(SamplingEngine::validate_note_range(60, 60).is_ok());
+
+        // Inverted range must be rejected (previously underflowed in u8 math)
+        let err = SamplingEngine::validate_note_range(72, 60).unwrap_err();
+        assert!(err.to_string().contains("start_note"));
+    }
 
     #[test]
     fn test_viz_chunk_creation() {

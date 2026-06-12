@@ -534,10 +534,5 @@ fn sample_and_export(note: u8, output_dir: String) -> anyhow::Result<()> {
 }
 
 fn sample_note_name(note: u8) -> String {
-    let note_names = [
-        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-    ];
-    let octave = (note / 12).saturating_sub(1);
-    let note_name = note_names[(note % 12) as usize];
-    format!("{}{}", note_name, octave)
+    batcherbird_core::export::SampleExporter::note_to_name(note)
 }

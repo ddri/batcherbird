@@ -265,7 +265,7 @@ pub fn create_project_structure(
 }
 
 /// Sanitize filename for cross-platform compatibility
-fn sanitize_filename(name: &str) -> String {
+pub(crate) fn sanitize_filename(name: &str) -> String {
     name.chars()
         .map(|c| match c {
             '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',

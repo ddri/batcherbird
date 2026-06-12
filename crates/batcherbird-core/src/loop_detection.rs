@@ -94,7 +94,7 @@ impl LoopDetector {
 
         // Step 3: Evaluate and rank candidates
         let mut evaluated_candidates = self.evaluate_candidates(&candidates, audio_data);
-        evaluated_candidates.sort_by(|a, b| b.quality_score.partial_cmp(&a.quality_score).unwrap());
+        evaluated_candidates.sort_by(|a, b| b.quality_score.total_cmp(&a.quality_score));
 
         // Step 4: Return results - ALWAYS SUCCESS with fallback
         let best_candidate = evaluated_candidates.first().cloned();
