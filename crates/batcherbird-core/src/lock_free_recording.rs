@@ -69,7 +69,11 @@ pub struct LockFreeRecordingConfig {
     /// Number of channels (standardized to stereo)
     pub channels: u16,
 
-    /// Maximum recording duration in samples (safety limit)
+    /// Maximum recording duration in **interleaved** samples (safety limit).
+    /// This counts every individual sample value across all channels, so a
+    /// stereo stream at 44 100 Hz uses 88 200 interleaved samples per second.
+    /// Choose a value that is a multiple of the channel count to avoid
+    /// truncating mid-frame.
     pub max_recording_samples: usize,
 }
 
@@ -135,6 +139,10 @@ impl LockFreeRecorder {
         let max_samples = self.max_recording_samples.max(1); // Safety limit
         let initial_capacity = self.buffer_size.min(max_samples);
 
+        // Set recording flag BEFORE spawning the consumer thread so the thread
+        // never observes `false` on an empty ring and exits prematurely.
+        self.is_recording.store(true, Ordering::Relaxed);
+
         self.consumer_thread = Some(thread::spawn(move || {
             let mut recorded_samples = Vec::with_capacity(initial_capacity);
             let last_report = Instant::now();
@@ -146,7 +154,9 @@ impl LockFreeRecorder {
                     samples_recorded.fetch_add(1, Ordering::Relaxed);
 
                     // Safety limit reached: stop the recording entirely so the
-                    // audio callback stops pushing and memory stays bounded
+                    // audio callback stops pushing and memory stays bounded.
+                    // Any samples still in the ring buffer are intentionally
+                    // discarded — the limit exists to cap memory usage.
                     if recorded_samples.len() >= max_samples {
                         tracing::warn!(
                             "Recording reached max_recording_samples ({}) — stopping",
@@ -166,9 +176,6 @@ impl LockFreeRecorder {
 
             Ok(recorded_samples)
         }));
-
-        // Set recording flag (atomic, no contention)
-        self.is_recording.store(true, Ordering::Relaxed);
 
         Ok(())
     }
