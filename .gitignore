@@ -68,3 +68,19 @@ build/
 # Development and security notes (private)
 CLAUDE.md
 SECURITY-REVIEW.md
+PRODUCTPLAN.md
+EPIC-4-REVISED.md
+INFRA-RESEARCH.md
+PRD/
+docs/plans/
+docs/reports/
+docs/superpowers/
+
+# Generated Tauri schemas and build artifacts
+crates/batcherbird-gui/gen/
+
+# Personal test recordings and dev scratch files
+crates/batcherbird-gui/src-tauri/samples/*.wav
+crates/batcherbird-gui/src-tauri/test_sfz_output.md
+crates/batcherbird-gui/create_placeholder_icons.sh
+crates/batcherbird-gui/icons/create_icons.py
