@@ -28,6 +28,12 @@ enum Commands {
         /// MIDI note number (0-127)
         #[arg(short, long)]
         note: u8,
+        /// Audio input device name (default: system default). See `list-audio`.
+        #[arg(long)]
+        input_device: Option<String>,
+        /// MIDI output device name (default: first device). See `list-midi`.
+        #[arg(long)]
+        midi_device: Option<String>,
     },
     /// Sample a range of notes
     SampleRange {
@@ -37,6 +43,12 @@ enum Commands {
         /// Ending MIDI note number
         #[arg(short, long)]
         end: u8,
+        /// Audio input device name (default: system default). See `list-audio`.
+        #[arg(long)]
+        input_device: Option<String>,
+        /// MIDI output device name (default: first device). See `list-midi`.
+        #[arg(long)]
+        midi_device: Option<String>,
     },
     /// Sample a single note and export to WAV
     SampleExport {
@@ -46,6 +58,12 @@ enum Commands {
         /// Output directory for WAV files
         #[arg(short, long, default_value = "./samples")]
         output: String,
+        /// Audio input device name (default: system default). See `list-audio`.
+        #[arg(long)]
+        input_device: Option<String>,
+        /// MIDI output device name (default: first device). See `list-midi`.
+        #[arg(long)]
+        midi_device: Option<String>,
     },
 }
 
@@ -76,21 +94,68 @@ async fn main() -> anyhow::Result<()> {
             info!("Starting MIDI monitor...");
             monitor_midi().await?;
         }
-        Commands::SampleNote { note } => {
+        Commands::SampleNote {
+            note,
+            input_device,
+            midi_device,
+        } => {
             info!("Sampling single note: {}", note);
-            sample_single_note(note)?;
+            sample_single_note(note, input_device, midi_device)?;
         }
-        Commands::SampleRange { start, end } => {
+        Commands::SampleRange {
+            start,
+            end,
+            input_device,
+            midi_device,
+        } => {
             info!("Sampling note range: {} to {}", start, end);
-            sample_note_range(start, end)?;
+            sample_note_range(start, end, input_device, midi_device)?;
         }
-        Commands::SampleExport { note, output } => {
+        Commands::SampleExport {
+            note,
+            output,
+            input_device,
+            midi_device,
+        } => {
             info!("Sampling and exporting note: {} to {}", note, output);
-            sample_and_export(note, output)?;
+            sample_and_export(note, output, input_device, midi_device)?;
         }
     }
 
     Ok(())
+}
+
+/// Resolve a MIDI output device index from an optional requested name.
+///
+/// `None` selects the first device (index 0). `Some(name)` matches an exact name
+/// first, then case-insensitively; if nothing matches it returns an error listing
+/// the available device names so the user can pick one (see `list-midi`).
+fn resolve_midi_output_index(devices: &[String], requested: Option<&str>) -> anyhow::Result<usize> {
+    let requested = match requested {
+        None => return Ok(0),
+        Some(r) => r,
+    };
+
+    if let Some(idx) = devices.iter().position(|n| n == requested) {
+        return Ok(idx);
+    }
+    if let Some(idx) = devices
+        .iter()
+        .position(|n| n.eq_ignore_ascii_case(requested))
+    {
+        return Ok(idx);
+    }
+
+    let available = devices
+        .iter()
+        .map(|n| format!("'{}'", n))
+        .collect::<Vec<_>>()
+        .join(", ");
+    anyhow::bail!(
+        "MIDI output device '{}' not found. Available MIDI output devices: {}",
+        requested,
+        available
+    )
 }
 
 async fn list_midi_devices() -> anyhow::Result<()> {
@@ -278,7 +343,11 @@ async fn test_audio() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn sample_single_note(note: u8) -> anyhow::Result<()> {
+fn sample_single_note(
+    note: u8,
+    input_device: Option<String>,
+    midi_device: Option<String>,
+) -> anyhow::Result<()> {
     use batcherbird_core::{
         midi::MidiManager,
         sampler::{SamplingConfig, SamplingEngine},
@@ -300,16 +369,15 @@ fn sample_single_note(note: u8) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Use MiniFuse if available, otherwise first device
-    let device_index = output_devices
-        .iter()
-        .position(|name| name.contains("MiniFuse"))
-        .unwrap_or(0);
+    let device_index = resolve_midi_output_index(&output_devices, midi_device.as_deref())?;
     println!("🎹 Using MIDI device: {}", output_devices[device_index]);
     let mut midi_conn = midi_manager.connect_output(device_index)?;
 
     // Create sampling engine with default config
-    let config = SamplingConfig::default();
+    let config = SamplingConfig {
+        input_device_name: input_device,
+        ..SamplingConfig::default()
+    };
     let engine = SamplingEngine::new(config)?;
 
     println!(
@@ -349,7 +417,12 @@ fn sample_single_note(note: u8) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn sample_note_range(start: u8, end: u8) -> anyhow::Result<()> {
+fn sample_note_range(
+    start: u8,
+    end: u8,
+    input_device: Option<String>,
+    midi_device: Option<String>,
+) -> anyhow::Result<()> {
     use batcherbird_core::{
         midi::MidiManager,
         sampler::{SamplingConfig, SamplingEngine},
@@ -378,16 +451,15 @@ fn sample_note_range(start: u8, end: u8) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Use MiniFuse if available, otherwise first device
-    let device_index = output_devices
-        .iter()
-        .position(|name| name.contains("MiniFuse"))
-        .unwrap_or(0);
+    let device_index = resolve_midi_output_index(&output_devices, midi_device.as_deref())?;
     println!("🎹 Using MIDI device: {}", output_devices[device_index]);
     let mut midi_conn = midi_manager.connect_output(device_index)?;
 
     // Create sampling engine
-    let config = SamplingConfig::default();
+    let config = SamplingConfig {
+        input_device_name: input_device,
+        ..SamplingConfig::default()
+    };
     let engine = SamplingEngine::new(config)?;
 
     println!(
@@ -436,7 +508,12 @@ fn sample_note_range(start: u8, end: u8) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn sample_and_export(note: u8, output_dir: String) -> anyhow::Result<()> {
+fn sample_and_export(
+    note: u8,
+    output_dir: String,
+    input_device: Option<String>,
+    midi_device: Option<String>,
+) -> anyhow::Result<()> {
     use batcherbird_core::{
         export::{AudioFormat, ExportConfig, SampleExporter},
         midi::MidiManager,
@@ -460,16 +537,15 @@ fn sample_and_export(note: u8, output_dir: String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Use MiniFuse if available, otherwise first device
-    let device_index = output_devices
-        .iter()
-        .position(|name| name.contains("MiniFuse"))
-        .unwrap_or(0);
+    let device_index = resolve_midi_output_index(&output_devices, midi_device.as_deref())?;
     println!("🎹 Using MIDI device: {}", output_devices[device_index]);
     let mut midi_conn = midi_manager.connect_output(device_index)?;
 
     // Create sampling engine
-    let sampling_config = SamplingConfig::default();
+    let sampling_config = SamplingConfig {
+        input_device_name: input_device,
+        ..SamplingConfig::default()
+    };
     let engine = SamplingEngine::new(sampling_config)?;
 
     // Create export config
@@ -535,4 +611,47 @@ fn sample_and_export(note: u8, output_dir: String) -> anyhow::Result<()> {
 
 fn sample_note_name(note: u8) -> String {
     batcherbird_core::export::SampleExporter::note_to_name(note)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_midi_output_index;
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn none_selects_first_device() {
+        let devices = names(&["IAC Driver Bus 1", "USB MIDI"]);
+        assert_eq!(resolve_midi_output_index(&devices, None).unwrap(), 0);
+    }
+
+    #[test]
+    fn exact_name_match() {
+        let devices = names(&["IAC Driver Bus 1", "USB MIDI"]);
+        assert_eq!(
+            resolve_midi_output_index(&devices, Some("USB MIDI")).unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn case_insensitive_name_match() {
+        let devices = names(&["IAC Driver Bus 1", "USB MIDI"]);
+        assert_eq!(
+            resolve_midi_output_index(&devices, Some("usb midi")).unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn not_found_errors_with_available_names() {
+        let devices = names(&["IAC Driver Bus 1", "USB MIDI"]);
+        let err = resolve_midi_output_index(&devices, Some("Nope")).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Nope"));
+        assert!(msg.contains("IAC Driver Bus 1"));
+        assert!(msg.contains("USB MIDI"));
+    }
 }

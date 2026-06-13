@@ -137,6 +137,14 @@ impl Default for AppData {
 
 impl AppData {
     fn build_sampling_config(&self) -> SamplingConfig {
+        // Resolve the user's selected audio input device (if any) to a name so
+        // recording uses the chosen device rather than the system default.
+        let input_device_name = self
+            .audio_input_devices
+            .as_slice()
+            .get(self.selected_audio_input)
+            .cloned();
+
         SamplingConfig {
             note_duration_ms: self.note_duration_ms as u64,
             release_time_ms: 1000,
@@ -144,6 +152,7 @@ impl AppData {
             post_delay_ms: 100,
             midi_channel: 0,
             velocity: 100,
+            input_device_name,
         }
     }
 

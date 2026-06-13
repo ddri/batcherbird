@@ -22,6 +22,12 @@ pub struct SamplingConfig {
     pub post_delay_ms: u64,
     pub midi_channel: u8,
     pub velocity: u8,
+    /// Name of the audio input device to record from.
+    ///
+    /// `None` uses the system default input device. `Some(name)` selects a device
+    /// by name (exact match preferred, case-insensitive fallback) via
+    /// [`AudioManager::find_input_device`].
+    pub input_device_name: Option<String>,
 }
 
 impl Default for SamplingConfig {
@@ -33,6 +39,7 @@ impl Default for SamplingConfig {
             post_delay_ms: 100,     // 100ms post delay
             midi_channel: 0,        // Channel 1 (0-indexed)
             velocity: 100,          // Default velocity
+            input_device_name: None, // System default input device
         }
     }
 }
@@ -301,7 +308,9 @@ impl SamplingEngine {
         &self,
         enable_playthrough: bool,
     ) -> Result<(cpal::Stream, Option<cpal::Stream>)> {
-        let input_device = self.audio_manager.get_default_input_device()?;
+        let input_device = self
+            .audio_manager
+            .find_input_device(self.config.input_device_name.as_deref())?;
         let input_config = input_device
             .default_input_config()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
@@ -415,7 +424,9 @@ impl SamplingEngine {
 
     /// Start persistent audio monitoring stream (separate from recording)
     pub fn start_monitoring_stream(&self) -> Result<cpal::Stream> {
-        let device = self.audio_manager.get_default_input_device()?;
+        let device = self
+            .audio_manager
+            .find_input_device(self.config.input_device_name.as_deref())?;
         let config = device
             .default_input_config()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
@@ -753,7 +764,9 @@ impl SamplingEngine {
         MidiManager::send_midi_panic(midi_conn)?;
         tokio::time::sleep(Duration::from_millis(100)).await; // Give hardware time to process
 
-        let device = self.audio_manager.get_default_input_device()?;
+        let device = self
+            .audio_manager
+            .find_input_device(self.config.input_device_name.as_deref())?;
         let config = device
             .default_input_config()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
@@ -909,7 +922,9 @@ impl SamplingEngine {
     ) -> Result<(Sample, RecordingStats, AudioPerformanceReport)> {
         // Get audio device and configuration first so the recorder (and the
         // exported sample metadata) match the device that actually captures
-        let device = self.audio_manager.get_default_input_device()?;
+        let device = self
+            .audio_manager
+            .find_input_device(self.config.input_device_name.as_deref())?;
         let config = device
             .default_input_config()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
