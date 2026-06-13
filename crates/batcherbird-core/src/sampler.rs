@@ -268,6 +268,65 @@ pub struct SamplingEngine {
     audio_diagnostics: Arc<AudioDiagnostics>,
 }
 
+/// Progress update emitted while recording a range of notes (optionally across
+/// multiple velocity layers). Passed to the caller's progress callback after
+/// each individual sample is captured.
+#[derive(Debug, Clone)]
+pub struct RecordingProgress {
+    /// MIDI note number just recorded.
+    pub note: u8,
+    /// MIDI velocity used for the sample just recorded.
+    pub velocity: u8,
+    /// 0-based index of the current velocity layer.
+    pub layer: u8,
+    /// Total number of velocity layers being recorded per note.
+    pub total_layers: u8,
+    /// Number of samples finished so far (1-based count once first sample lands).
+    pub completed: u32,
+    /// Total number of samples to record = num_notes * total_layers.
+    pub total: u32,
+}
+
+/// Map a desired velocity-layer count to concrete MIDI velocity values.
+///
+/// Behavior:
+/// - `0` or `1` -> `vec![100]`, preserving the historical single-layer default
+///   (0 is treated as 1).
+/// - `n >= 2` -> `n` velocities evenly distributed across the inclusive musical
+///   range `[20, 127]`. The endpoints are always exactly hit, and intermediate
+///   layers are placed using integer interpolation:
+///
+///   ```text
+///   velocity[i] = round(20 + (127 - 20) * i / (n - 1))   for i in 0..n
+///   ```
+///
+///   Examples: 2 -> [20, 127]; 3 -> [20, 74, 127]; 4 -> [20, 56, 91, 127].
+///
+/// The count is capped at 16 layers (a generous practical ceiling) so the
+/// interpolation always yields strictly ascending values within `1..=127`.
+fn velocity_layers(count: u8) -> Vec<u8> {
+    const LOW: u32 = 20;
+    const HIGH: u32 = 127;
+    const MAX_LAYERS: u8 = 16;
+
+    let count = count.clamp(1, MAX_LAYERS);
+    if count == 1 {
+        return vec![100];
+    }
+
+    let n = count as u32;
+    (0..n)
+        .map(|i| {
+            // round(LOW + (HIGH - LOW) * i / (n - 1)) using integer math.
+            let span = HIGH - LOW;
+            let numerator = span * i;
+            let denominator = n - 1;
+            let value = LOW + (numerator + denominator / 2) / denominator;
+            value as u8
+        })
+        .collect()
+}
+
 /// Ring buffer size for visualization data
 /// At 60fps, we need ~1 second of buffer = 60 chunks
 const VIZ_RING_BUFFER_SIZE: usize = 64;
@@ -805,81 +864,17 @@ impl SamplingEngine {
 
         // Record each note using the same stream
         for (_index, note) in (start_note..=end_note).enumerate() {
-            // Drain any leftover samples from the ring buffer before this note
-            while consumer.pop().is_ok() {}
-
-            // Start recording for this note (lock-free)
-            recording_active.store(true, Ordering::Release);
-
-            let start_time = Instant::now();
-
-            // Pre-delay
-            if self.config.pre_delay_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(self.config.pre_delay_ms)).await;
-            }
-
-            // Safety: Clear any stuck notes on this channel before starting
-            MidiManager::send_channel_panic(midi_conn, self.config.midi_channel)?;
-
-            // Brief delay after panic to ensure hardware processes it
-            tokio::time::sleep(Duration::from_millis(50)).await;
-
-            // Send MIDI note on
-            let midi_start = Instant::now();
-            MidiManager::send_note_on(
-                midi_conn,
-                self.config.midi_channel,
-                note,
-                self.config.velocity,
-            )?;
-
-            // Wait for note duration
-            tokio::time::sleep(Duration::from_millis(self.config.note_duration_ms)).await;
-
-            // Send MIDI note off
-            MidiManager::send_note_off(
-                midi_conn,
-                self.config.midi_channel,
-                note,
-                self.config.velocity,
-            )?;
-            let midi_timing = midi_start.elapsed();
-
-            // Wait for release
-            if self.config.release_time_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(self.config.release_time_ms)).await;
-            }
-
-            // Post delay
-            if self.config.post_delay_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(self.config.post_delay_ms)).await;
-            }
-
-            // Stop recording for this note (lock-free)
-            recording_active.store(false, Ordering::Release);
-
-            // Brief yield to let any in-flight audio callback finish
-            tokio::time::sleep(Duration::from_millis(10)).await;
-
-            let audio_timing = start_time.elapsed();
-
-            // Drain recorded audio data from ring buffer (non-blocking consumer side)
-            let mut audio_data = Vec::new();
-            while let Ok(sample) = consumer.pop() {
-                audio_data.push(sample);
-            }
-
-            // Create sample record
-            let sample = Sample {
-                note,
-                velocity: self.config.velocity,
-                audio_data,
-                sample_rate,
-                channels,
-                recorded_at: std::time::SystemTime::now(),
-                midi_timing,
-                audio_timing,
-            };
+            let sample = self
+                .record_one_on_stream(
+                    midi_conn,
+                    &mut consumer,
+                    &recording_active,
+                    note,
+                    self.config.velocity,
+                    sample_rate,
+                    channels,
+                )
+                .await?;
 
             samples.push(sample);
 
@@ -896,6 +891,248 @@ impl SamplingEngine {
         drop(stream); // Explicit cleanup
 
         // Safety: Final MIDI panic to ensure no stuck notes (professional practice)
+        MidiManager::send_midi_panic(midi_conn)?;
+
+        Ok(samples)
+    }
+
+    /// Record a single note at a given velocity using an already-running
+    /// persistent recording stream.
+    ///
+    /// This is the per-note recording body shared by the legacy range path and
+    /// the new progress/cancellation/velocity-layer path. It owns NONE of the
+    /// stream lifecycle (build / play / pause): the caller is responsible for
+    /// starting and stopping the persistent stream. This helper only performs
+    /// the timed MIDI + lock-free ring-buffer drain sequence for one note, with
+    /// `velocity` parameterized. The lock-free recording behavior is identical
+    /// to the original inlined loop body — nothing about the audio thread,
+    /// ring buffer, or atomic `recording_active` toggling has changed.
+    #[allow(clippy::too_many_arguments)]
+    async fn record_one_on_stream(
+        &self,
+        midi_conn: &mut MidiOutputConnection,
+        consumer: &mut Consumer<f32>,
+        recording_active: &AtomicBool,
+        note: u8,
+        velocity: u8,
+        sample_rate: u32,
+        channels: u16,
+    ) -> Result<Sample> {
+        // Drain any leftover samples from the ring buffer before this note
+        while consumer.pop().is_ok() {}
+
+        // Start recording for this note (lock-free)
+        recording_active.store(true, Ordering::Release);
+
+        let start_time = Instant::now();
+
+        // Pre-delay
+        if self.config.pre_delay_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(self.config.pre_delay_ms)).await;
+        }
+
+        // Safety: Clear any stuck notes on this channel before starting
+        MidiManager::send_channel_panic(midi_conn, self.config.midi_channel)?;
+
+        // Brief delay after panic to ensure hardware processes it
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Send MIDI note on
+        let midi_start = Instant::now();
+        MidiManager::send_note_on(midi_conn, self.config.midi_channel, note, velocity)?;
+
+        // Wait for note duration
+        tokio::time::sleep(Duration::from_millis(self.config.note_duration_ms)).await;
+
+        // Send MIDI note off
+        MidiManager::send_note_off(midi_conn, self.config.midi_channel, note, velocity)?;
+        let midi_timing = midi_start.elapsed();
+
+        // Wait for release
+        if self.config.release_time_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(self.config.release_time_ms)).await;
+        }
+
+        // Post delay
+        if self.config.post_delay_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(self.config.post_delay_ms)).await;
+        }
+
+        // Stop recording for this note (lock-free)
+        recording_active.store(false, Ordering::Release);
+
+        // Brief yield to let any in-flight audio callback finish
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let audio_timing = start_time.elapsed();
+
+        // Drain recorded audio data from ring buffer (non-blocking consumer side)
+        let mut audio_data = Vec::new();
+        while let Ok(sample) = consumer.pop() {
+            audio_data.push(sample);
+        }
+
+        Ok(Sample {
+            note,
+            velocity,
+            audio_data,
+            sample_rate,
+            channels,
+            recorded_at: std::time::SystemTime::now(),
+            midi_timing,
+            audio_timing,
+        })
+    }
+
+    /// Blocking range sampling with progress reporting, cooperative
+    /// cancellation, and multi-velocity-layer support.
+    ///
+    /// This is the richer counterpart to [`Self::sample_note_range_blocking`]
+    /// (which is retained as-is for CLI back-compat). It:
+    /// - records each note across `velocity_layer_count` velocity layers
+    ///   (see [`velocity_layers`]),
+    /// - invokes `progress` after every successful sample,
+    /// - checks `cancel` before recording each sample and, if set, silences any
+    ///   held note and returns the samples gathered so far (partial result).
+    ///
+    /// Per-note recording errors are propagated (matching the legacy path: one
+    /// failed note fails the whole run).
+    pub fn sample_note_range_with_progress_blocking(
+        &self,
+        midi_conn: &mut MidiOutputConnection,
+        start_note: u8,
+        end_note: u8,
+        velocity_layer_count: u8,
+        cancel: &AtomicBool,
+        progress: impl FnMut(RecordingProgress),
+    ) -> Result<Vec<Sample>> {
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {}", e)))?;
+
+        rt.block_on(self.sample_note_range_with_progress_async(
+            midi_conn,
+            start_note,
+            end_note,
+            velocity_layer_count,
+            cancel,
+            progress,
+        ))
+    }
+
+    /// Async implementation backing
+    /// [`Self::sample_note_range_with_progress_blocking`].
+    ///
+    /// Runs on the current thread via `block_on`, so the non-`Send` `progress`
+    /// closure and `cancel`/`midi_conn` references thread through the `.await`
+    /// points without issue.
+    #[allow(clippy::too_many_arguments)]
+    async fn sample_note_range_with_progress_async(
+        &self,
+        midi_conn: &mut MidiOutputConnection,
+        start_note: u8,
+        end_note: u8,
+        velocity_layer_count: u8,
+        cancel: &AtomicBool,
+        mut progress: impl FnMut(RecordingProgress),
+    ) -> Result<Vec<Sample>> {
+        Self::validate_note_range(start_note, end_note)?;
+
+        let velocities = velocity_layers(velocity_layer_count);
+        let total_layers = velocities.len() as u8;
+        let num_notes = (end_note - start_note + 1) as u32;
+        let total = num_notes * velocities.len() as u32;
+
+        let mut samples = Vec::new();
+
+        // Safety: Clear any stuck notes before starting range recording session
+        MidiManager::send_midi_panic(midi_conn)?;
+        tokio::time::sleep(Duration::from_millis(100)).await; // Give hardware time to process
+
+        let device = self
+            .audio_manager
+            .find_input_device(self.config.input_device_name.as_deref())?;
+        let config = device
+            .default_input_config()
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
+
+        let sample_rate = config.sample_rate().0;
+        let channels = config.channels();
+
+        // Ring buffer size: enough for the longest single note recording.
+        let max_note_duration_secs = (self.config.pre_delay_ms
+            + self.config.note_duration_ms
+            + self.config.release_time_ms
+            + self.config.post_delay_ms
+            + 1000) as usize; // +1s safety margin
+        let ring_buffer_size =
+            (sample_rate as usize) * max_note_duration_secs / 1000 * channels as usize;
+        let ring_buffer_size = ring_buffer_size.max(44100 * 4);
+
+        let (producer, mut consumer) = RingBuffer::<f32>::new(ring_buffer_size);
+        let recording_active = Arc::new(AtomicBool::new(false));
+        let recording_active_clone = Arc::clone(&recording_active);
+
+        // Create ONE stream for the entire range (like professional DAWs).
+        let stream = self.build_persistent_recording_stream(
+            &device,
+            &config,
+            producer,
+            recording_active_clone,
+        )?;
+
+        stream.play().map_err(|e| {
+            BatcherbirdError::Audio(format!("Failed to start persistent stream: {}", e))
+        })?;
+
+        let mut first = true;
+        'outer: for note in start_note..=end_note {
+            for (layer_idx, vel) in velocities.iter().enumerate() {
+                // Cooperative cancellation: check BEFORE recording each sample.
+                if cancel.load(Ordering::Relaxed) {
+                    break 'outer;
+                }
+
+                // Brief pause between samples (hardware stability), skipping the
+                // very first sample. Mirrors the 300ms inter-note pause of the
+                // legacy path and also separates velocity layers.
+                if !first {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                }
+                first = false;
+
+                let sample = self
+                    .record_one_on_stream(
+                        midi_conn,
+                        &mut consumer,
+                        &recording_active,
+                        note,
+                        *vel,
+                        sample_rate,
+                        channels,
+                    )
+                    .await?;
+
+                samples.push(sample);
+
+                progress(RecordingProgress {
+                    note,
+                    velocity: *vel,
+                    layer: layer_idx as u8,
+                    total_layers,
+                    completed: samples.len() as u32,
+                    total,
+                });
+            }
+        }
+
+        // Clean shutdown of persistent stream
+        stream.pause().map_err(|e| {
+            BatcherbirdError::Audio(format!("Failed to stop persistent stream: {}", e))
+        })?;
+        drop(stream); // Explicit cleanup
+
+        // Safety: Final MIDI panic to silence any held note / stuck notes.
+        // This also covers the cancellation path (we always panic on exit).
         MidiManager::send_midi_panic(midi_conn)?;
 
         Ok(samples)
@@ -1055,6 +1292,59 @@ mod tests {
         // Inverted range must be rejected (previously underflowed in u8 math)
         let err = SamplingEngine::validate_note_range(72, 60).unwrap_err();
         assert!(err.to_string().contains("start_note"));
+    }
+
+    #[test]
+    fn test_velocity_layers_single_and_zero() {
+        // 0 is treated as 1; both preserve the historical single-layer default.
+        assert_eq!(velocity_layers(0), vec![100]);
+        assert_eq!(velocity_layers(1), vec![100]);
+    }
+
+    #[test]
+    fn test_velocity_layers_examples() {
+        assert_eq!(velocity_layers(2), vec![20, 127]);
+        assert_eq!(velocity_layers(3), vec![20, 74, 127]);
+        assert_eq!(velocity_layers(4), vec![20, 56, 91, 127]);
+    }
+
+    #[test]
+    fn test_velocity_layers_invariants() {
+        for count in 2..=16u8 {
+            let layers = velocity_layers(count);
+
+            // Correct length.
+            assert_eq!(layers.len(), count as usize, "length for count {}", count);
+
+            // Within 1..=127.
+            for &v in &layers {
+                assert!((1..=127).contains(&v), "velocity {} out of range", v);
+            }
+
+            // Strictly ascending.
+            for w in layers.windows(2) {
+                assert!(w[0] < w[1], "not strictly ascending for count {}", count);
+            }
+
+            // Endpoints: first ~= 20, last == 127.
+            assert_eq!(layers[0], 20, "first velocity for count {}", count);
+            assert_eq!(
+                *layers.last().unwrap(),
+                127,
+                "last velocity for count {}",
+                count
+            );
+        }
+    }
+
+    #[test]
+    fn test_velocity_layers_caps_at_16() {
+        // Counts above the cap collapse to 16 strictly-ascending layers.
+        let capped = velocity_layers(200);
+        assert_eq!(capped.len(), 16);
+        for w in capped.windows(2) {
+            assert!(w[0] < w[1]);
+        }
     }
 
     #[test]
