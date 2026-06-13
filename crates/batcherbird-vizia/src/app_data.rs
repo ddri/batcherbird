@@ -209,6 +209,14 @@ impl AppData {
         }
     }
 
+    /// Whether `generation` matches the current recording session. Worker→UI
+    /// events carry the generation they were spawned under; once the generation
+    /// is bumped (new recording or cancel), the in-flight worker's events become
+    /// stale and are ignored.
+    pub fn is_current_recording(&self, generation: u64) -> bool {
+        generation == self.recording_generation
+    }
+
     pub fn total_samples(&self) -> u32 {
         let num_notes = (self.end_note as u32).saturating_sub(self.start_note as u32) + 1;
         num_notes * self.velocity_layers as u32
@@ -549,11 +557,16 @@ impl Model for AppData {
                 self.viz_chunks.push(chunk.clone());
             }
             AppEvent::CancelRecording => {
-                // Signal the worker to stop. Its eventual RecordingFinished /
-                // RecordingError is dropped by the generation check below.
+                // Signal the worker to stop. Core's cooperative cancel returns
+                // Ok(partial_samples), so the worker still emits
+                // RecordingFinished{generation} under its original generation.
+                // Bumping the generation here makes that generation stale, so
+                // `is_current_recording` rejects the worker's eventual
+                // RecordingFinished / RecordingError and the UI stays Idle.
                 if let Some(f) = &self.cancel_flag {
                     f.store(true, Ordering::Relaxed);
                 }
+                self.recording_generation += 1;
                 self.cancel_flag = None;
                 self.app_state = AppState::Idle;
                 self.current_note = 0;
@@ -571,7 +584,7 @@ impl Model for AppData {
                 completed,
                 total,
             } => {
-                if *generation != self.recording_generation {
+                if !self.is_current_recording(*generation) {
                     return;
                 }
                 self.current_note = *note;
@@ -582,7 +595,7 @@ impl Model for AppData {
                 self.notes_total = *total;
             }
             AppEvent::RecordingFinished { generation } => {
-                if *generation != self.recording_generation {
+                if !self.is_current_recording(*generation) {
                     return;
                 }
                 // Move the captured samples out of the hand-off slot.
@@ -613,11 +626,12 @@ impl Model for AppData {
                 self.is_playing = false;
             }
             AppEvent::RecordingError { generation, message } => {
-                if *generation != self.recording_generation {
+                if !self.is_current_recording(*generation) {
                     return;
                 }
                 self.app_state = AppState::Idle;
                 self.error_message = Some(message.clone());
+                self.info_message = None;
                 self.cancel_flag = None;
             }
             AppEvent::ExportAll => {
@@ -665,6 +679,7 @@ impl Model for AppData {
             }
             AppEvent::ExportError(msg) => {
                 self.error_message = Some(msg.clone());
+                self.info_message = None;
             }
             AppEvent::DismissError => {
                 self.error_message = None;
@@ -687,5 +702,53 @@ impl Model for AppData {
 
             _ => {}
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_current_recording_tracks_generation() {
+        let data = AppData {
+            recording_generation: 7,
+            ..AppData::default()
+        };
+
+        // The active generation is current; any other is stale.
+        assert!(data.is_current_recording(7));
+        assert!(!data.is_current_recording(6));
+        assert!(!data.is_current_recording(8));
+    }
+
+    #[test]
+    fn cancel_invalidates_in_flight_worker_generation() {
+        // Simulates the cancel -> stale RecordingFinished path. The full
+        // `Model::event` handler can't be exercised in a unit test because it
+        // needs a vizia `EventContext`, so this asserts the underlying
+        // generation invariant that drives that handler's early-skip:
+        //
+        // A recording is spawned under generation G. CancelRecording bumps the
+        // generation to G+1. When the cancelled worker later emits
+        // RecordingFinished{generation: G} (core returns Ok(partial) on
+        // cooperative cancel), the handler calls `is_current_recording(G)`,
+        // which must now be false so the UI is NOT dragged Idle -> Review.
+        let mut data = AppData::default();
+
+        // Worker spawned under generation G (as StartRecording would bump it).
+        data.recording_generation += 1;
+        let g = data.recording_generation;
+        data.app_state = AppState::Recording;
+        assert!(data.is_current_recording(g));
+
+        // CancelRecording: bump generation, return to Idle.
+        data.recording_generation += 1;
+        data.app_state = AppState::Idle;
+
+        // The in-flight worker's RecordingFinished{generation: G} is now stale,
+        // so the handler's guard rejects it and the state stays Idle.
+        assert!(!data.is_current_recording(g));
+        assert_eq!(data.app_state, AppState::Idle);
     }
 }
