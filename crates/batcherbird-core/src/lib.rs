@@ -18,6 +18,7 @@ pub mod lock_free_recording;
 pub mod loop_detection;
 pub mod midi;
 pub mod playback;
+pub mod preview_player;
 pub mod professional_metadata;
 pub mod professional_meters;
 pub mod quality_validation;
@@ -54,6 +55,7 @@ pub use lock_free_recording::{
     LockFreeRecorder, LockFreeRecordingConfig, RealtimeMeterData, RecordingPerformanceGrade,
     RecordingStats,
 };
+pub use preview_player::PreviewPlayer;
 pub use professional_metadata::{
     BroadcastWavChunk, MetadataEngine, ProfessionalMetadata, QualityMetrics, SamplerCompatibility,
     SmplChunk,

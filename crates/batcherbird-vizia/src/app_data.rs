@@ -1,6 +1,7 @@
 use crate::app_event::AppEvent;
 use batcherbird_core::export::AudioFormat;
 use batcherbird_core::lock_free_recording::RealtimeMeterData;
+use batcherbird_core::preview_player::PreviewPlayer;
 use batcherbird_core::export::{ExportConfig, SampleExporter};
 use batcherbird_core::sampler::{Sample, SamplingConfig, SamplingEngine, VizChunk};
 use rtrb::Consumer;
@@ -105,6 +106,10 @@ pub struct AppData {
     pub recorded_count: u32,
     pub is_playing: bool,
     pub playback_position: f64,
+    /// Active one-shot preview player for the Review screen, if any. Holds the
+    /// live cpal output stream; dropping it stops audio.
+    #[lens(ignore)]
+    pub preview_player: Option<PreviewPlayer>,
 
     // Recorded samples + worker hand-off
     /// Samples captured by the most recent finished recording.
@@ -179,6 +184,7 @@ impl Default for AppData {
             recorded_count: 0,
             is_playing: false,
             playback_position: 0.0,
+            preview_player: None,
 
             recorded_samples: Vec::new(),
             recorded_slot: Arc::new(Mutex::new(Vec::new())),
@@ -266,6 +272,39 @@ impl AppData {
         let per_note_secs = self.note_duration_ms as f32 / 1000.0 + 1.5;
         total * per_note_secs
     }
+
+    /// Start a one-shot preview of `recorded_samples[idx]`, replacing any
+    /// currently-playing preview. On success the player is stored and
+    /// `is_playing` is set; on failure `error_message` is set and `is_playing`
+    /// is left false. Out-of-range indices are ignored.
+    fn start_preview(&mut self, idx: usize) {
+        // Drop any existing player first so its stream stops cleanly.
+        self.stop_preview();
+
+        let Some(sample) = self.recorded_samples.get(idx) else {
+            return;
+        };
+        let audio: Arc<[f32]> = Arc::from(sample.audio_data.as_slice());
+        match PreviewPlayer::play(audio, sample.sample_rate, sample.channels) {
+            Ok(player) => {
+                self.preview_player = Some(player);
+                self.is_playing = true;
+            }
+            Err(e) => {
+                self.error_message = Some(format!("Failed to play preview: {}", e));
+                self.is_playing = false;
+            }
+        }
+    }
+
+    /// Stop and drop any active preview player, resetting playback UI state.
+    fn stop_preview(&mut self) {
+        if let Some(player) = self.preview_player.take() {
+            player.stop();
+        }
+        self.is_playing = false;
+        self.playback_position = 0.0;
+    }
 }
 
 impl Model for AppData {
@@ -314,6 +353,19 @@ impl Model for AppData {
                         self.meter_left_db = levels.peak_db;
                         self.meter_right_db = levels.peak_db;
                     }
+                }
+                // Reflect one-shot preview completion in the UI: once the
+                // player reaches the end (or there's no player), clear playing
+                // state so the Play/Stop button updates.
+                if self.is_playing
+                    && self
+                        .preview_player
+                        .as_ref()
+                        .is_none_or(|p| p.is_finished())
+                {
+                    self.preview_player = None;
+                    self.is_playing = false;
+                    self.playback_position = 0.0;
                 }
             }
             AppEvent::SetStartNote(n) => self.start_note = *n,
@@ -448,6 +500,7 @@ impl Model for AppData {
             }
             AppEvent::Disarm => {
                 if self.app_state == AppState::Armed || self.app_state == AppState::Review {
+                    self.stop_preview();
                     self.monitoring_stream = None;
                     self.sampling_engine = None;
                     self.app_state = AppState::Idle;
@@ -455,6 +508,7 @@ impl Model for AppData {
             }
             AppEvent::StartRecording => {
                 if self.app_state == AppState::Armed {
+                    self.stop_preview();
                     self.app_state = AppState::Recording;
                     self.notes_total = self.total_samples();
                     self.notes_completed = 0;
@@ -611,19 +665,28 @@ impl Model for AppData {
                 self.recorded_count = samples.len() as u32;
                 self.recorded_samples = samples;
                 self.cancel_flag = None;
-                self.is_playing = false;
-                self.playback_position = 0.0;
+                // Stop/clear any preview from a previous Review session.
+                self.stop_preview();
                 self.app_state = AppState::Review;
             }
             AppEvent::PlayPreview => {
-                self.is_playing = true;
+                // The Review UI has no per-sample selection, so preview the
+                // first recorded sample. If selection is added later, route it
+                // through PlaySample(idx).
+                if !self.recorded_samples.is_empty() {
+                    self.start_preview(0);
+                }
             }
-            AppEvent::StopPreview => {
-                self.is_playing = false;
-                self.playback_position = 0.0;
+            AppEvent::PlaySample(idx) => {
+                self.start_preview(*idx);
+            }
+            AppEvent::StopPreview | AppEvent::StopPlayback => {
+                self.stop_preview();
             }
             AppEvent::PausePreview => {
-                self.is_playing = false;
+                // The one-shot player has no real pause/resume; treat Pause as
+                // Stop rather than faking a resumable pause.
+                self.stop_preview();
             }
             AppEvent::RecordingError { generation, message } => {
                 if !self.is_current_recording(*generation) {
@@ -699,8 +762,6 @@ impl Model for AppData {
                     }
                 });
             }
-
-            _ => {}
         });
     }
 }
