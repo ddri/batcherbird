@@ -43,14 +43,21 @@ pub enum AppEvent {
 
     // Internal events (from background threads)
     RecordingProgress {
+        generation: u64,
         note: u8,
         velocity: u8,
         layer: u8,
+        total_layers: u8,
         completed: u32,
         total: u32,
     },
-    RecordingComplete,
-    RecordingError(String),
+    RecordingFinished {
+        generation: u64,
+    },
+    RecordingError {
+        generation: u64,
+        message: String,
+    },
 
     // Error handling
     DismissError,
@@ -66,6 +73,11 @@ pub enum AppEvent {
 
     // Export
     ExportAll,
+    ExportComplete {
+        count: usize,
+        directory: PathBuf,
+    },
+    ExportError(String),
 
     // Visualization data
     PushVizChunk(VizChunk),

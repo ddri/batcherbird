@@ -1,10 +1,37 @@
 use crate::app_event::AppEvent;
 use batcherbird_core::export::AudioFormat;
 use batcherbird_core::lock_free_recording::RealtimeMeterData;
-use batcherbird_core::sampler::{SamplingConfig, SamplingEngine, VizChunk};
+use batcherbird_core::export::{ExportConfig, SampleExporter};
+use batcherbird_core::sampler::{Sample, SamplingConfig, SamplingEngine, VizChunk};
 use rtrb::Consumer;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use vizia::prelude::*;
+
+/// Downsample raw interleaved/mono audio into `buckets` peak values normalized
+/// to 0.0..=1.0 by taking the max absolute amplitude within each bucket.
+///
+/// - Empty input (or `buckets == 0`) yields an empty vec.
+/// - The returned vec has at most `buckets` entries (fewer if `audio` is shorter
+///   than `buckets`).
+/// - All values are clamped to `<= 1.0`.
+pub fn samples_to_peaks(audio: &[f32], buckets: usize) -> Vec<f32> {
+    if audio.is_empty() || buckets == 0 {
+        return Vec::new();
+    }
+    let n = buckets.min(audio.len());
+    let chunk = audio.len().div_ceil(n);
+    let mut peaks = Vec::with_capacity(n);
+    for chunk_slice in audio.chunks(chunk) {
+        let peak = chunk_slice
+            .iter()
+            .fold(0.0f32, |acc, &s| acc.max(s.abs()))
+            .min(1.0);
+        peaks.push(peak);
+    }
+    peaks
+}
 
 #[derive(Debug, Clone, PartialEq, Data)]
 pub enum AppState {
@@ -41,6 +68,8 @@ pub struct AppData {
     // App state
     pub app_state: AppState,
     pub error_message: Option<String>,
+    /// Transient success / status banner (e.g. export complete).
+    pub info_message: Option<String>,
 
     // Real-time meters
     pub meter_left: f32,
@@ -76,6 +105,24 @@ pub struct AppData {
     pub recorded_count: u32,
     pub is_playing: bool,
     pub playback_position: f64,
+
+    // Recorded samples + worker hand-off
+    /// Samples captured by the most recent finished recording.
+    #[lens(ignore)]
+    pub recorded_samples: Vec<Sample>,
+    /// Hand-off slot: the recording worker writes its returned samples here so
+    /// they don't have to travel by value through an `AppEvent` (which would
+    /// deep-clone all the audio). The UI moves them out on `RecordingFinished`.
+    #[lens(ignore)]
+    pub recorded_slot: Arc<Mutex<Vec<Sample>>>,
+    /// Cooperative cancellation flag for the active recording worker.
+    #[lens(ignore)]
+    pub cancel_flag: Option<Arc<AtomicBool>>,
+    /// Bumped on every `StartRecording`. Worker→UI events carry the generation
+    /// they were started under; the handler ignores any event whose generation
+    /// no longer matches, which is what makes cancellation/restart correct.
+    #[lens(ignore)]
+    pub recording_generation: u64,
 }
 
 impl Default for AppData {
@@ -107,6 +154,7 @@ impl Default for AppData {
 
             app_state: AppState::Idle,
             error_message: None,
+            info_message: None,
 
             meter_left: 0.0,
             meter_right: 0.0,
@@ -131,6 +179,11 @@ impl Default for AppData {
             recorded_count: 0,
             is_playing: false,
             playback_position: 0.0,
+
+            recorded_samples: Vec::new(),
+            recorded_slot: Arc::new(Mutex::new(Vec::new())),
+            cancel_flag: None,
+            recording_generation: 0,
         }
     }
 }
@@ -399,15 +452,29 @@ impl Model for AppData {
                     self.notes_completed = 0;
                     self.viz_chunks.clear();
                     self.viz_peaks.clear();
+                    self.error_message = None;
+                    self.info_message = None;
 
                     // Stop monitoring before recording
                     self.monitoring_stream = None;
                     self.sampling_engine = None;
 
+                    // New recording session: bump generation, create a fresh
+                    // cancel flag, and clear the hand-off slot.
+                    self.recording_generation += 1;
+                    let generation = self.recording_generation;
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    self.cancel_flag = Some(cancel.clone());
+                    let recorded_slot = self.recorded_slot.clone();
+                    if let Ok(mut slot) = recorded_slot.lock() {
+                        slot.clear();
+                    }
+
                     let config = self.build_sampling_config();
 
                     let start_note = self.start_note;
                     let end_note = self.end_note;
+                    let velocity_layers = self.velocity_layers;
                     let midi_device_idx = self.selected_midi_device;
                     let mut proxy = cx.get_proxy();
 
@@ -424,44 +491,54 @@ impl Model for AppData {
 
                         let mut midi_conn = match midi_conn_result {
                             Ok(conn) => conn,
-                            Err(e) => {
-                                let _ = proxy.emit(AppEvent::RecordingError(e));
+                            Err(message) => {
+                                let _ = proxy
+                                    .emit(AppEvent::RecordingError { generation, message });
                                 return;
                             }
                         };
 
                         match SamplingEngine::new(config) {
                             Ok(engine) => {
-                                if start_note == end_note {
-                                    match engine
-                                        .sample_single_note_blocking(&mut midi_conn, start_note)
-                                    {
-                                        Ok(_) => {
-                                            let _ = proxy.emit(AppEvent::RecordingComplete);
+                                let result = engine.sample_note_range_with_progress_blocking(
+                                    &mut midi_conn,
+                                    start_note,
+                                    end_note,
+                                    velocity_layers,
+                                    &cancel,
+                                    |p| {
+                                        let _ = proxy.emit(AppEvent::RecordingProgress {
+                                            generation,
+                                            note: p.note,
+                                            velocity: p.velocity,
+                                            layer: p.layer,
+                                            total_layers: p.total_layers,
+                                            completed: p.completed,
+                                            total: p.total,
+                                        });
+                                    },
+                                );
+                                match result {
+                                    Ok(samples) => {
+                                        if let Ok(mut slot) = recorded_slot.lock() {
+                                            *slot = samples;
                                         }
-                                        Err(e) => {
-                                            let _ =
-                                                proxy.emit(AppEvent::RecordingError(e.to_string()));
-                                        }
+                                        let _ = proxy
+                                            .emit(AppEvent::RecordingFinished { generation });
                                     }
-                                } else {
-                                    match engine.sample_note_range_blocking(
-                                        &mut midi_conn,
-                                        start_note,
-                                        end_note,
-                                    ) {
-                                        Ok(_) => {
-                                            let _ = proxy.emit(AppEvent::RecordingComplete);
-                                        }
-                                        Err(e) => {
-                                            let _ =
-                                                proxy.emit(AppEvent::RecordingError(e.to_string()));
-                                        }
+                                    Err(e) => {
+                                        let _ = proxy.emit(AppEvent::RecordingError {
+                                            generation,
+                                            message: e.to_string(),
+                                        });
                                     }
                                 }
                             }
                             Err(e) => {
-                                let _ = proxy.emit(AppEvent::RecordingError(e.to_string()));
+                                let _ = proxy.emit(AppEvent::RecordingError {
+                                    generation,
+                                    message: e.to_string(),
+                                });
                             }
                         }
                     });
@@ -472,23 +549,55 @@ impl Model for AppData {
                 self.viz_chunks.push(chunk.clone());
             }
             AppEvent::CancelRecording => {
+                // Signal the worker to stop. Its eventual RecordingFinished /
+                // RecordingError is dropped by the generation check below.
+                if let Some(f) = &self.cancel_flag {
+                    f.store(true, Ordering::Relaxed);
+                }
+                self.cancel_flag = None;
                 self.app_state = AppState::Idle;
+                self.current_note = 0;
+                self.current_velocity = 0;
+                self.current_layer = 0;
+                self.total_layers = 0;
+                self.notes_completed = 0;
             }
             AppEvent::RecordingProgress {
+                generation,
                 note,
                 velocity,
                 layer,
+                total_layers,
                 completed,
                 total,
             } => {
+                if *generation != self.recording_generation {
+                    return;
+                }
                 self.current_note = *note;
                 self.current_velocity = *velocity;
                 self.current_layer = *layer;
+                self.total_layers = *total_layers;
                 self.notes_completed = *completed;
                 self.notes_total = *total;
             }
-            AppEvent::RecordingComplete => {
-                self.recorded_count = self.notes_total;
+            AppEvent::RecordingFinished { generation } => {
+                if *generation != self.recording_generation {
+                    return;
+                }
+                // Move the captured samples out of the hand-off slot.
+                let samples = match self.recorded_slot.lock() {
+                    Ok(mut slot) => std::mem::take(&mut *slot),
+                    Err(_) => Vec::new(),
+                };
+                // Populate the Review waveform from the first recorded sample.
+                self.viz_peaks = samples
+                    .first()
+                    .map(|s| samples_to_peaks(&s.audio_data, 512))
+                    .unwrap_or_default();
+                self.recorded_count = samples.len() as u32;
+                self.recorded_samples = samples;
+                self.cancel_flag = None;
                 self.is_playing = false;
                 self.playback_position = 0.0;
                 self.app_state = AppState::Review;
@@ -503,12 +612,63 @@ impl Model for AppData {
             AppEvent::PausePreview => {
                 self.is_playing = false;
             }
-            AppEvent::RecordingError(msg) => {
+            AppEvent::RecordingError { generation, message } => {
+                if *generation != self.recording_generation {
+                    return;
+                }
                 self.app_state = AppState::Idle;
+                self.error_message = Some(message.clone());
+                self.cancel_flag = None;
+            }
+            AppEvent::ExportAll => {
+                if self.recorded_samples.is_empty() {
+                    self.error_message =
+                        Some("No recorded samples to export.".to_string());
+                    return;
+                }
+                self.error_message = None;
+                self.info_message = None;
+
+                let cfg = ExportConfig {
+                    output_directory: self.output_directory.clone(),
+                    sample_format: self.export_format.clone(),
+                    ..Default::default()
+                };
+                // Cloning the samples once into the worker is acceptable; export
+                // does file IO + detection and must not block the UI thread.
+                let samples = self.recorded_samples.clone();
+                let mut proxy = cx.get_proxy();
+
+                std::thread::spawn(move || {
+                    let result = SampleExporter::new(cfg.clone())
+                        .and_then(|exporter| exporter.export_samples(&samples));
+                    match result {
+                        Ok(paths) => {
+                            let _ = proxy.emit(AppEvent::ExportComplete {
+                                count: paths.len(),
+                                directory: cfg.output_directory,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = proxy.emit(AppEvent::ExportError(e.to_string()));
+                        }
+                    }
+                });
+            }
+            AppEvent::ExportComplete { count, directory } => {
+                self.error_message = None;
+                self.info_message = Some(format!(
+                    "Exported {} sample(s) to {}",
+                    count,
+                    directory.display()
+                ));
+            }
+            AppEvent::ExportError(msg) => {
                 self.error_message = Some(msg.clone());
             }
             AppEvent::DismissError => {
                 self.error_message = None;
+                self.info_message = None;
             }
 
             AppEvent::SelectOutputDirectory => {
