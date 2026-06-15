@@ -3,7 +3,6 @@ members = [
     "crates/batcherbird-core",
     "crates/batcherbird-cli",
     "crates/batcherbird-vizia",
-    # Note: batcherbird-gui/src-tauri has its own workspace and is built via `npm run tauri build`
 ]
 resolver = "2"
 

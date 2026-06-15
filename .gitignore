@@ -45,7 +45,7 @@ target
 ehthumbs.db
 Thumbs.db
 
-# Node.js (for GUI components)
+# Node.js
 node_modules/
 npm-debug.log*
 yarn-debug.log*
@@ -75,12 +75,3 @@ PRD/
 docs/plans/
 docs/reports/
 docs/superpowers/
-
-# Generated Tauri schemas and build artifacts
-crates/batcherbird-gui/gen/
-
-# Personal test recordings and dev scratch files
-crates/batcherbird-gui/src-tauri/samples/*.wav
-crates/batcherbird-gui/src-tauri/test_sfz_output.md
-crates/batcherbird-gui/create_placeholder_icons.sh
-crates/batcherbird-gui/icons/create_icons.py

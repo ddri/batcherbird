@@ -46,81 +46,9 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-  frontend:
-    name: Frontend
-    runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: crates/batcherbird-gui
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: crates/batcherbird-gui/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Type check
-        run: npx tsc --noEmit
-
-      - name: Build frontend
-        run: npm run build
-
-  tauri-app:
-    name: Tauri App Build
-    runs-on: macos-latest
-    needs: [rust-core, frontend]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            crates/batcherbird-gui/src-tauri/target/
-          key: ${{ runner.os }}-tauri-${{ hashFiles('crates/batcherbird-gui/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-tauri-
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: crates/batcherbird-gui/package-lock.json
-
-      - name: Install frontend dependencies
-        working-directory: crates/batcherbird-gui
-        run: npm ci
-
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2.0" --locked || true
-
-      - name: Build Tauri app
-        working-directory: crates/batcherbird-gui
-        run: cargo tauri build
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ""
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: batcherbird-macos-ci
-          path: crates/batcherbird-gui/src-tauri/target/release/bundle/dmg/*.dmg
-          retention-days: 7
+  # TODO(release): The deprecated Tauri GUI crate has been removed. The
+  # `frontend` and `tauri-app` jobs that built it are deleted here. A VIZIA
+  # app build/packaging job will be added in the release-pipeline follow-up task.
 
   rust-linux:
     name: Rust Linux Build (core + vizia)
