@@ -139,8 +139,12 @@ impl SampleDetector {
             return Err(BatcherbirdError::Audio("Window size too small".to_string()));
         }
 
+        // Window stride: 50% overlap. `.max(1)` prevents a zero step when
+        // window_size_samples == 1 (step_by(0) panics).
+        let stride = (window_size_samples / 2).max(1);
+
         // Calculate RMS values for each window
-        let rms_values = self.calculate_rms_windows(audio_data, window_size_samples);
+        let rms_values = self.calculate_rms_windows(audio_data, window_size_samples, stride);
 
         // Convert threshold from dB to linear
         let threshold_linear = self.db_to_linear(self.config.threshold_db);
@@ -149,10 +153,12 @@ impl SampleDetector {
         let (detected_start_window, detected_end_window) =
             self.find_signal_boundaries(&rms_values, threshold_linear)?;
 
-        // Convert window indices back to sample indices
-        let detected_start_sample = detected_start_window * window_size_samples;
+        // Convert window indices back to sample indices using the same stride
+        // that produced the windows (windows overlap by 50%, so index * stride,
+        // NOT index * window_size)
+        let detected_start_sample = (detected_start_window * stride).min(audio_data.len());
         let detected_end_sample =
-            ((detected_end_window + 1) * window_size_samples).min(audio_data.len());
+            (detected_end_window * stride + window_size_samples).min(audio_data.len());
 
         // Apply pre/post trigger adjustments
         let pre_trigger_samples =
@@ -191,8 +197,8 @@ impl SampleDetector {
         })
     }
 
-    /// Calculate RMS energy for each window
-    fn calculate_rms_windows(&self, audio_data: &[f32], window_size: usize) -> Vec<f32> {
+    /// Calculate RMS energy for each window (windows advance by `stride` samples)
+    fn calculate_rms_windows(&self, audio_data: &[f32], window_size: usize, stride: usize) -> Vec<f32> {
         if window_size > audio_data.len() {
             // If window is larger than audio, return single RMS value
             let sum_squares: f32 = audio_data.iter().map(|&x| x * x).sum();
@@ -201,7 +207,7 @@ impl SampleDetector {
 
         audio_data
             .windows(window_size)
-            .step_by(window_size / 2) // 50% overlap for smoother analysis
+            .step_by(stride) // 50% overlap for smoother analysis
             .map(|window| {
                 let sum_squares: f32 = window.iter().map(|&x| x * x).sum();
                 (sum_squares / window.len() as f32).sqrt()
@@ -266,7 +272,7 @@ impl SampleDetector {
         for i in (start_window..rms_values.len()).rev() {
             // Check if we have enough consecutive windows above threshold working backwards
             let mut consecutive_count = 0;
-            for j in (i.saturating_sub(self.config.confirmation_windows - 1)..=i).rev() {
+            for j in (i.saturating_sub(self.config.confirmation_windows.saturating_sub(1))..=i).rev() {
                 if rms_values[j] > threshold {
                     consecutive_count += 1;
                 } else {
@@ -309,5 +315,116 @@ impl SampleDetector {
         }
 
         audio_data[start..end].to_vec()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE_RATE: u32 = 44100;
+
+    /// Build silence + sine + silence test audio
+    fn silence_sine_silence(lead: usize, signal: usize, tail: usize) -> Vec<f32> {
+        let mut audio = vec![0.0f32; lead];
+        for i in 0..signal {
+            let t = i as f32 / SAMPLE_RATE as f32;
+            audio.push(0.5 * (2.0 * std::f32::consts::PI * 440.0 * t).sin());
+        }
+        audio.resize(audio.len() + tail, 0.0);
+        audio
+    }
+
+    #[test]
+    fn test_detected_boundaries_align_with_signal() {
+        // 0.5s silence + 1s sine + 0.5s silence at 44.1kHz
+        let lead = 22050;
+        let signal = 44100;
+        let audio = silence_sine_silence(lead, signal, 22050);
+
+        let config = DetectionConfig {
+            pre_trigger_ms: 0.0,
+            post_trigger_ms: 0.0,
+            ..DetectionConfig::default()
+        };
+        let window_size_samples =
+            ((config.window_size_ms / 1000.0) * SAMPLE_RATE as f32) as usize;
+
+        let detector = SampleDetector::new(config);
+        let result = detector.detect_boundaries(&audio, SAMPLE_RATE).unwrap();
+
+        assert!(result.success, "detection failed: {:?}", result.failure_reason);
+
+        // Detected start should be within one window of the actual signal start
+        let start_error = (result.detected_start as i64 - lead as i64).unsigned_abs() as usize;
+        assert!(
+            start_error <= window_size_samples,
+            "detected_start {} is {} samples from actual start {} (tolerance {})",
+            result.detected_start,
+            start_error,
+            lead,
+            window_size_samples
+        );
+
+        // Detected end should be within one window of the actual signal end
+        let signal_end = lead + signal;
+        let end_error = (result.detected_end as i64 - signal_end as i64).unsigned_abs() as usize;
+        assert!(
+            end_error <= window_size_samples,
+            "detected_end {} is {} samples from actual end {} (tolerance {})",
+            result.detected_end,
+            end_error,
+            signal_end,
+            window_size_samples
+        );
+    }
+
+    #[test]
+    fn test_window_size_of_one_sample_does_not_panic() {
+        // window_size_ms small enough that window_size_samples == 1
+        let audio = silence_sine_silence(100, 500, 100);
+        let config = DetectionConfig {
+            window_size_ms: 0.03, // 0.03ms at 44.1kHz -> 1 sample
+            pre_trigger_ms: 0.0,
+            post_trigger_ms: 0.0,
+            min_sample_length_ms: 1.0,
+            ..DetectionConfig::default()
+        };
+        let detector = SampleDetector::new(config);
+        let result = detector.detect_boundaries(&audio, SAMPLE_RATE);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_window_larger_than_audio_is_sane() {
+        // Window larger than the whole buffer -> single RMS value, sane conversion
+        let audio = silence_sine_silence(0, 200, 0);
+        let config = DetectionConfig {
+            window_size_ms: 50.0, // 2205 samples > 200
+            pre_trigger_ms: 0.0,
+            post_trigger_ms: 0.0,
+            min_sample_length_ms: 1.0,
+            confirmation_windows: 1,
+            ..DetectionConfig::default()
+        };
+        let detector = SampleDetector::new(config);
+        let result = detector.detect_boundaries(&audio, SAMPLE_RATE).unwrap();
+        assert_eq!(result.detected_start, 0);
+        assert_eq!(result.detected_end, audio.len());
+    }
+
+    #[test]
+    fn test_zero_confirmation_windows_does_not_panic() {
+        let audio = silence_sine_silence(1000, 2000, 1000);
+        let config = DetectionConfig {
+            confirmation_windows: 0,
+            pre_trigger_ms: 0.0,
+            post_trigger_ms: 0.0,
+            min_sample_length_ms: 1.0,
+            ..DetectionConfig::default()
+        };
+        let detector = SampleDetector::new(config);
+        let result = detector.detect_boundaries(&audio, SAMPLE_RATE);
+        assert!(result.is_ok());
     }
 }

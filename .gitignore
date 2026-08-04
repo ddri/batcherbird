@@ -45,7 +45,7 @@ target
 ehthumbs.db
 Thumbs.db
 
-# Node.js (for GUI components)
+# Node.js
 node_modules/
 npm-debug.log*
 yarn-debug.log*
@@ -68,3 +68,10 @@ build/
 # Development and security notes (private)
 CLAUDE.md
 SECURITY-REVIEW.md
+PRODUCTPLAN.md
+EPIC-4-REVISED.md
+INFRA-RESEARCH.md
+PRD/
+docs/plans/
+docs/reports/
+docs/superpowers/

@@ -33,6 +33,34 @@ pub fn stage(cx: &mut Context) {
             }
         });
 
+        // --- Info / success banner ---
+        Binding::new(cx, AppData::info_message, |cx, msg| {
+            let msg = msg.get(cx);
+            if let Some(text) = msg {
+                HStack::new(cx, |cx| {
+                    Label::new(cx, &text)
+                        .color(Color::from("#28c840"))
+                        .font_size(12.0)
+                        .width(Stretch(1.0));
+                    Label::new(cx, "×")
+                        .color(Color::from("#888888"))
+                        .font_size(14.0)
+                        .width(Pixels(20.0))
+                        .alignment(Alignment::Center)
+                        .cursor(CursorIcon::Hand)
+                        .on_press(|cx| cx.emit(AppEvent::DismissError));
+                })
+                .width(Stretch(1.0))
+                .height(Auto)
+                .background_color(Color::from("#0a1a0a"))
+                .border_width(Pixels(1.0))
+                .border_color(Color::from("#15301a"))
+                .corner_radius(Pixels(4.0))
+                .padding(Pixels(8.0))
+                .horizontal_gap(Pixels(8.0));
+            }
+        });
+
         // --- Meters ---
         meters(cx);
 

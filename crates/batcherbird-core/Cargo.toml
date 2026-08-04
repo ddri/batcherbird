@@ -13,18 +13,12 @@ cpal = { workspace = true }
 hound = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 toml = { workspace = true }
-anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-uuid = { workspace = true }
 chrono = { workspace = true }
 rtrb = "0.3"
-dirs = "5.0"
 wide = "0.7"  # SIMD optimization for professional meter calculations
-rustfft = "6.0"  # FFT-based loop detection using Wiener-Khinchin theorem
-rayon = "1.8"  # Parallel batch processing for 4-8x speedup
 
 [features]
 default = []

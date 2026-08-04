@@ -49,6 +49,9 @@ pub struct LockFreeRecorder {
     // Performance configuration
     buffer_size: usize,
 
+    // Safety limit: maximum number of interleaved samples per recording
+    max_recording_samples: usize,
+
     // Consumer thread handle
     consumer_thread: Option<thread::JoinHandle<Result<Vec<f32>>>>,
 }
@@ -66,7 +69,11 @@ pub struct LockFreeRecordingConfig {
     /// Number of channels (standardized to stereo)
     pub channels: u16,
 
-    /// Maximum recording duration in samples (safety limit)
+    /// Maximum recording duration in **interleaved** samples (safety limit).
+    /// This counts every individual sample value across all channels, so a
+    /// stereo stream at 44 100 Hz uses 88 200 interleaved samples per second.
+    /// Choose a value that is a multiple of the channel count to avoid
+    /// truncating mid-frame.
     pub max_recording_samples: usize,
 }
 
@@ -100,6 +107,7 @@ impl LockFreeRecorder {
             sample_rate: config.sample_rate,
             channels: config.channels,
             buffer_size: config.ring_buffer_size,
+            max_recording_samples: config.max_recording_samples,
             consumer_thread: None,
         })
     }
@@ -128,10 +136,15 @@ impl LockFreeRecorder {
 
         let is_recording = Arc::clone(&self.is_recording);
         let samples_recorded = Arc::clone(&self.samples_recorded);
-        let max_samples = self.buffer_size * 100; // Safety limit
+        let max_samples = self.max_recording_samples.max(1); // Safety limit
+        let initial_capacity = self.buffer_size.min(max_samples);
+
+        // Set recording flag BEFORE spawning the consumer thread so the thread
+        // never observes `false` on an empty ring and exits prematurely.
+        self.is_recording.store(true, Ordering::Relaxed);
 
         self.consumer_thread = Some(thread::spawn(move || {
-            let mut recorded_samples = Vec::with_capacity(max_samples);
+            let mut recorded_samples = Vec::with_capacity(initial_capacity);
             let last_report = Instant::now();
 
             while is_recording.load(Ordering::Relaxed) || !consumer.is_empty() {
@@ -140,9 +153,17 @@ impl LockFreeRecorder {
                     recorded_samples.push(sample);
                     samples_recorded.fetch_add(1, Ordering::Relaxed);
 
-                    // Safety check to prevent memory overflow
+                    // Safety limit reached: stop the recording entirely so the
+                    // audio callback stops pushing and memory stays bounded.
+                    // Any samples still in the ring buffer are intentionally
+                    // discarded — the limit exists to cap memory usage.
                     if recorded_samples.len() >= max_samples {
-                        break;
+                        tracing::warn!(
+                            "Recording reached max_recording_samples ({}) — stopping",
+                            max_samples
+                        );
+                        is_recording.store(false, Ordering::Relaxed);
+                        return Ok(recorded_samples);
                     }
                 }
 
@@ -156,15 +177,14 @@ impl LockFreeRecorder {
             Ok(recorded_samples)
         }));
 
-        // Set recording flag (atomic, no contention)
-        self.is_recording.store(true, Ordering::Relaxed);
-
         Ok(())
     }
 
     /// Stop recording and retrieve samples
     pub fn stop_recording(&mut self) -> Result<Vec<f32>> {
-        if !self.is_recording.load(Ordering::Relaxed) {
+        // Allow stopping when a consumer thread exists even if the recording
+        // flag was already cleared (e.g. max_recording_samples limit reached)
+        if !self.is_recording.load(Ordering::Relaxed) && self.consumer_thread.is_none() {
             return Err(BatcherbirdError::Audio(
                 "Not currently recording".to_string(),
             ));
@@ -272,6 +292,8 @@ impl LockFreeRecorder {
         let mut rms_accumulator_right = 0.0f32;
         let mut rms_window_samples = 0usize;
         let rms_window_size = 512; // ~11ms at 44.1kHz for smooth meters
+        // sample_count below counts interleaved samples across all channels
+        let interleaved_samples_per_sec = self.sample_rate.max(1) as u64 * channels.max(1) as u64;
 
         let stream = device
             .build_input_stream(
@@ -341,7 +363,7 @@ impl LockFreeRecorder {
                             peak_right,
                             rms_left,
                             rms_right,
-                            timestamp_ms: sample_count * 1000 / 44100, // Convert to ms
+                            timestamp_ms: sample_count * 1000 / interleaved_samples_per_sec, // Convert to ms
                             is_clipping,
                         };
 
@@ -442,47 +464,13 @@ impl LockFreeRecorder {
     }
 
     /// Get recording duration in milliseconds
+    ///
+    /// `samples_recorded` counts interleaved samples across all channels,
+    /// so divide by channel count as well as sample rate.
     pub fn recording_duration_ms(&self) -> f64 {
         let samples = self.samples_recorded() as f64;
-        (samples / self.sample_rate as f64) * 1000.0
-    }
-}
-
-/// Professional recording statistics
-#[derive(Debug, Clone)]
-pub struct RecordingStats {
-    pub total_samples: usize,
-    pub duration_ms: f64,
-    pub sample_rate: u32,
-    pub channels: u16,
-    pub buffer_overruns: u32,
-    pub performance_grade: RecordingPerformanceGrade,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RecordingPerformanceGrade {
-    Professional, // Zero buffer overruns, perfect timing
-    Good,         // Minor overruns, acceptable for most use
-    Poor,         // Significant overruns, timing issues
-}
-
-impl LockFreeRecorder {
-    /// Get comprehensive recording statistics
-    pub fn get_recording_stats(&self) -> RecordingStats {
-        let total_samples = self.samples_recorded();
-        let duration_ms = self.recording_duration_ms();
-
-        // For now, assume professional grade (we'd need to track overruns)
-        let performance_grade = RecordingPerformanceGrade::Professional;
-
-        RecordingStats {
-            total_samples,
-            duration_ms,
-            sample_rate: self.sample_rate,
-            channels: self.channels,
-            buffer_overruns: 0, // Would be tracked in real implementation
-            performance_grade,
-        }
+        let frames = samples / self.channels.max(1) as f64;
+        (frames / self.sample_rate as f64) * 1000.0
     }
 }
 
@@ -520,6 +508,71 @@ mod tests {
     }
 
     #[test]
+    fn test_recording_duration_accounts_for_channels() {
+        let config = LockFreeRecordingConfig {
+            sample_rate: 44100,
+            channels: 2,
+            ..LockFreeRecordingConfig::default()
+        };
+        let recorder = LockFreeRecorder::new(config).unwrap();
+
+        // 88200 interleaved samples at 44.1kHz stereo = exactly 1 second
+        recorder.samples_recorded.store(88200, Ordering::Relaxed);
+        assert_eq!(recorder.recording_duration_ms(), 1000.0);
+
+        // Mono: 44100 samples = 1 second
+        let mono_config = LockFreeRecordingConfig {
+            sample_rate: 44100,
+            channels: 1,
+            ..LockFreeRecordingConfig::default()
+        };
+        let mono_recorder = LockFreeRecorder::new(mono_config).unwrap();
+        mono_recorder.samples_recorded.store(44100, Ordering::Relaxed);
+        assert_eq!(mono_recorder.recording_duration_ms(), 1000.0);
+    }
+
+    #[test]
+    fn test_max_recording_samples_is_honored() {
+        let config = LockFreeRecordingConfig {
+            ring_buffer_size: 1024,
+            sample_rate: 44100,
+            channels: 1,
+            max_recording_samples: 100,
+        };
+        let mut recorder = LockFreeRecorder::new(config).unwrap();
+
+        // Take the producer (normally moved into the audio callback)
+        let mut producer = recorder
+            .sample_producer
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap();
+
+        recorder.start_recording().unwrap();
+
+        // Push well past the limit
+        for i in 0..500 {
+            while producer.push(i as f32).is_err() {
+                thread::sleep(Duration::from_micros(50));
+            }
+        }
+
+        // Give the consumer thread time to hit the limit and self-stop
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while recorder.is_recording() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            !recorder.is_recording(),
+            "recorder should stop itself at max_recording_samples"
+        );
+
+        let samples = recorder.stop_recording().unwrap();
+        assert_eq!(samples.len(), 100, "recording must be capped at the limit");
+    }
+
+    #[test]
     fn test_professional_configuration() {
         let config = LockFreeRecordingConfig {
             sample_rate: 44100,
@@ -529,13 +582,8 @@ mod tests {
         };
 
         let recorder = LockFreeRecorder::new(config).unwrap();
-        let stats = recorder.get_recording_stats();
 
-        assert_eq!(stats.sample_rate, 44100);
-        assert_eq!(stats.channels, 2);
-        assert_eq!(
-            stats.performance_grade,
-            RecordingPerformanceGrade::Professional
-        );
+        assert_eq!(recorder.sample_rate, 44100);
+        assert_eq!(recorder.channels, 2);
     }
 }

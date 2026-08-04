@@ -1,6 +1,6 @@
 use crate::{BatcherbirdError, Result};
 use midir::{MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 pub struct MidiManager {
     input: Option<MidiInput>,
@@ -141,18 +141,13 @@ impl MidiManager {
             .port_name(port)
             .unwrap_or_else(|_| format!("Device {}", device_index));
 
+        // The input connection keeps the port open so callers can confirm a
+        // device is reachable. We don't process incoming messages here.
         let conn_in = midi_in
             .connect(
                 port,
                 &format!("batcherbird-in-{}", device_name),
-                move |timestamp, message, _| {
-                    let now = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis();
-
-                    Self::print_midi_message(now, timestamp, message);
-                },
+                move |_timestamp, _message, _| {},
                 (),
             )
             .map_err(|e| {
@@ -160,27 +155,6 @@ impl MidiManager {
             })?;
 
         Ok(conn_in)
-    }
-
-    fn print_midi_message(timestamp_ms: u128, _midi_timestamp: u64, message: &[u8]) {
-        if message.is_empty() {
-            return;
-        }
-
-        let time_str = format!(
-            "{:02}:{:02}:{:02}.{:03}",
-            (timestamp_ms / 3600000) % 24,
-            (timestamp_ms / 60000) % 60,
-            (timestamp_ms / 1000) % 60,
-            timestamp_ms % 1000
-        );
-
-        let status = message[0];
-        let msg_type = status & 0xF0;
-        let channel = (status & 0x0F) + 1;
-
-        // Suppress unused variables - MIDI monitoring disabled for release
-        let _ = (time_str, msg_type, channel, message);
     }
 
     /// Send MIDI Panic - All Notes Off on all channels
