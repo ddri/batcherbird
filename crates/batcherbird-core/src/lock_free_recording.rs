@@ -474,44 +474,6 @@ impl LockFreeRecorder {
     }
 }
 
-/// Professional recording statistics
-#[derive(Debug, Clone)]
-pub struct RecordingStats {
-    pub total_samples: usize,
-    pub duration_ms: f64,
-    pub sample_rate: u32,
-    pub channels: u16,
-    pub buffer_overruns: u32,
-    pub performance_grade: RecordingPerformanceGrade,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RecordingPerformanceGrade {
-    Professional, // Zero buffer overruns, perfect timing
-    Good,         // Minor overruns, acceptable for most use
-    Poor,         // Significant overruns, timing issues
-}
-
-impl LockFreeRecorder {
-    /// Get comprehensive recording statistics
-    pub fn get_recording_stats(&self) -> RecordingStats {
-        let total_samples = self.samples_recorded();
-        let duration_ms = self.recording_duration_ms();
-
-        // For now, assume professional grade (we'd need to track overruns)
-        let performance_grade = RecordingPerformanceGrade::Professional;
-
-        RecordingStats {
-            total_samples,
-            duration_ms,
-            sample_rate: self.sample_rate,
-            channels: self.channels,
-            buffer_overruns: 0, // Would be tracked in real implementation
-            performance_grade,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,13 +582,8 @@ mod tests {
         };
 
         let recorder = LockFreeRecorder::new(config).unwrap();
-        let stats = recorder.get_recording_stats();
 
-        assert_eq!(stats.sample_rate, 44100);
-        assert_eq!(stats.channels, 2);
-        assert_eq!(
-            stats.performance_grade,
-            RecordingPerformanceGrade::Professional
-        );
+        assert_eq!(recorder.sample_rate, 44100);
+        assert_eq!(recorder.channels, 2);
     }
 }

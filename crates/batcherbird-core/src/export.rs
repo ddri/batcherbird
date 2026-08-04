@@ -1,10 +1,22 @@
 use crate::detection::DetectionConfig;
 use crate::sampler::Sample;
-use crate::session::sanitize_filename;
 use crate::{BatcherbirdError, Result};
 use hound::{SampleFormat, WavSpec, WavWriter};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Sanitize filename for cross-platform compatibility
+pub(crate) fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
 
 #[derive(Debug, Clone)]
 pub struct ExportConfig {
@@ -616,6 +628,16 @@ impl SampleExporter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_sanitize_filename() {
+        assert_eq!(sanitize_filename("My Project"), "My Project");
+        assert_eq!(
+            sanitize_filename("Bad/Name\\With:*?\"<>|"),
+            "Bad_Name_With_______"
+        );
+        assert_eq!(sanitize_filename(" \t Spaces \n "), "_ Spaces _");
+    }
 
     #[test]
     fn test_note_to_name() {

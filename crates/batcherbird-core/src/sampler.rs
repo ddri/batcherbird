@@ -1,7 +1,7 @@
 use crate::audio::AudioManager;
 use crate::audio_diagnostics::{AudioDiagnostics, AudioPerformanceReport};
 use crate::detection::{DetectionConfig, DetectionResult, SampleDetector};
-use crate::lock_free_recording::{LockFreeRecorder, LockFreeRecordingConfig, RecordingStats};
+use crate::lock_free_recording::{LockFreeRecorder, LockFreeRecordingConfig};
 use crate::loop_detection::{LoopDetectionConfig, LoopDetectionResult, LoopDetector};
 use crate::midi::MidiManager;
 use crate::professional_meters::{ProfessionalMeterEngine, ProfessionalMeterReadings};
@@ -589,7 +589,7 @@ impl SamplingEngine {
 
         // Execute the professional lock-free method in blocking context
         rt.block_on(async {
-            let (sample, _stats, _performance) = self
+            let (sample, _performance) = self
                 .sample_single_note_lock_free(midi_conn, note, self.config.velocity)
                 .await?;
             Ok(sample)
@@ -609,7 +609,7 @@ impl SamplingEngine {
 
         // Execute the lock-free method and create visualization from audio data
         rt.block_on(async {
-            let (sample, _stats, _performance) = self
+            let (sample, _performance) = self
                 .sample_single_note_lock_free(midi_conn, note, self.config.velocity)
                 .await?;
 
@@ -1156,7 +1156,7 @@ impl SamplingEngine {
         midi_output: &mut MidiOutputConnection,
         note: u8,
         velocity: u8,
-    ) -> Result<(Sample, RecordingStats, AudioPerformanceReport)> {
+    ) -> Result<(Sample, AudioPerformanceReport)> {
         // Get audio device and configuration first so the recorder (and the
         // exported sample metadata) match the device that actually captures
         let device = self
@@ -1213,7 +1213,6 @@ impl SamplingEngine {
 
         // Stop lock-free recording
         let audio_data = recorder.stop_recording()?;
-        let recording_stats = recorder.get_recording_stats();
 
         // Stop audio stream
         drop(stream);
@@ -1235,7 +1234,7 @@ impl SamplingEngine {
             audio_timing: end_time.duration_since(start_time),
         };
 
-        Ok((sample, recording_stats, performance_report))
+        Ok((sample, performance_report))
     }
 }
 
