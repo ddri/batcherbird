@@ -447,30 +447,63 @@ impl SampleExporter {
         xml.push_str("    </tab>\n");
         xml.push_str("  </ui>\n");
 
-        // Groups Section following official template
+        // Groups Section following official DecentSampler specification
         xml.push_str("  <groups>\n");
-        xml.push_str("    <group>\n");
 
-        // Add all samples following the working example format
-        for samples in velocity_groups.values() {
-            for (sample, wav_file) in samples {
-                let filename = wav_file
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("sample.wav");
+        let mut sorted_velocities: Vec<_> = velocity_groups.keys().collect();
+        sorted_velocities.sort();
 
-                // Use official template sample format
+        for (group_index, &velocity) in sorted_velocities.iter().enumerate() {
+            if let Some(samples) = velocity_groups.get(velocity) {
+                let (lo_vel, hi_vel) = if sorted_velocities.len() == 1 {
+                    (1, 127)
+                } else {
+                    let vel_range = 127.0 / sorted_velocities.len() as f32;
+                    let lo = ((group_index as f32 * vel_range) as u8).max(1);
+                    let hi = (((group_index + 1) as f32 * vel_range) as u8).min(127);
+                    (lo, hi)
+                };
+
                 xml.push_str(&format!(
-                    "      <sample path=\"{}\" loNote=\"{}\" hiNote=\"{}\" rootNote=\"{}\" />\n",
-                    escape_xml(filename),
-                    sample.note,
-                    sample.note,
-                    sample.note
+                    "    <group loVel=\"{}\" hiVel=\"{}\">\n",
+                    lo_vel, hi_vel
                 ));
+
+                for (sample, wav_file) in samples {
+                    let filename = wav_file
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("sample.wav");
+
+                    let mut sample_tag = format!(
+                        "      <sample path=\"{}\" loNote=\"{}\" hiNote=\"{}\" rootNote=\"{}\"",
+                        escape_xml(filename),
+                        sample.note,
+                        sample.note,
+                        sample.note
+                    );
+
+                    if self.config.apply_detection {
+                        let detector = crate::loop_detection::LoopDetector::new(
+                            crate::loop_detection::LoopDetectionConfig::default(),
+                        );
+                        let res = detector.detect_loop_points(&sample.audio_data, sample.sample_rate);
+                        if let Some(cand) = res.best_candidate {
+                            sample_tag.push_str(&format!(
+                                " loopEnabled=\"true\" loopStart=\"{}\" loopEnd=\"{}\"",
+                                cand.start_sample, cand.end_sample
+                            ));
+                        }
+                    }
+
+                    sample_tag.push_str(" />\n");
+                    xml.push_str(&sample_tag);
+                }
+
+                xml.push_str("    </group>\n");
             }
         }
 
-        xml.push_str("    </group>\n");
         xml.push_str("  </groups>\n");
 
         // Close root element
@@ -604,6 +637,18 @@ impl SampleExporter {
                     if sorted_velocities.len() == 1 {
                         sfz.push_str("lovel=1\n");
                         sfz.push_str("hivel=127\n");
+                    }
+
+                    if self.config.apply_detection {
+                        let detector = crate::loop_detection::LoopDetector::new(
+                            crate::loop_detection::LoopDetectionConfig::default(),
+                        );
+                        let res = detector.detect_loop_points(&sample.audio_data, sample.sample_rate);
+                        if let Some(cand) = res.best_candidate {
+                            sfz.push_str("loop_mode=loop_continuous\n");
+                            sfz.push_str(&format!("loop_start={}\n", cand.start_sample));
+                            sfz.push_str(&format!("loop_end={}\n", cand.end_sample));
+                        }
                     }
 
                     sfz.push('\n');
