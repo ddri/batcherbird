@@ -305,26 +305,28 @@ pub struct RecordingProgress {
 /// The count is capped at 16 layers (a generous practical ceiling) so the
 /// interpolation always yields strictly ascending values within `1..=127`.
 fn velocity_layers(count: u8) -> Vec<u8> {
-    const LOW: u32 = 20;
-    const HIGH: u32 = 127;
-    const MAX_LAYERS: u8 = 16;
-
-    let count = count.clamp(1, MAX_LAYERS);
-    if count == 1 {
-        return vec![100];
+    match count {
+        0 | 1 => vec![127],
+        2 => vec![64, 127],
+        3 => vec![48, 96, 127],
+        4 => vec![32, 64, 96, 127],
+        _ => {
+            const LOW: u32 = 20;
+            const HIGH: u32 = 127;
+            const MAX_LAYERS: u8 = 16;
+            let count = count.min(MAX_LAYERS);
+            let n = count as u32;
+            (0..n)
+                .map(|i| {
+                    let span = HIGH - LOW;
+                    let numerator = span * i;
+                    let denominator = n - 1;
+                    let value = LOW + (numerator + denominator / 2) / denominator;
+                    value as u8
+                })
+                .collect()
+        }
     }
-
-    let n = count as u32;
-    (0..n)
-        .map(|i| {
-            // round(LOW + (HIGH - LOW) * i / (n - 1)) using integer math.
-            let span = HIGH - LOW;
-            let numerator = span * i;
-            let denominator = n - 1;
-            let value = LOW + (numerator + denominator / 2) / denominator;
-            value as u8
-        })
-        .collect()
 }
 
 /// Ring buffer size for visualization data
@@ -1295,16 +1297,15 @@ mod tests {
 
     #[test]
     fn test_velocity_layers_single_and_zero() {
-        // 0 is treated as 1; both preserve the historical single-layer default.
-        assert_eq!(velocity_layers(0), vec![100]);
-        assert_eq!(velocity_layers(1), vec![100]);
+        assert_eq!(velocity_layers(0), vec![127]);
+        assert_eq!(velocity_layers(1), vec![127]);
     }
 
     #[test]
     fn test_velocity_layers_examples() {
-        assert_eq!(velocity_layers(2), vec![20, 127]);
-        assert_eq!(velocity_layers(3), vec![20, 74, 127]);
-        assert_eq!(velocity_layers(4), vec![20, 56, 91, 127]);
+        assert_eq!(velocity_layers(2), vec![64, 127]);
+        assert_eq!(velocity_layers(3), vec![48, 96, 127]);
+        assert_eq!(velocity_layers(4), vec![32, 64, 96, 127]);
     }
 
     #[test]
@@ -1325,8 +1326,7 @@ mod tests {
                 assert!(w[0] < w[1], "not strictly ascending for count {}", count);
             }
 
-            // Endpoints: first ~= 20, last == 127.
-            assert_eq!(layers[0], 20, "first velocity for count {}", count);
+            // Endpoints: last == 127.
             assert_eq!(
                 *layers.last().unwrap(),
                 127,

@@ -8,8 +8,14 @@ impl WaveformView {
     pub fn new(cx: &mut Context) -> Handle<'_, Self> {
         Self.build(cx, |cx| {
             let id = cx.current();
-            // Redraw whenever the peaks list changes
+            // Redraw whenever the peaks list or loop points change
             Binding::new(cx, AppData::viz_peaks, move |cx, _val| {
+                cx.needs_redraw(id);
+            });
+            Binding::new(cx, AppData::loop_start, move |cx, _val| {
+                cx.needs_redraw(id);
+            });
+            Binding::new(cx, AppData::loop_end, move |cx, _val| {
                 cx.needs_redraw(id);
             });
         })
@@ -40,6 +46,51 @@ impl View for WaveformView {
         center_paint.set_style(vg::PaintStyle::Stroke);
         center_paint.set_stroke_width(1.0);
         canvas.draw_path(&center_line, &center_paint);
+
+        // Draw loop region and markers if detected
+        let loop_start = AppData::loop_start.get(cx);
+        let loop_end = AppData::loop_end.get(cx);
+        let total_len = AppData::sample_total_len.get(cx);
+
+        if let (Some(l_start), Some(l_end)) = (loop_start, loop_end) {
+            if total_len > 0 && l_end > l_start && l_end <= total_len {
+                let start_ratio = l_start as f32 / total_len as f32;
+                let end_ratio = l_end as f32 / total_len as f32;
+
+                let start_x = bounds.x + start_ratio * bounds.w;
+                let end_x = bounds.x + end_ratio * bounds.w;
+
+                // Draw loop shaded region (subtle green background)
+                let loop_rect = vg::Rect::from_xywh(start_x, bounds.y, end_x - start_x, bounds.h);
+                let loop_bg_path = vg::Path::rect(loop_rect, None);
+                let mut loop_bg_paint = vg::Paint::default();
+                loop_bg_paint.set_color(vg::Color::from_argb(35, 0x00, 0xe6, 0x76));
+                loop_bg_paint.set_style(vg::PaintStyle::Fill);
+                canvas.draw_path(&loop_bg_path, &loop_bg_paint);
+
+                // Draw loop start line (Green)
+                let mut start_line = vg::Path::new();
+                start_line.move_to(vg::Point::new(start_x, bounds.y));
+                start_line.line_to(vg::Point::new(start_x, bounds.y + bounds.h));
+
+                let mut start_paint = vg::Paint::default();
+                start_paint.set_color(vg::Color::from_argb(220, 0x00, 0xe6, 0x76));
+                start_paint.set_style(vg::PaintStyle::Stroke);
+                start_paint.set_stroke_width(2.0);
+                canvas.draw_path(&start_line, &start_paint);
+
+                // Draw loop end line (Amber)
+                let mut end_line = vg::Path::new();
+                end_line.move_to(vg::Point::new(end_x, bounds.y));
+                end_line.line_to(vg::Point::new(end_x, bounds.y + bounds.h));
+
+                let mut end_paint = vg::Paint::default();
+                end_paint.set_color(vg::Color::from_argb(220, 0xff, 0x91, 0x00));
+                end_paint.set_style(vg::PaintStyle::Stroke);
+                end_paint.set_stroke_width(2.0);
+                canvas.draw_path(&end_line, &end_paint);
+            }
+        }
 
         // Read peaks from context
         let peaks = AppData::viz_peaks.get(cx);

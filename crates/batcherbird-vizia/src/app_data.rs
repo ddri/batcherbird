@@ -106,6 +106,10 @@ pub struct AppData {
     pub recorded_count: u32,
     pub is_playing: bool,
     pub playback_position: f64,
+    pub loop_start: Option<usize>,
+    pub loop_end: Option<usize>,
+    pub loop_detected: bool,
+    pub sample_total_len: usize,
     /// Active one-shot preview player for the Review screen, if any. Holds the
     /// live cpal output stream; dropping it stops audio.
     #[lens(ignore)]
@@ -184,6 +188,10 @@ impl Default for AppData {
             recorded_count: 0,
             is_playing: false,
             playback_position: 0.0,
+            loop_start: None,
+            loop_end: None,
+            loop_detected: false,
+            sample_total_len: 0,
             preview_player: None,
 
             recorded_samples: Vec::new(),
@@ -657,11 +665,32 @@ impl Model for AppData {
                     Ok(mut slot) => std::mem::take(&mut *slot),
                     Err(_) => Vec::new(),
                 };
-                // Populate the Review waveform from the first recorded sample.
-                self.viz_peaks = samples
-                    .first()
-                    .map(|s| samples_to_peaks(&s.audio_data, 512))
-                    .unwrap_or_default();
+                // Populate the Review waveform and detect loop points from the first sample.
+                if let Some(first_sample) = samples.first() {
+                    self.viz_peaks = samples_to_peaks(&first_sample.audio_data, 512);
+                    self.sample_total_len = first_sample.audio_data.len();
+
+                    let detector = batcherbird_core::loop_detection::LoopDetector::new(
+                        batcherbird_core::loop_detection::LoopDetectionConfig::default(),
+                    );
+                    let res = detector.detect_loop_points(&first_sample.audio_data, first_sample.sample_rate);
+                    if let Some(candidate) = res.best_candidate {
+                        self.loop_start = Some(candidate.start_sample);
+                        self.loop_end = Some(candidate.end_sample);
+                        self.loop_detected = candidate.quality_score > 0.3;
+                    } else {
+                        self.loop_start = None;
+                        self.loop_end = None;
+                        self.loop_detected = false;
+                    }
+                } else {
+                    self.viz_peaks = Vec::new();
+                    self.sample_total_len = 0;
+                    self.loop_start = None;
+                    self.loop_end = None;
+                    self.loop_detected = false;
+                }
+
                 self.recorded_count = samples.len() as u32;
                 self.recorded_samples = samples;
                 self.cancel_flag = None;
