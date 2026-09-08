@@ -14,6 +14,7 @@ impl KeyboardView {
             let id = cx.current();
             Binding::new(cx, AppData::start_note, move |cx, _| cx.needs_redraw(id));
             Binding::new(cx, AppData::end_note, move |cx, _| cx.needs_redraw(id));
+            Binding::new(cx, AppData::note_step, move |cx, _| cx.needs_redraw(id));
             Binding::new(cx, AppData::current_note, move |cx, _| cx.needs_redraw(id));
         })
     }
@@ -25,7 +26,12 @@ impl View for KeyboardView {
 
         let start_note = AppData::start_note.get(cx);
         let end_note = AppData::end_note.get(cx);
+        let note_step = AppData::note_step.get(cx).max(1);
         let current_note = AppData::current_note.get(cx);
+
+        let is_stepped_target = |note: u8| -> bool {
+            note >= start_note && note <= end_note && (note - start_note) % note_step == 0
+        };
 
         // Draw background
         let bg_path = vg::Path::rect(
@@ -62,9 +68,11 @@ impl View for KeyboardView {
             }
 
             let color = if note == current_note {
-                vg::Color::from_rgb(0x4a, 0x9e, 0xff)
+                vg::Color::from_rgb(0x4a, 0x9e, 0xff) // bright active blue
+            } else if is_stepped_target(note) {
+                vg::Color::from_rgb(0x6a, 0x9a, 0xcc) // target stepped note
             } else if note >= start_note && note <= end_note {
-                vg::Color::from_rgb(0x6a, 0x8a, 0xaa) // subtle blue-gray
+                vg::Color::from_rgb(0x75, 0x7c, 0x88) // span between steps
             } else {
                 vg::Color::from_rgb(0x88, 0x88, 0x88) // muted gray
             };
@@ -98,8 +106,10 @@ impl View for KeyboardView {
 
                 let color = if note == current_note {
                     vg::Color::from_rgb(0x4a, 0x9e, 0xff)
+                } else if is_stepped_target(note) {
+                    vg::Color::from_rgb(0x2a, 0x4a, 0x77) // target stepped note
                 } else if note >= start_note && note <= end_note {
-                    vg::Color::from_rgb(0x2a, 0x3a, 0x55) // subtle dark blue
+                    vg::Color::from_rgb(0x22, 0x28, 0x38)
                 } else {
                     vg::Color::from_rgb(0x22, 0x22, 0x2a)
                 };

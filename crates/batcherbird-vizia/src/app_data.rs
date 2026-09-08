@@ -57,6 +57,10 @@ pub struct AppData {
     pub end_note: u8,
     pub velocity_layers: u8,
     pub note_duration_ms: u32,
+    pub note_step: u8,
+    pub note_step_options: Vec<String>,
+    pub selected_step_index: usize,
+    pub session_summary_display: String,
 
     // Export config
     #[lens(ignore)]
@@ -148,6 +152,14 @@ impl Default for AppData {
             end_note: 84,   // C6
             velocity_layers: 1,
             note_duration_ms: 2000,
+            note_step: 1,
+            note_step_options: vec![
+                "Every Note".to_string(),
+                "Every 3rd Note".to_string(),
+                "Every Octave".to_string(),
+            ],
+            selected_step_index: 0,
+            session_summary_display: "49 samples • ~2m 51s".to_string(),
 
             export_format: AudioFormat::Wav24Bit,
             export_format_display: "Wav24Bit".to_string(),
@@ -232,8 +244,27 @@ impl AppData {
     }
 
     pub fn total_samples(&self) -> u32 {
-        let num_notes = (self.end_note as u32).saturating_sub(self.start_note as u32) + 1;
+        let step = (self.note_step as u32).max(1);
+        let span = (self.end_note as u32).saturating_sub(self.start_note as u32);
+        let num_notes = (span / step) + 1;
         num_notes * self.velocity_layers as u32
+    }
+
+    pub fn estimated_duration_display(&self) -> String {
+        let secs = self.estimated_duration_secs().round() as u32;
+        if secs < 60 {
+            format!("~{}s", secs)
+        } else {
+            format!("~{}m {}s", secs / 60, secs % 60)
+        }
+    }
+
+    pub fn update_summary(&mut self) {
+        self.session_summary_display = format!(
+            "{} samples • {}",
+            self.total_samples(),
+            self.estimated_duration_display()
+        );
     }
 
     pub fn note_name(note: u8) -> String {
@@ -376,15 +407,54 @@ impl Model for AppData {
                     self.playback_position = 0.0;
                 }
             }
-            AppEvent::SetStartNote(n) => self.start_note = *n,
-            AppEvent::SetEndNote(n) => self.end_note = *n,
-            AppEvent::SetVelocityLayers(n) => self.velocity_layers = *n,
-            AppEvent::SetDuration(ms) => self.note_duration_ms = *ms,
+            AppEvent::SetStartNote(n) => {
+                self.start_note = *n;
+                self.update_summary();
+            }
+            AppEvent::SetEndNote(n) => {
+                self.end_note = *n;
+                self.update_summary();
+            }
+            AppEvent::SetVelocityLayers(n) => {
+                self.velocity_layers = *n;
+                self.update_summary();
+            }
+            AppEvent::SetDuration(ms) => {
+                self.note_duration_ms = *ms;
+                self.update_summary();
+            }
             AppEvent::SetExportFormat(fmt) => {
                 self.export_format_display = Self::format_display(fmt).to_string();
                 self.export_format = fmt.clone();
             }
             AppEvent::SetOutputDirectory(path) => self.output_directory = path.clone(),
+
+            AppEvent::SelectNoteStepByIndex(idx) => {
+                let steps = [1, 3, 12];
+                if *idx < steps.len() {
+                    self.selected_step_index = *idx;
+                    self.note_step = steps[*idx];
+                    self.update_summary();
+                }
+            }
+            AppEvent::SetOctavePreset(octaves) => {
+                match *octaves {
+                    1 => {
+                        self.start_note = 48; // C3
+                        self.end_note = 60;   // C4
+                    }
+                    2 => {
+                        self.start_note = 36; // C2
+                        self.end_note = 60;   // C4
+                    }
+                    4 => {
+                        self.start_note = 36; // C2
+                        self.end_note = 84;   // C6
+                    }
+                    _ => {}
+                }
+                self.update_summary();
+            }
 
             AppEvent::CycleNextMidiDevice => {
                 if !self.midi_devices.is_empty() {
@@ -448,41 +518,49 @@ impl Model for AppData {
             AppEvent::IncrementStartNote => {
                 if self.start_note < 127 && self.start_note < self.end_note {
                     self.start_note += 1;
+                    self.update_summary();
                 }
             }
             AppEvent::DecrementStartNote => {
                 if self.start_note > 0 {
                     self.start_note -= 1;
+                    self.update_summary();
                 }
             }
             AppEvent::IncrementEndNote => {
                 if self.end_note < 127 {
                     self.end_note += 1;
+                    self.update_summary();
                 }
             }
             AppEvent::DecrementEndNote => {
                 if self.end_note > 0 && self.end_note > self.start_note {
                     self.end_note -= 1;
+                    self.update_summary();
                 }
             }
             AppEvent::IncrementVelocityLayers => {
                 if self.velocity_layers < 4 {
                     self.velocity_layers += 1;
+                    self.update_summary();
                 }
             }
             AppEvent::DecrementVelocityLayers => {
                 if self.velocity_layers > 1 {
                     self.velocity_layers -= 1;
+                    self.update_summary();
                 }
             }
             AppEvent::IncrementDuration => {
                 if self.note_duration_ms < 10000 {
                     self.note_duration_ms = (self.note_duration_ms + 500).min(10000);
+                    self.update_summary();
                 }
             }
             AppEvent::DecrementDuration => {
                 if self.note_duration_ms > 500 {
                     self.note_duration_ms = self.note_duration_ms.saturating_sub(500).max(500);
+                    self.update_summary();
                 }
             }
 
@@ -544,6 +622,7 @@ impl Model for AppData {
 
                     let start_note = self.start_note;
                     let end_note = self.end_note;
+                    let note_step = self.note_step;
                     let velocity_layers = self.velocity_layers;
                     let midi_device_idx = self.selected_midi_device;
                     let mut proxy = cx.get_proxy();
@@ -570,10 +649,11 @@ impl Model for AppData {
 
                         match SamplingEngine::new(config) {
                             Ok(engine) => {
-                                let result = engine.sample_note_range_with_progress_blocking(
+                                let result = engine.sample_note_range_stepped_with_progress_blocking(
                                     &mut midi_conn,
                                     start_note,
                                     end_note,
+                                    note_step,
                                     velocity_layers,
                                     &cancel,
                                     |p| {

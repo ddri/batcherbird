@@ -82,3 +82,35 @@ fn peaks_buckets_capped_by_input_len() {
     assert!((peaks[0] - 0.3).abs() < 1e-6);
     assert!((peaks[2] - 0.9).abs() < 1e-6);
 }
+
+#[test]
+fn stepped_notes_calculation() {
+    let mut data = AppData::default();
+    data.start_note = 60; // C4
+    data.end_note = 72;   // C5
+    data.velocity_layers = 2;
+    data.note_step = 3;   // Every 3rd note: 60, 63, 66, 69, 72 = 5 notes
+    assert_eq!(data.total_samples(), 10);
+
+    // Every octave (step 12) from C2 (36) to C6 (84): 36, 48, 60, 72, 84 = 5 notes
+    data.start_note = 36;
+    data.end_note = 84;
+    data.note_step = 12;
+    data.velocity_layers = 1;
+    assert_eq!(data.total_samples(), 5);
+}
+
+#[test]
+fn duration_display_and_summary() {
+    let mut data = AppData::default();
+    data.start_note = 60;
+    data.end_note = 72;
+    data.note_step = 12; // 2 notes: 60, 72
+    data.velocity_layers = 1;
+    data.note_duration_ms = 2000;
+    // 2 samples * (2000ms + 1500ms) = 7.0s
+    assert_eq!(data.estimated_duration_display(), "~7s");
+
+    data.update_summary();
+    assert_eq!(data.session_summary_display, "2 samples • ~7s");
+}

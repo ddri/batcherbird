@@ -129,7 +129,28 @@ pub fn sidebar(cx: &mut Context) {
 
         // ---- SAMPLING ----
         VStack::new(cx, |cx| {
-            section_label(cx, "SAMPLING");
+            HStack::new(cx, |cx| {
+                section_label(cx, "SAMPLING");
+                HStack::new(cx, |cx| {
+                    for (label, octaves) in [("1 Oct", 1), ("2 Oct", 2), ("4 Oct", 4)] {
+                        Label::new(cx, label)
+                            .font_size(9.0)
+                            .color(Color::from("#888899"))
+                            .padding_left(Pixels(4.0))
+                            .padding_right(Pixels(4.0))
+                            .padding_top(Pixels(2.0))
+                            .padding_bottom(Pixels(2.0))
+                            .background_color(Color::from("#1a1a25"))
+                            .corner_radius(Pixels(2.0))
+                            .cursor(CursorIcon::Hand)
+                            .on_press(move |cx| cx.emit(AppEvent::SetOctavePreset(octaves)));
+                    }
+                })
+                .horizontal_gap(Pixels(4.0))
+                .alignment(Alignment::Right);
+            })
+            .width(Stretch(1.0))
+            .alignment(Alignment::Center);
 
             field_pair(
                 cx,
@@ -154,6 +175,23 @@ pub fn sidebar(cx: &mut Context) {
                 AppEvent::DecrementEndNote,
                 AppEvent::IncrementEndNote,
             );
+
+            // Step interval
+            VStack::new(cx, |cx| {
+                Label::new(cx, "STEP INTERVAL")
+                    .font_size(9.0)
+                    .color(Color::from("#555555"));
+                PickList::new(
+                    cx,
+                    AppData::note_step_options,
+                    AppData::selected_step_index,
+                    true,
+                )
+                .on_select(|cx, idx| cx.emit(AppEvent::SelectNoteStepByIndex(idx)))
+                .width(Stretch(1.0));
+            })
+            .height(Auto)
+            .vertical_gap(Pixels(2.0));
 
             field_pair(
                 cx,
@@ -182,6 +220,21 @@ pub fn sidebar(cx: &mut Context) {
                 AppEvent::DecrementDuration,
                 AppEvent::IncrementDuration,
             );
+
+            // Live session summary badge
+            HStack::new(cx, |cx| {
+                Label::new(cx, AppData::session_summary_display)
+                    .font_size(10.0)
+                    .color(Color::from("#4a9eff"))
+                    .alignment(Alignment::Center);
+            })
+            .width(Stretch(1.0))
+            .height(Pixels(22.0))
+            .background_color(Color::from("#121826"))
+            .corner_radius(Pixels(3.0))
+            .border_width(Pixels(1.0))
+            .border_color(Color::from("#1e293b"))
+            .alignment(Alignment::Center);
         })
         .width(Stretch(1.0))
         .height(Auto)

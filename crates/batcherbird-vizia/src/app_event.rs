@@ -24,6 +24,8 @@ pub enum AppEvent {
     CyclePrevMidiDevice,
     CyclePrevAudioInput,
     SelectFormatByIndex(usize),
+    SelectNoteStepByIndex(usize),
+    SetOctavePreset(u8),
 
     // Increment/decrement events
     IncrementStartNote,

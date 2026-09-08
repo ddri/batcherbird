@@ -1008,13 +1008,37 @@ impl SamplingEngine {
         cancel: &AtomicBool,
         progress: impl FnMut(RecordingProgress),
     ) -> Result<Vec<Sample>> {
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {}", e)))?;
-
-        rt.block_on(self.sample_note_range_with_progress_async(
+        self.sample_note_range_stepped_with_progress_blocking(
             midi_conn,
             start_note,
             end_note,
+            1,
+            velocity_layer_count,
+            cancel,
+            progress,
+        )
+    }
+
+    /// Sample a range of MIDI notes with a specific step interval (e.g. 1 for every note,
+    /// 3 for minor thirds, 12 for octaves) and progress updates.
+    pub fn sample_note_range_stepped_with_progress_blocking(
+        &self,
+        midi_conn: &mut MidiOutputConnection,
+        start_note: u8,
+        end_note: u8,
+        step: u8,
+        velocity_layer_count: u8,
+        cancel: &AtomicBool,
+        progress: impl FnMut(RecordingProgress),
+    ) -> Result<Vec<Sample>> {
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {}", e)))?;
+
+        rt.block_on(self.sample_note_range_stepped_with_progress_async(
+            midi_conn,
+            start_note,
+            end_note,
+            step,
             velocity_layer_count,
             cancel,
             progress,
@@ -1022,17 +1046,18 @@ impl SamplingEngine {
     }
 
     /// Async implementation backing
-    /// [`Self::sample_note_range_with_progress_blocking`].
+    /// [`Self::sample_note_range_stepped_with_progress_blocking`].
     ///
     /// Runs on the current thread via `block_on`, so the non-`Send` `progress`
     /// closure and `cancel`/`midi_conn` references thread through the `.await`
     /// points without issue.
     #[allow(clippy::too_many_arguments)]
-    async fn sample_note_range_with_progress_async(
+    async fn sample_note_range_stepped_with_progress_async(
         &self,
         midi_conn: &mut MidiOutputConnection,
         start_note: u8,
         end_note: u8,
+        step: u8,
         velocity_layer_count: u8,
         cancel: &AtomicBool,
         mut progress: impl FnMut(RecordingProgress),
@@ -1041,7 +1066,9 @@ impl SamplingEngine {
 
         let velocities = velocity_layers(velocity_layer_count);
         let total_layers = velocities.len() as u8;
-        let num_notes = (end_note - start_note + 1) as u32;
+        let step = step.max(1);
+        let notes: Vec<u8> = (start_note..=end_note).step_by(step as usize).collect();
+        let num_notes = notes.len() as u32;
         let total = num_notes * velocities.len() as u32;
 
         let mut samples = Vec::new();
@@ -1087,7 +1114,7 @@ impl SamplingEngine {
         })?;
 
         let mut first = true;
-        'outer: for note in start_note..=end_note {
+        'outer: for &note in &notes {
             for (layer_idx, vel) in velocities.iter().enumerate() {
                 // Cooperative cancellation: check BEFORE recording each sample.
                 if cancel.load(Ordering::Relaxed) {
