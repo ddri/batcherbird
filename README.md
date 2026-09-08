@@ -2,26 +2,29 @@
 
 Auto-sampling tool for hardware synthesizers. Records MIDI-triggered samples with professional audio quality.
 
-Built with Rust and Tauri. macOS only.
+Built with Rust and Vizia native GUI. macOS only.
 
 ## Features
 
-**Audio**
-- 32-bit float WAV export
+**Audio & Sampling**
+- 32-bit float WAV export (also 16-bit and 24-bit PCM)
+- Multi-format sampler export: **DecentSampler** (`.dspreset`) and **SFZ 2.0** (`.sfz`)
 - Sub-millisecond MIDI timing
-- Automatic release tail capture (500ms)
-- Lock-free recording engine (no dropouts)
-- RMS-based sample detection and trimming
+- Lock-free recording engine (zero dropouts)
+- FFT autocorrelation auto-loop detection with visual waveform overlays
+- Automatic release tail capture (500ms) and RMS-based trimming
 
-**Recording Modes**
-- Single note with custom velocity/duration
-- Range recording (batch entire octaves)
-- Velocity layers (2/3/4 layers or custom values)
+**Recording Modes & Ranges**
+- Standardized velocity layers (1, 2, 3, or 4 layers)
+- Flexible note ranges with quick octave presets (1, 2, 4 Octaves)
+- Configurable step intervals: Every Note, Every 3rd Note, Every Octave
+- Dynamic session time and sample count estimator
 
 **Interface**
-- Real-time level meters (peak, RMS, peak hold)
-- Device auto-detection
-- Progress tracking during batch operations
+- 100% native Rust GUI (Vizia) — lightweight, no embedded web browser
+- Real-time hardware-grade level meters (peak, RMS, peak hold)
+- Interactive piano keyboard visualizer with stepped key targeting
+- Device auto-detection for MIDI and Audio interfaces
 
 ## Requirements
 
@@ -41,19 +44,16 @@ First launch: Right-click > Open (bypasses Gatekeeper for unsigned apps).
 # Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Install Node.js
-brew install node
-
-# Clone and setup
+# Clone and run native GUI
 git clone https://github.com/ddri/batcherbird.git
-cd batcherbird/crates/batcherbird-gui
-npm install
+cd batcherbird
+cargo run -p batcherbird-vizia
 
-# Run
-npm run dev
+# Run tests
+cargo test --workspace
 
-# Build
-cargo tauri build
+# Or run headless CLI
+cargo run -p batcherbird-cli -- --help
 ```
 
 ## Usage
@@ -80,10 +80,9 @@ Files save as: `InstrumentName_C4_60_vel127.wav`
 **Stuck notes**: Use MIDI Panic button. Some vintage synths need longer delays between notes.
 
 ## Architecture
+ 
+Rust backend with CPAL for low-latency audio I/O, midir for hardware MIDI communication, and lock-free ring buffers (`rtrb`) for 60 FPS glitch-free visualization. Declarative native desktop GUI built with Vizia.
 
-Rust backend with CPAL for audio I/O, midir for MIDI, lock-free ring buffers (rtrb) for real-time data. React/TypeScript frontend via Tauri.
-
-See [TAURI_AUDIO_ARCHITECTURE.md](TAURI_AUDIO_ARCHITECTURE.md) for details.
 
 ## License
 
