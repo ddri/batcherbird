@@ -1,5 +1,5 @@
 use crate::app_data::AppData;
-use crate::app_event::AppEvent;
+use crate::app_event::{AppEvent, InstrumentPreset};
 use vizia::prelude::*;
 
 fn section_label(cx: &mut Context, text: &str) {
@@ -150,6 +150,33 @@ pub fn sidebar(cx: &mut Context) {
                 .alignment(Alignment::Right);
             })
             .width(Stretch(1.0))
+            .alignment(Alignment::Center);
+
+            // Quick Instrument Presets
+            HStack::new(cx, |cx| {
+                for (label, preset) in [
+                    ("Lead", InstrumentPreset::Lead),
+                    ("Pad", InstrumentPreset::Pad),
+                    ("Bass", InstrumentPreset::Bass),
+                    ("Pluck", InstrumentPreset::Pluck),
+                ] {
+                    Label::new(cx, label)
+                        .font_size(9.0)
+                        .color(Color::from("#99aacc"))
+                        .padding_left(Pixels(5.0))
+                        .padding_right(Pixels(5.0))
+                        .padding_top(Pixels(2.0))
+                        .padding_bottom(Pixels(2.0))
+                        .background_color(Color::from("#151b28"))
+                        .corner_radius(Pixels(2.0))
+                        .border_width(Pixels(1.0))
+                        .border_color(Color::from("#222d42"))
+                        .cursor(CursorIcon::Hand)
+                        .on_press(move |cx| cx.emit(AppEvent::ApplyInstrumentPreset(preset)));
+                }
+            })
+            .width(Stretch(1.0))
+            .horizontal_gap(Pixels(4.0))
             .alignment(Alignment::Center);
 
             field_pair(

@@ -1,4 +1,4 @@
-use crate::app_event::AppEvent;
+use crate::app_event::{AppEvent, InstrumentPreset};
 use batcherbird_core::export::AudioFormat;
 use batcherbird_core::lock_free_recording::RealtimeMeterData;
 use batcherbird_core::preview_player::PreviewPlayer;
@@ -267,6 +267,63 @@ impl AppData {
         );
     }
 
+    pub fn apply_octave_preset(&mut self, octaves: u8) {
+        match octaves {
+            1 => {
+                self.start_note = 48; // C3
+                self.end_note = 60;   // C4
+            }
+            2 => {
+                self.start_note = 36; // C2
+                self.end_note = 60;   // C4
+            }
+            4 => {
+                self.start_note = 36; // C2
+                self.end_note = 84;   // C6
+            }
+            _ => {}
+        }
+        self.update_summary();
+    }
+
+    pub fn apply_instrument_preset(&mut self, preset: InstrumentPreset) {
+        match preset {
+            InstrumentPreset::Lead => {
+                self.start_note = 48; // C3
+                self.end_note = 72;   // C5
+                self.note_step = 1;   // Every Note
+                self.selected_step_index = 0;
+                self.velocity_layers = 2; // Soft, Loud
+                self.note_duration_ms = 2000;
+            }
+            InstrumentPreset::Pad => {
+                self.start_note = 36; // C2
+                self.end_note = 84;   // C6
+                self.note_step = 3;   // Every 3rd Note
+                self.selected_step_index = 1;
+                self.velocity_layers = 2;
+                self.note_duration_ms = 4000;
+            }
+            InstrumentPreset::Bass => {
+                self.start_note = 24; // C1
+                self.end_note = 48;   // C3
+                self.note_step = 1;   // Every Note
+                self.selected_step_index = 0;
+                self.velocity_layers = 2;
+                self.note_duration_ms = 1500;
+            }
+            InstrumentPreset::Pluck => {
+                self.start_note = 36; // C2
+                self.end_note = 60;   // C4
+                self.note_step = 1;   // Every Note
+                self.selected_step_index = 0;
+                self.velocity_layers = 4; // Expressive dynamic velocities
+                self.note_duration_ms = 1000;
+            }
+        }
+        self.update_summary();
+    }
+
     pub fn note_name(note: u8) -> String {
         let names = [
             "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
@@ -438,22 +495,10 @@ impl Model for AppData {
                 }
             }
             AppEvent::SetOctavePreset(octaves) => {
-                match *octaves {
-                    1 => {
-                        self.start_note = 48; // C3
-                        self.end_note = 60;   // C4
-                    }
-                    2 => {
-                        self.start_note = 36; // C2
-                        self.end_note = 60;   // C4
-                    }
-                    4 => {
-                        self.start_note = 36; // C2
-                        self.end_note = 84;   // C6
-                    }
-                    _ => {}
-                }
-                self.update_summary();
+                self.apply_octave_preset(*octaves);
+            }
+            AppEvent::ApplyInstrumentPreset(preset) => {
+                self.apply_instrument_preset(*preset);
             }
 
             AppEvent::CycleNextMidiDevice => {

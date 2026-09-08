@@ -1,6 +1,5 @@
 use batcherbird_vizia::app_data::{samples_to_peaks, AppData, AppState};
-#[allow(unused_imports)]
-use batcherbird_vizia::app_event::AppEvent;
+use batcherbird_vizia::app_event::InstrumentPreset;
 
 #[test]
 fn initial_state_is_idle() {
@@ -113,4 +112,49 @@ fn duration_display_and_summary() {
 
     data.update_summary();
     assert_eq!(data.session_summary_display, "2 samples • ~7s");
+}
+
+#[test]
+fn instrument_presets_application() {
+    let mut data = AppData::default();
+
+    // Lead: C3 to C5, step 1, 2 layers, 2s duration
+    data.apply_instrument_preset(InstrumentPreset::Lead);
+    assert_eq!(data.start_note, 48);
+    assert_eq!(data.end_note, 72);
+    assert_eq!(data.note_step, 1);
+    assert_eq!(data.velocity_layers, 2);
+    assert_eq!(data.note_duration_ms, 2000);
+    // 25 notes * 2 layers = 50 samples
+    assert_eq!(data.total_samples(), 50);
+
+    // Pad: C2 to C6, step 3, 2 layers, 4s duration
+    data.apply_instrument_preset(InstrumentPreset::Pad);
+    assert_eq!(data.start_note, 36);
+    assert_eq!(data.end_note, 84);
+    assert_eq!(data.note_step, 3);
+    assert_eq!(data.velocity_layers, 2);
+    assert_eq!(data.note_duration_ms, 4000);
+    // ((84 - 36) / 3 + 1) * 2 = 17 * 2 = 34 samples
+    assert_eq!(data.total_samples(), 34);
+
+    // Bass: C1 to C3, step 1, 2 layers, 1.5s duration
+    data.apply_instrument_preset(InstrumentPreset::Bass);
+    assert_eq!(data.start_note, 24);
+    assert_eq!(data.end_note, 48);
+    assert_eq!(data.note_step, 1);
+    assert_eq!(data.velocity_layers, 2);
+    assert_eq!(data.note_duration_ms, 1500);
+    // 25 notes * 2 layers = 50 samples
+    assert_eq!(data.total_samples(), 50);
+
+    // Pluck: C2 to C4, step 1, 4 layers, 1s duration
+    data.apply_instrument_preset(InstrumentPreset::Pluck);
+    assert_eq!(data.start_note, 36);
+    assert_eq!(data.end_note, 60);
+    assert_eq!(data.note_step, 1);
+    assert_eq!(data.velocity_layers, 4);
+    assert_eq!(data.note_duration_ms, 1000);
+    // 25 notes * 4 layers = 100 samples
+    assert_eq!(data.total_samples(), 100);
 }

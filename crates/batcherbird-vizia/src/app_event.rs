@@ -2,6 +2,14 @@ use batcherbird_core::export::AudioFormat;
 use batcherbird_core::sampler::VizChunk;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstrumentPreset {
+    Lead,
+    Pad,
+    Bass,
+    Pluck,
+}
+
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     // Devices
@@ -26,6 +34,7 @@ pub enum AppEvent {
     SelectFormatByIndex(usize),
     SelectNoteStepByIndex(usize),
     SetOctavePreset(u8),
+    ApplyInstrumentPreset(InstrumentPreset),
 
     // Increment/decrement events
     IncrementStartNote,
