@@ -16,7 +16,7 @@ jobs:
   # follow-up task. Until then this workflow only performs a placeholder build
   # so it does not reference the deleted crate's paths.
   build-macos:
-    name: Build macOS
+    name: Build & Release macOS DMG
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,8 +37,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-release-
 
-      - name: Build workspace (release)
-        run: cargo build --workspace --release
+      - name: Package macOS App & DMG
+        run: ./scripts/package-macos.sh
 
-      # TODO(release): package crates/batcherbird-vizia into a distributable
-      # .dmg and attach it to a GitHub release, replacing the Tauri pipeline.
+      - name: Upload DMG to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Batcherbird.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

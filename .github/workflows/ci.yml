@@ -46,9 +46,33 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-  # TODO(release): The deprecated Tauri GUI crate has been removed. The
-  # `frontend` and `tauri-app` jobs that built it are deleted here. A VIZIA
-  # app build/packaging job will be added in the release-pipeline follow-up task.
+  package-macos:
+    name: Package macOS App & DMG
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Package macOS App and DMG
+        run: ./scripts/package-macos.sh
+
+      - name: Verify DMG
+        run: hdiutil verify dist/Batcherbird.dmg
 
   rust-linux:
     name: Rust Linux Build (core + vizia)
