@@ -36,6 +36,10 @@ pub enum AppEvent {
     SetOctavePreset(u8),
     ApplyInstrumentPreset(InstrumentPreset),
 
+    // Auditioning
+    AuditionNoteOn(u8),
+    AuditionNoteOff,
+
     // Increment/decrement events
     IncrementStartNote,
     DecrementStartNote,

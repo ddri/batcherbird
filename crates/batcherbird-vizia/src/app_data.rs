@@ -85,6 +85,9 @@ pub struct AppData {
     pub is_testing_note: bool,
     pub gain_check_message: Option<String>,
     pub gain_check_status_color: String,
+    pub audition_note: Option<u8>,
+    #[lens(ignore)]
+    pub audition_midi_conn: Option<midir::MidiOutputConnection>,
 
     // Recording progress
     pub current_note: u8,
@@ -188,6 +191,8 @@ impl Default for AppData {
             is_testing_note: false,
             gain_check_message: None,
             gain_check_status_color: "#888888".to_string(),
+            audition_note: None,
+            audition_midi_conn: None,
 
             current_note: 0,
             current_velocity: 0,
@@ -326,6 +331,28 @@ impl AppData {
                 self.velocity_layers = 4; // Expressive dynamic velocities
                 self.note_duration_ms = 1000;
             }
+        }
+        self.update_summary();
+    }
+
+    pub fn set_start_note(&mut self, note: u8) {
+        let note = note.min(127);
+        if note <= self.end_note {
+            self.start_note = note;
+        } else {
+            self.start_note = self.end_note;
+            self.end_note = note;
+        }
+        self.update_summary();
+    }
+
+    pub fn set_end_note(&mut self, note: u8) {
+        let note = note.min(127);
+        if note >= self.start_note {
+            self.end_note = note;
+        } else {
+            self.end_note = self.start_note;
+            self.start_note = note;
         }
         self.update_summary();
     }
@@ -501,12 +528,10 @@ impl Model for AppData {
                 }
             }
             AppEvent::SetStartNote(n) => {
-                self.start_note = *n;
-                self.update_summary();
+                self.set_start_note(*n);
             }
             AppEvent::SetEndNote(n) => {
-                self.end_note = *n;
-                self.update_summary();
+                self.set_end_note(*n);
             }
             AppEvent::SetVelocityLayers(n) => {
                 self.velocity_layers = *n;
@@ -540,6 +565,7 @@ impl Model for AppData {
             AppEvent::CycleNextMidiDevice => {
                 if !self.midi_devices.is_empty() {
                     self.selected_midi_device = (self.selected_midi_device + 1) % self.midi_devices.len();
+                    self.audition_midi_conn = None;
                 }
             }
             AppEvent::CycleNextAudioInput => {
@@ -549,6 +575,7 @@ impl Model for AppData {
             }
             AppEvent::SelectMidiDevice(idx) => {
                 self.selected_midi_device = *idx;
+                self.audition_midi_conn = None;
             }
             AppEvent::SelectAudioInput(idx) => {
                 self.selected_audio_input = *idx;
@@ -584,6 +611,7 @@ impl Model for AppData {
                     } else {
                         self.selected_midi_device - 1
                     };
+                    self.audition_midi_conn = None;
                 }
             }
             AppEvent::CyclePrevAudioInput => {
@@ -593,6 +621,28 @@ impl Model for AppData {
                     } else {
                         self.selected_audio_input - 1
                     };
+                }
+            }
+
+            AppEvent::AuditionNoteOn(note) => {
+                let note = *note;
+                self.audition_note = Some(note);
+                if self.audition_midi_conn.is_none() {
+                    if let Ok(mut mgr) = batcherbird_core::midi::MidiManager::new() {
+                        if let Ok(conn) = mgr.connect_output(self.selected_midi_device) {
+                            self.audition_midi_conn = Some(conn);
+                        }
+                    }
+                }
+                if let Some(conn) = &mut self.audition_midi_conn {
+                    let _ = batcherbird_core::midi::MidiManager::send_note_on(conn, 0, note, 100);
+                }
+            }
+            AppEvent::AuditionNoteOff => {
+                if let Some(note) = self.audition_note.take() {
+                    if let Some(conn) = &mut self.audition_midi_conn {
+                        let _ = batcherbird_core::midi::MidiManager::send_note_off(conn, 0, note, 0);
+                    }
                 }
             }
 
@@ -672,6 +722,8 @@ impl Model for AppData {
                     self.stop_preview();
                     self.is_testing_note = false;
                     self.gain_check_message = None;
+                    self.audition_note = None;
+                    self.audition_midi_conn = None;
                     self.monitoring_stream = None;
                     self.sampling_engine = None;
                     self.app_state = AppState::Idle;
@@ -683,6 +735,8 @@ impl Model for AppData {
                         self.is_testing_note = true;
                         self.gain_check_message = Some("Testing input level (vel 127)...".to_string());
                         self.gain_check_status_color = "#4a9eff".to_string();
+                        self.audition_note = None;
+                        self.audition_midi_conn = None;
 
                         let meter_state = engine.get_level_meter_state();
                         let test_note = self.start_note;
@@ -774,6 +828,8 @@ impl Model for AppData {
                     // Stop monitoring before recording
                     self.monitoring_stream = None;
                     self.sampling_engine = None;
+                    self.audition_note = None;
+                    self.audition_midi_conn = None;
 
                     // New recording session: bump generation, create a fresh
                     // cancel flag, and clear the hand-off slot.

@@ -1,5 +1,6 @@
 use batcherbird_vizia::app_data::{samples_to_peaks, AppData, AppState};
 use batcherbird_vizia::app_event::InstrumentPreset;
+use batcherbird_vizia::views::hit_test_note;
 
 #[test]
 fn initial_state_is_idle() {
@@ -194,4 +195,76 @@ fn test_gain_staging_evaluation() {
     assert!(msg_silent.contains("No signal detected"));
     assert_eq!(color_silent, "#888899");
 }
+
+#[test]
+fn test_set_start_and_end_note() {
+    let mut data = AppData::default();
+    // Default: 36 (C2) to 84 (C6), 1 layer
+    assert_eq!(data.start_note, 36);
+    assert_eq!(data.end_note, 84);
+
+    // Set valid start note
+    data.set_start_note(48); // C3
+    assert_eq!(data.start_note, 48);
+    assert_eq!(data.end_note, 84);
+    assert_eq!(data.total_samples(), 37); // 48..=84 is 37 notes
+
+    // Set start note higher than end note: auto-swap
+    data.set_start_note(96);
+    assert_eq!(data.start_note, 84);
+    assert_eq!(data.end_note, 96);
+    assert_eq!(data.total_samples(), 13); // 84..=96 is 13 notes
+
+    // Set valid end note
+    data.set_end_note(108);
+    assert_eq!(data.start_note, 84);
+    assert_eq!(data.end_note, 108);
+
+    // Set end note lower than start note: auto-swap
+    data.set_end_note(60);
+    assert_eq!(data.start_note, 60);
+    assert_eq!(data.end_note, 84);
+
+    // Setting note capped at 127
+    data.set_end_note(200);
+    assert_eq!(data.end_note, 127);
+}
+
+#[test]
+fn test_keyboard_hit_testing() {
+    // 29 white keys for 4 octaves (C2..=C6, 36..=84)
+    // 290.0 wide bounds => exactly 10.0 pixels per white key
+    let bounds_x = 0.0;
+    let bounds_y = 0.0;
+    let bounds_w = 290.0;
+    let bounds_h = 50.0;
+    let display_start = 36; // C2
+    let display_end = 84;   // C6
+
+    // 1. Out-of-bounds checks
+    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, -1.0, 25.0), None);
+    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 291.0, 25.0), None);
+    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 150.0, -1.0), None);
+    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 150.0, 51.0), None);
+    assert_eq!(hit_test_note(bounds_x, bounds_y, 0.0, bounds_h, display_start, display_end, 10.0, 25.0), None);
+
+    // 2. White key in bottom 40% (y = 40.0, bounds_h = 50.0 => below black keys):
+    // First white key (0.0..10.0) is C2 (note 36)
+    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 5.0, 40.0), Some(36));
+    // Second white key (10.0..20.0) is D2 (note 38)
+    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 15.0, 40.0), Some(38));
+    // Third white key (20.0..30.0) is E2 (note 40)
+    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 25.0, 40.0), Some(40));
+
+    // 3. Black key in top 60% (y = 15.0, bounds_h = 50.0 => black_h is 30.0):
+    // Black key C#2 (note 37) is centered at x = 10.0 with width = 6.0 (7.0..13.0)
+    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 10.0, 15.0), Some(37));
+    // Black key D#2 (note 39) is centered at x = 20.0 with width = 6.0 (17.0..23.0)
+    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 20.0, 15.0), Some(39));
+
+    // 4. White key in top 60% away from black keys:
+    // Left edge of C2 (e.g. x = 2.0, y = 15.0) is not covered by C#2 (starts at 7.0)
+    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 2.0, 15.0), Some(36));
+}
+
 
