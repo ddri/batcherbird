@@ -65,6 +65,9 @@ pub enum AppEvent {
     SetPlaythrough(bool),
     SelectChannelRouting(usize),
     CycleChannelRouting,
+    SetInputGain(f32),
+    AdjustInputGain(f32),
+    ResetInputGain,
 
     // Internal events (from background threads)
     RecordingProgress {

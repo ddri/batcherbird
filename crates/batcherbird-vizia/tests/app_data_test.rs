@@ -1,3 +1,5 @@
+#![allow(clippy::field_reassign_with_default)]
+
 use batcherbird_vizia::app_data::{samples_to_peaks, AppData, AppState};
 use batcherbird_vizia::app_event::InstrumentPreset;
 use batcherbird_vizia::views::hit_test_note;
@@ -311,6 +313,45 @@ fn test_channel_routing_selection_and_cycling() {
     data.cycle_channel_routing();
     assert_eq!(data.channel_routing, ChannelRouting::MonoLeft);
     assert_eq!(data.selected_channel_routing, 1);
+}
+
+#[test]
+fn test_input_gain_controls() {
+    let mut data = AppData::default();
+
+    // Default: 0.0 dB
+    assert_eq!(data.input_gain_db, 0.0);
+    assert_eq!(data.input_gain_display, "0.0 dB");
+
+    // Adjust +1.0 dB
+    data.adjust_input_gain_db(1.0);
+    assert_eq!(data.input_gain_db, 1.0);
+    assert_eq!(data.input_gain_display, "+1.0 dB");
+
+    // Adjust -2.5 dB
+    data.adjust_input_gain_db(-2.5);
+    assert_eq!(data.input_gain_db, -1.5);
+    assert_eq!(data.input_gain_display, "-1.5 dB");
+
+    // Test clamping to +12.0 dB max
+    data.set_input_gain_db(18.0);
+    assert_eq!(data.input_gain_db, 12.0);
+    assert_eq!(data.input_gain_display, "+12.0 dB");
+
+    // Test clamping to -12.0 dB min
+    data.set_input_gain_db(-25.0);
+    assert_eq!(data.input_gain_db, -12.0);
+    assert_eq!(data.input_gain_display, "-12.0 dB");
+
+    // Test reset
+    data.reset_input_gain_db();
+    assert_eq!(data.input_gain_db, 0.0);
+    assert_eq!(data.input_gain_display, "0.0 dB");
+
+    // Verify build_sampling_config carries input_gain_db
+    data.set_input_gain_db(4.5);
+    let config = data.build_sampling_config();
+    assert_eq!(config.input_gain_db, 4.5);
 }
 
 

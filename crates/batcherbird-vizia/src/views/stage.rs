@@ -228,6 +228,26 @@ pub fn stage(cx: &mut Context) {
                     .cursor(CursorIcon::Hand)
                     .on_press(|cx| cx.emit(AppEvent::CycleChannelRouting));
                 });
+
+                // Gain Trim pill
+                Binding::new(cx, AppData::input_gain_display, |cx, display| {
+                    let text = display.get(cx);
+                    HStack::new(cx, move |cx| {
+                        Label::new(cx, &format!("🎚 Gain: {}", text))
+                            .font_size(12.0)
+                            .color(Color::from("#ffb300"));
+                    })
+                    .alignment(Alignment::Center)
+                    .height(Pixels(26.0))
+                    .padding_left(Pixels(12.0))
+                    .padding_right(Pixels(12.0))
+                    .background_color(Color::from("#261e10"))
+                    .border_width(Pixels(1.0))
+                    .border_color(Color::from("#ffb30044"))
+                    .corner_radius(Pixels(13.0))
+                    .cursor(CursorIcon::Hand)
+                    .on_press(|cx| cx.emit(AppEvent::ResetInputGain));
+                });
             })
             .alignment(Alignment::Center)
             .horizontal_gap(Pixels(10.0))

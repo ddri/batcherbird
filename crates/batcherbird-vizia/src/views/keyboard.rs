@@ -8,6 +8,7 @@ pub fn is_black_key(note: u8) -> bool {
 }
 
 /// Hit-tests a coordinate against the virtual keyboard layout, returning the MIDI note if hit.
+#[allow(clippy::too_many_arguments)]
 pub fn hit_test_note(
     bounds_x: f32,
     bounds_y: f32,
@@ -136,11 +137,11 @@ impl View for KeyboardView {
                 }
             }
             WindowEvent::MouseUp(btn) => {
-                if *btn == MouseButton::Left || *btn == MouseButton::Right {
-                    if self.held_note.is_some() {
-                        self.held_note = None;
-                        cx.emit(AppEvent::AuditionNoteOff);
-                    }
+                if (*btn == MouseButton::Left || *btn == MouseButton::Right)
+                    && self.held_note.is_some()
+                {
+                    self.held_note = None;
+                    cx.emit(AppEvent::AuditionNoteOff);
                 }
             }
             WindowEvent::MouseLeave => {

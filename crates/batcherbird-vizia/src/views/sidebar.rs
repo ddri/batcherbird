@@ -9,6 +9,7 @@ fn section_label(cx: &mut Context, text: &str) {
 }
 
 
+#[allow(clippy::too_many_arguments)]
 fn field_pair(
     cx: &mut Context,
     label_a: &str,
@@ -172,6 +173,85 @@ pub fn sidebar(cx: &mut Context) {
             })
             .height(Auto)
             .alignment(Alignment::Center);
+
+            // Input Gain Trim
+            VStack::new(cx, |cx| {
+                HStack::new(cx, |cx| {
+                    Label::new(cx, "INPUT GAIN")
+                        .font_size(9.0)
+                        .color(Color::from("#555555"))
+                        .width(Stretch(1.0));
+
+                    Binding::new(cx, AppData::input_gain_display, |cx, display| {
+                        let text = display.get(cx);
+                        Label::new(cx, &text)
+                            .font_size(10.0)
+                            .color(Color::from("#e0e0e0"))
+                            .cursor(CursorIcon::Hand)
+                            .on_press(|cx| cx.emit(AppEvent::ResetInputGain));
+                    });
+                })
+                .height(Auto)
+                .alignment(Alignment::Center);
+
+                HStack::new(cx, |cx| {
+                    // [-1 dB]
+                    HStack::new(cx, |cx| {
+                        Label::new(cx, "-1 dB")
+                            .font_size(9.0)
+                            .color(Color::from("#aaaaaa"));
+                    })
+                    .padding_left(Pixels(6.0))
+                    .padding_right(Pixels(6.0))
+                    .padding_top(Pixels(2.0))
+                    .padding_bottom(Pixels(2.0))
+                    .background_color(Color::from("#1a1a25"))
+                    .border_width(Pixels(1.0))
+                    .border_color(Color::from("#252535"))
+                    .corner_radius(Pixels(2.0))
+                    .cursor(CursorIcon::Hand)
+                    .on_press(|cx| cx.emit(AppEvent::AdjustInputGain(-1.0)));
+
+                    // [RESET]
+                    HStack::new(cx, |cx| {
+                        Label::new(cx, "RESET")
+                            .font_size(9.0)
+                            .color(Color::from("#777777"));
+                    })
+                    .padding_left(Pixels(6.0))
+                    .padding_right(Pixels(6.0))
+                    .padding_top(Pixels(2.0))
+                    .padding_bottom(Pixels(2.0))
+                    .background_color(Color::from("#1a1a25"))
+                    .border_width(Pixels(1.0))
+                    .border_color(Color::from("#252535"))
+                    .corner_radius(Pixels(2.0))
+                    .cursor(CursorIcon::Hand)
+                    .on_press(|cx| cx.emit(AppEvent::ResetInputGain));
+
+                    // [+1 dB]
+                    HStack::new(cx, |cx| {
+                        Label::new(cx, "+1 dB")
+                            .font_size(9.0)
+                            .color(Color::from("#aaaaaa"));
+                    })
+                    .padding_left(Pixels(6.0))
+                    .padding_right(Pixels(6.0))
+                    .padding_top(Pixels(2.0))
+                    .padding_bottom(Pixels(2.0))
+                    .background_color(Color::from("#1a1a25"))
+                    .border_width(Pixels(1.0))
+                    .border_color(Color::from("#252535"))
+                    .corner_radius(Pixels(2.0))
+                    .cursor(CursorIcon::Hand)
+                    .on_press(|cx| cx.emit(AppEvent::AdjustInputGain(1.0)));
+                })
+                .height(Auto)
+                .horizontal_gap(Pixels(4.0))
+                .alignment(Alignment::Center);
+            })
+            .height(Auto)
+            .vertical_gap(Pixels(4.0));
         })
         .width(Stretch(1.0))
         .height(Auto)

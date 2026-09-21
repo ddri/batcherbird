@@ -31,6 +31,8 @@ pub struct SamplingConfig {
     pub input_device_name: Option<String>,
     /// Input channel routing selection (Stereo, Mono In 1, Mono In 2)
     pub channel_routing: ChannelRouting,
+    /// Input digital gain/trim adjustment in decibels (e.g. -12.0 to +12.0 dB, default 0.0 dB)
+    pub input_gain_db: f32,
 }
 
 impl Default for SamplingConfig {
@@ -44,6 +46,7 @@ impl Default for SamplingConfig {
             velocity: 100,          // Default velocity
             input_device_name: None, // System default input device
             channel_routing: ChannelRouting::Stereo,
+            input_gain_db: 0.0,
         }
     }
 }
@@ -82,15 +85,21 @@ impl AudioLevelDetector {
 
     /// Process audio samples and update levels (called from audio thread)
     pub fn process_samples(&mut self, samples: &[f32]) -> AudioLevels {
-        self.process_interleaved_samples(samples, 1)
+        self.process_interleaved_samples_with_gain(samples, 1, 1.0)
     }
 
     /// Process interleaved audio samples across multiple channels (called from audio thread)
     pub fn process_interleaved_samples(&mut self, samples: &[f32], channels: usize) -> AudioLevels {
+        self.process_interleaved_samples_with_gain(samples, channels, 1.0)
+    }
+
+    /// Process interleaved audio samples across multiple channels with gain scaling (called from audio thread)
+    pub fn process_interleaved_samples_with_gain(&mut self, samples: &[f32], channels: usize, gain: f32) -> AudioLevels {
+        let is_unity = (gain - 1.0).abs() < 1e-6;
         if channels >= 2 {
             for chunk in samples.chunks(channels) {
-                let left = chunk[0].abs();
-                let right = chunk[1].abs();
+                let left = if is_unity { chunk[0].abs() } else { (chunk[0] * gain).abs() };
+                let right = if is_unity { chunk[1].abs() } else { (chunk[1] * gain).abs() };
                 if left > self.peak_left {
                     self.peak_left = left;
                 }
@@ -106,7 +115,7 @@ impl AudioLevelDetector {
             }
         } else {
             for &sample in samples {
-                let abs_sample = sample.abs();
+                let abs_sample = if is_unity { sample.abs() } else { (sample * gain).abs() };
                 if abs_sample > self.peak_left {
                     self.peak_left = abs_sample;
                 }
@@ -343,6 +352,7 @@ pub struct SamplingEngine {
     audio_diagnostics: Arc<AudioDiagnostics>,
     playthrough_active: Arc<AtomicBool>,
     channel_routing: Arc<AtomicU8>,
+    input_gain_factor: Arc<AtomicU32>,
 }
 
 /// Progress update emitted while recording a range of notes (optionally across
@@ -419,6 +429,8 @@ impl SamplingEngine {
         let diagnostics = Arc::new(AudioDiagnostics::new(44100, 128));
 
         let routing = config.channel_routing;
+        let initial_db = config.input_gain_db.clamp(-12.0, 12.0);
+        let initial_factor = 10.0f32.powf(initial_db / 20.0);
         Ok(Self {
             audio_manager,
             config,
@@ -426,7 +438,31 @@ impl SamplingEngine {
             audio_diagnostics: diagnostics,
             playthrough_active: Arc::new(AtomicBool::new(false)),
             channel_routing: Arc::new(AtomicU8::new(routing.to_u8())),
+            input_gain_factor: Arc::new(AtomicU32::new(initial_factor.to_bits())),
         })
+    }
+
+    /// Set input digital gain/trim in decibels (thread-safe, lock-free, clamped to [-12.0, 12.0])
+    pub fn set_input_gain_db(&self, db: f32) {
+        let clamped = db.clamp(-12.0, 12.0);
+        let factor = 10.0f32.powf(clamped / 20.0);
+        self.input_gain_factor.store(factor.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Get current linear input gain factor (1.0 = 0 dB)
+    pub fn get_input_gain_factor(&self) -> f32 {
+        f32::from_bits(self.input_gain_factor.load(Ordering::Relaxed))
+    }
+
+    /// Get current input digital gain/trim in decibels
+    pub fn get_input_gain_db(&self) -> f32 {
+        let factor = self.get_input_gain_factor();
+        20.0 * factor.log10()
+    }
+
+    /// Get shared atomic handle for input gain factor
+    pub fn get_input_gain_factor_state(&self) -> Arc<AtomicU32> {
+        Arc::clone(&self.input_gain_factor)
     }
 
     /// Set input channel routing selection (thread-safe, lock-free)
@@ -496,6 +532,7 @@ impl SamplingEngine {
         let level_state = Arc::clone(&self.level_meter_state);
         let playthrough_active = Arc::clone(&self.playthrough_active);
         let channel_routing = Arc::clone(&self.channel_routing);
+        let input_gain_factor = Arc::clone(&self.input_gain_factor);
         playthrough_active.store(enable_playthrough, Ordering::Relaxed);
 
         // Lock-free wait-free ring buffer for playthrough (8192 samples = ~185ms buffer at 44.1kHz)
@@ -510,14 +547,17 @@ impl SamplingEngine {
                 let level_state_clone = Arc::clone(&level_state);
                 let playthrough_active_clone = Arc::clone(&playthrough_active);
                 let channel_routing_clone = Arc::clone(&channel_routing);
+                let input_gain_factor_clone = Arc::clone(&input_gain_factor);
                 let mut level_detector = AudioLevelDetector::new(sample_rate);
 
                 input_device
                     .build_input_stream(
                         &input_stream_config,
                         move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
+
                             // Continuous level detection for UI meters across hardware channels
-                            let levels = level_detector.process_interleaved_samples(data, input_channels);
+                            let levels = level_detector.process_interleaved_samples_with_gain(data, input_channels, gain);
                             level_state_clone.update_levels(levels);
 
                             // Forward to playthrough output if active (lock-free)
@@ -527,16 +567,16 @@ impl SamplingEngine {
                                     for chunk in data.chunks(input_channels) {
                                         match routing {
                                             ChannelRouting::Stereo => {
-                                                let _ = producer.push(chunk[0]);
-                                                let _ = producer.push(chunk[1]);
+                                                let _ = producer.push(chunk[0] * gain);
+                                                let _ = producer.push(chunk[1] * gain);
                                             }
                                             ChannelRouting::MonoLeft => {
-                                                let s = chunk[0];
+                                                let s = chunk[0] * gain;
                                                 let _ = producer.push(s);
                                                 let _ = producer.push(s);
                                             }
                                             ChannelRouting::MonoRight => {
-                                                let s = chunk[1];
+                                                let s = chunk[1] * gain;
                                                 let _ = producer.push(s);
                                                 let _ = producer.push(s);
                                             }
@@ -545,8 +585,9 @@ impl SamplingEngine {
                                 } else {
                                     // Mono input hardware: duplicate sample for stereo playthrough
                                     for &sample in data {
-                                        let _ = producer.push(sample);
-                                        let _ = producer.push(sample);
+                                        let s = sample * gain;
+                                        let _ = producer.push(s);
+                                        let _ = producer.push(s);
                                     }
                                 }
                             }
@@ -638,6 +679,7 @@ impl SamplingEngine {
         let sample_rate = 44100; // Use our standard sample rate
         let input_channels = config.channels() as usize;
         let level_state = Arc::clone(&self.level_meter_state);
+        let input_gain_factor = Arc::clone(&self.input_gain_factor);
 
         use cpal::SampleFormat;
 
@@ -646,14 +688,16 @@ impl SamplingEngine {
         let stream = match config.sample_format() {
             SampleFormat::F32 => {
                 let level_state_clone = Arc::clone(&level_state);
+                let input_gain_factor_clone = Arc::clone(&input_gain_factor);
                 let mut level_detector = AudioLevelDetector::new(sample_rate);
 
                 device
                     .build_input_stream(
                         &stream_config,
                         move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
                             // Continuous level detection for monitoring
-                            let levels = level_detector.process_interleaved_samples(data, input_channels);
+                            let levels = level_detector.process_interleaved_samples_with_gain(data, input_channels, gain);
                             level_state_clone.update_levels(levels);
                         },
                         |err| tracing::error!("Audio monitoring error: {}", err),
@@ -665,19 +709,21 @@ impl SamplingEngine {
             }
             SampleFormat::I16 => {
                 let level_state_clone = Arc::clone(&level_state);
+                let input_gain_factor_clone = Arc::clone(&input_gain_factor);
                 let mut level_detector = AudioLevelDetector::new(sample_rate);
 
                 device
                     .build_input_stream(
                         &stream_config,
                         move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
                             // Convert to f32 for level detection
                             let f32_samples: Vec<f32> = data
                                 .iter()
                                 .map(|&sample| sample as f32 / i16::MAX as f32)
                                 .collect();
 
-                            let levels = level_detector.process_interleaved_samples(&f32_samples, input_channels);
+                            let levels = level_detector.process_interleaved_samples_with_gain(&f32_samples, input_channels, gain);
                             level_state_clone.update_levels(levels);
                         },
                         |err| tracing::error!("Audio monitoring error: {}", err),
@@ -689,19 +735,21 @@ impl SamplingEngine {
             }
             SampleFormat::U16 => {
                 let level_state_clone = Arc::clone(&level_state);
+                let input_gain_factor_clone = Arc::clone(&input_gain_factor);
                 let mut level_detector = AudioLevelDetector::new(sample_rate);
 
                 device
                     .build_input_stream(
                         &stream_config,
                         move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
                             // Convert to f32 for level detection
                             let f32_samples: Vec<f32> = data
                                 .iter()
                                 .map(|&sample| (sample as f32 - 32768.0) / 32768.0)
                                 .collect();
 
-                            let levels = level_detector.process_interleaved_samples(&f32_samples, input_channels);
+                            let levels = level_detector.process_interleaved_samples_with_gain(&f32_samples, input_channels, gain);
                             level_state_clone.update_levels(levels);
                         },
                         |err| tracing::error!("Audio monitoring error: {}", err),
@@ -810,6 +858,7 @@ impl SamplingEngine {
         let sample_rate = 44100; // Use our standard sample rate
         let input_channels = config.channels() as usize;
         let channel_routing = Arc::clone(&self.channel_routing);
+        let input_gain_factor = Arc::clone(&self.input_gain_factor);
         use cpal::SampleFormat;
 
         let stream_config = AudioManager::get_standard_stream_config();
@@ -818,14 +867,17 @@ impl SamplingEngine {
             SampleFormat::F32 => {
                 let level_state_clone = Arc::clone(&level_state);
                 let channel_routing_clone = Arc::clone(&channel_routing);
+                let input_gain_factor_clone = Arc::clone(&input_gain_factor);
                 let mut level_detector = AudioLevelDetector::new(sample_rate);
 
                 device
                     .build_input_stream(
                         &stream_config,
                         move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
+
                             // Always update level meters, even when not recording
-                            let levels = level_detector.process_interleaved_samples(data, input_channels);
+                            let levels = level_detector.process_interleaved_samples_with_gain(data, input_channels, gain);
                             level_state_clone.update_levels(levels);
 
                             // Only collect samples when recording is active (lock-free)
@@ -835,17 +887,17 @@ impl SamplingEngine {
                                     for chunk in data.chunks(input_channels) {
                                         match routing {
                                             ChannelRouting::Stereo => {
-                                                if producer.push(chunk[0]).is_err() || producer.push(chunk[1]).is_err() {
+                                                if producer.push(chunk[0] * gain).is_err() || producer.push(chunk[1] * gain).is_err() {
                                                     break;
                                                 }
                                             }
                                             ChannelRouting::MonoLeft => {
-                                                if producer.push(chunk[0]).is_err() {
+                                                if producer.push(chunk[0] * gain).is_err() {
                                                     break;
                                                 }
                                             }
                                             ChannelRouting::MonoRight => {
-                                                if producer.push(chunk[1]).is_err() {
+                                                if producer.push(chunk[1] * gain).is_err() {
                                                     break;
                                                 }
                                             }
@@ -853,7 +905,7 @@ impl SamplingEngine {
                                     }
                                 } else {
                                     for &sample in data {
-                                        if producer.push(sample).is_err() {
+                                        if producer.push(sample * gain).is_err() {
                                             break;
                                         }
                                     }
@@ -873,12 +925,15 @@ impl SamplingEngine {
             SampleFormat::I16 => {
                 let level_state_clone = Arc::clone(&level_state);
                 let channel_routing_clone = Arc::clone(&channel_routing);
+                let input_gain_factor_clone = Arc::clone(&input_gain_factor);
                 let mut level_detector = AudioLevelDetector::new(sample_rate);
 
                 device
                     .build_input_stream(
                         &stream_config,
                         move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
+
                             // Convert to f32 for level detection
                             let f32_samples: Vec<f32> = data
                                 .iter()
@@ -886,7 +941,7 @@ impl SamplingEngine {
                                 .collect();
 
                             // Always update level meters
-                            let levels = level_detector.process_interleaved_samples(&f32_samples, input_channels);
+                            let levels = level_detector.process_interleaved_samples_with_gain(&f32_samples, input_channels, gain);
                             level_state_clone.update_levels(levels);
 
                             // Only collect samples when recording is active (lock-free)
@@ -896,17 +951,17 @@ impl SamplingEngine {
                                     for chunk in f32_samples.chunks(input_channels) {
                                         match routing {
                                             ChannelRouting::Stereo => {
-                                                if producer.push(chunk[0]).is_err() || producer.push(chunk[1]).is_err() {
+                                                if producer.push(chunk[0] * gain).is_err() || producer.push(chunk[1] * gain).is_err() {
                                                     break;
                                                 }
                                             }
                                             ChannelRouting::MonoLeft => {
-                                                if producer.push(chunk[0]).is_err() {
+                                                if producer.push(chunk[0] * gain).is_err() {
                                                     break;
                                                 }
                                             }
                                             ChannelRouting::MonoRight => {
-                                                if producer.push(chunk[1]).is_err() {
+                                                if producer.push(chunk[1] * gain).is_err() {
                                                     break;
                                                 }
                                             }
@@ -914,7 +969,7 @@ impl SamplingEngine {
                                     }
                                 } else {
                                     for &sample in f32_samples.iter() {
-                                        if producer.push(sample).is_err() {
+                                        if producer.push(sample * gain).is_err() {
                                             break;
                                         }
                                     }
@@ -934,12 +989,15 @@ impl SamplingEngine {
             SampleFormat::U16 => {
                 let level_state_clone = Arc::clone(&level_state);
                 let channel_routing_clone = Arc::clone(&channel_routing);
+                let input_gain_factor_clone = Arc::clone(&input_gain_factor);
                 let mut level_detector = AudioLevelDetector::new(sample_rate);
 
                 device
                     .build_input_stream(
                         &stream_config,
                         move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
+
                             // Convert to f32 for level detection
                             let f32_samples: Vec<f32> = data
                                 .iter()
@@ -947,7 +1005,7 @@ impl SamplingEngine {
                                 .collect();
 
                             // Always update level meters
-                            let levels = level_detector.process_interleaved_samples(&f32_samples, input_channels);
+                            let levels = level_detector.process_interleaved_samples_with_gain(&f32_samples, input_channels, gain);
                             level_state_clone.update_levels(levels);
 
                             // Only collect samples when recording is active (lock-free)
@@ -957,17 +1015,17 @@ impl SamplingEngine {
                                     for chunk in f32_samples.chunks(input_channels) {
                                         match routing {
                                             ChannelRouting::Stereo => {
-                                                if producer.push(chunk[0]).is_err() || producer.push(chunk[1]).is_err() {
+                                                if producer.push(chunk[0] * gain).is_err() || producer.push(chunk[1] * gain).is_err() {
                                                     break;
                                                 }
                                             }
                                             ChannelRouting::MonoLeft => {
-                                                if producer.push(chunk[0]).is_err() {
+                                                if producer.push(chunk[0] * gain).is_err() {
                                                     break;
                                                 }
                                             }
                                             ChannelRouting::MonoRight => {
-                                                if producer.push(chunk[1]).is_err() {
+                                                if producer.push(chunk[1] * gain).is_err() {
                                                     break;
                                                 }
                                             }
@@ -975,7 +1033,7 @@ impl SamplingEngine {
                                     }
                                 } else {
                                     for &sample in f32_samples.iter() {
-                                        if producer.push(sample).is_err() {
+                                        if producer.push(sample * gain).is_err() {
                                             break;
                                         }
                                     }
@@ -1242,6 +1300,7 @@ impl SamplingEngine {
 
     /// Sample a range of MIDI notes with a specific step interval (e.g. 1 for every note,
     /// 3 for minor thirds, 12 for octaves) and progress updates.
+    #[allow(clippy::too_many_arguments)]
     pub fn sample_note_range_stepped_with_progress_blocking(
         &self,
         midi_conn: &mut MidiOutputConnection,
@@ -1429,6 +1488,7 @@ impl SamplingEngine {
             channels,
             max_recording_samples: samples_per_second * 30, // 30 second safety limit
             channel_routing: routing,
+            input_gain_factor: Arc::clone(&self.input_gain_factor),
         };
 
         let mut recorder = LockFreeRecorder::new(recording_config)?;
@@ -1701,6 +1761,49 @@ mod tests {
         assert!((levels.peak_right - 0.2).abs() < 1e-5);
         assert!((levels.peak - 0.8).abs() < 1e-5);
         assert!(levels.peak_left_db > levels.peak_right_db);
+    }
+
+    #[test]
+    fn test_input_gain_engine_toggle() {
+        let config = SamplingConfig::default();
+        assert_eq!(config.input_gain_db, 0.0);
+
+        if let Ok(engine) = SamplingEngine::new(config) {
+            assert!((engine.get_input_gain_factor() - 1.0).abs() < 1e-4);
+            assert!((engine.get_input_gain_db() - 0.0).abs() < 1e-4);
+
+            engine.set_input_gain_db(3.0);
+            assert!((engine.get_input_gain_db() - 3.0).abs() < 1e-4);
+
+            engine.set_input_gain_db(-6.0);
+            assert!((engine.get_input_gain_db() - (-6.0)).abs() < 1e-4);
+
+            // Clamping tests
+            engine.set_input_gain_db(20.0);
+            assert!((engine.get_input_gain_db() - 12.0).abs() < 1e-4);
+
+            engine.set_input_gain_db(-20.0);
+            assert!((engine.get_input_gain_db() - (-12.0)).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn test_interleaved_samples_with_gain() {
+        let mut detector = AudioLevelDetector::new(44100);
+        let samples = vec![0.4, 0.1, 0.3, 0.05];
+        // Gain 2.0 (+6dB): 0.4 -> 0.8, 0.1 -> 0.2
+        let levels = detector.process_interleaved_samples_with_gain(&samples, 2, 2.0);
+
+        assert!((levels.peak_left - 0.8).abs() < 1e-5);
+        assert!((levels.peak_right - 0.2).abs() < 1e-5);
+        assert!((levels.peak - 0.8).abs() < 1e-5);
+
+        // Gain 0.5 (-6dB) on a fresh detector: 0.4 -> 0.2, 0.1 -> 0.05
+        let mut detector_attenuated = AudioLevelDetector::new(44100);
+        let levels_attenuated = detector_attenuated.process_interleaved_samples_with_gain(&samples, 2, 0.5);
+        assert!((levels_attenuated.peak_left - 0.2).abs() < 1e-5);
+        assert!((levels_attenuated.peak_right - 0.05).abs() < 1e-5);
+        assert!((levels_attenuated.peak - 0.2).abs() < 1e-5);
     }
 }
 

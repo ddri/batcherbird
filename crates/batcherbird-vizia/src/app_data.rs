@@ -60,6 +60,10 @@ pub struct AppData {
     pub channel_routing_options: Vec<String>,
     pub selected_channel_routing: usize,
 
+    // Input gain trim
+    pub input_gain_db: f32,
+    pub input_gain_display: String,
+
     // Sampling config
     pub start_note: u8,
     pub end_note: u8,
@@ -174,6 +178,9 @@ impl Default for AppData {
             ],
             selected_channel_routing: 0,
 
+            input_gain_db: 0.0,
+            input_gain_display: "0.0 dB".to_string(),
+
             start_note: 36, // C2
             end_note: 84,   // C6
             velocity_layers: 1,
@@ -248,7 +255,7 @@ impl Default for AppData {
 }
 
 impl AppData {
-    fn build_sampling_config(&self) -> SamplingConfig {
+    pub fn build_sampling_config(&self) -> SamplingConfig {
         // Resolve the user's selected audio input device (if any) to a name so
         // recording uses the chosen device rather than the system default.
         let input_device_name = self
@@ -266,6 +273,7 @@ impl AppData {
             velocity: 100,
             input_device_name,
             channel_routing: self.channel_routing,
+            input_gain_db: self.input_gain_db,
         }
     }
 
@@ -288,6 +296,27 @@ impl AppData {
     pub fn cycle_channel_routing(&mut self) {
         let next_idx = (self.selected_channel_routing + 1) % self.channel_routing_options.len();
         self.set_channel_routing_index(next_idx);
+    }
+
+    pub fn set_input_gain_db(&mut self, db: f32) {
+        let clamped = db.clamp(-12.0, 12.0);
+        self.input_gain_db = (clamped * 10.0).round() / 10.0;
+        self.input_gain_display = if self.input_gain_db > 0.0 {
+            format!("+{:.1} dB", self.input_gain_db)
+        } else {
+            format!("{:.1} dB", self.input_gain_db)
+        };
+        if let Some(engine) = &self.sampling_engine {
+            engine.set_input_gain_db(self.input_gain_db);
+        }
+    }
+
+    pub fn adjust_input_gain_db(&mut self, delta: f32) {
+        self.set_input_gain_db(self.input_gain_db + delta);
+    }
+
+    pub fn reset_input_gain_db(&mut self) {
+        self.set_input_gain_db(0.0);
     }
 
     /// Whether `generation` matches the current recording session. Worker→UI
@@ -636,6 +665,15 @@ impl Model for AppData {
             }
             AppEvent::CycleChannelRouting => {
                 self.cycle_channel_routing();
+            }
+            AppEvent::SetInputGain(db) => {
+                self.set_input_gain_db(*db);
+            }
+            AppEvent::AdjustInputGain(delta) => {
+                self.adjust_input_gain_db(*delta);
+            }
+            AppEvent::ResetInputGain => {
+                self.reset_input_gain_db();
             }
             AppEvent::CycleExportFormat => {
                 let next = Self::next_format(&self.export_format);
