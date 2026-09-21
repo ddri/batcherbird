@@ -898,7 +898,7 @@ mod tests {
         let mut engine = ProfessionalMeterEngine::new(44100.0);
         let samples = vec![0.5, -0.3, 0.8, -0.1];
 
-        let readings = engine.process_samples(&samples);
+        let _readings = engine.process_samples(&samples);
 
         // The initial reading might be close to silence due to integration
         // Let's test multiple iterations to build up the integrators

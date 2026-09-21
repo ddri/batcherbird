@@ -30,7 +30,7 @@ impl View for KeyboardView {
         let current_note = AppData::current_note.get(cx);
 
         let is_stepped_target = |note: u8| -> bool {
-            note >= start_note && note <= end_note && (note - start_note) % note_step == 0
+            note >= start_note && note <= end_note && (note - start_note).is_multiple_of(note_step)
         };
 
         // Draw background

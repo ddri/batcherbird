@@ -409,7 +409,7 @@ mod tests {
         let diagnostics = AudioDiagnostics::new(44100, 128); // ~2.9ms budget
 
         // Simulate good performance (1ms execution)
-        let mut good_time = 0;
+        let good_time;
         {
             let _timer = diagnostics.start_callback_timing();
             thread::sleep(Duration::from_millis(1));
