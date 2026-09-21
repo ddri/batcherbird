@@ -1,4 +1,5 @@
 use crate::app_event::{AppEvent, InstrumentPreset};
+use batcherbird_core::channel_routing::ChannelRouting;
 use batcherbird_core::export::AudioFormat;
 use batcherbird_core::lock_free_recording::RealtimeMeterData;
 use batcherbird_core::preview_player::PreviewPlayer;
@@ -51,6 +52,13 @@ pub struct AppData {
     pub selected_audio_input: usize,
     pub midi_connected: bool,
     pub audio_connected: bool,
+
+    // Channel routing
+    #[lens(ignore)]
+    pub channel_routing: ChannelRouting,
+    pub channel_routing_display: String,
+    pub channel_routing_options: Vec<String>,
+    pub selected_channel_routing: usize,
 
     // Sampling config
     pub start_note: u8,
@@ -157,6 +165,15 @@ impl Default for AppData {
             midi_connected: false,
             audio_connected: false,
 
+            channel_routing: ChannelRouting::Stereo,
+            channel_routing_display: ChannelRouting::Stereo.display_name().to_string(),
+            channel_routing_options: vec![
+                ChannelRouting::Stereo.display_name().to_string(),
+                ChannelRouting::MonoLeft.display_name().to_string(),
+                ChannelRouting::MonoRight.display_name().to_string(),
+            ],
+            selected_channel_routing: 0,
+
             start_note: 36, // C2
             end_note: 84,   // C6
             velocity_layers: 1,
@@ -248,7 +265,29 @@ impl AppData {
             midi_channel: 0,
             velocity: 100,
             input_device_name,
+            channel_routing: self.channel_routing,
         }
+    }
+
+    pub fn set_channel_routing_index(&mut self, idx: usize) {
+        if idx < self.channel_routing_options.len() {
+            self.selected_channel_routing = idx;
+            self.channel_routing = match idx {
+                0 => ChannelRouting::Stereo,
+                1 => ChannelRouting::MonoLeft,
+                2 => ChannelRouting::MonoRight,
+                _ => ChannelRouting::Stereo,
+            };
+            self.channel_routing_display = self.channel_routing_options[idx].clone();
+            if let Some(engine) = &self.sampling_engine {
+                engine.set_channel_routing(self.channel_routing);
+            }
+        }
+    }
+
+    pub fn cycle_channel_routing(&mut self) {
+        let next_idx = (self.selected_channel_routing + 1) % self.channel_routing_options.len();
+        self.set_channel_routing_index(next_idx);
     }
 
     /// Whether `generation` matches the current recording session. Worker→UI
@@ -519,10 +558,10 @@ impl Model for AppData {
                 if self.meter_consumer.is_none() {
                     if let Some(engine) = &self.sampling_engine {
                         let levels = engine.get_audio_levels();
-                        self.meter_left = levels.peak;
-                        self.meter_right = levels.peak; // mono for now
-                        self.meter_left_db = levels.peak_db;
-                        self.meter_right_db = levels.peak_db;
+                        self.meter_left = levels.peak_left;
+                        self.meter_right = levels.peak_right;
+                        self.meter_left_db = levels.peak_left_db;
+                        self.meter_right_db = levels.peak_right_db;
                     }
                 }
                 // Reflect one-shot preview completion in the UI: once the
@@ -591,6 +630,12 @@ impl Model for AppData {
             }
             AppEvent::SelectAudioInput(idx) => {
                 self.selected_audio_input = *idx;
+            }
+            AppEvent::SelectChannelRouting(idx) => {
+                self.set_channel_routing_index(*idx);
+            }
+            AppEvent::CycleChannelRouting => {
+                self.cycle_channel_routing();
             }
             AppEvent::CycleExportFormat => {
                 let next = Self::next_format(&self.export_format);

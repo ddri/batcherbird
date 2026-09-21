@@ -1,3 +1,4 @@
+use crate::channel_routing::ChannelRouting;
 use crate::{BatcherbirdError, Result};
 use cpal::traits::DeviceTrait;
 use cpal::{SampleFormat, Stream, SupportedStreamConfig};
@@ -38,19 +39,15 @@ pub struct LockFreeRecorder {
 
     // Recording state (lock-free atomic)
     is_recording: Arc<AtomicBool>,
-
-    // Sample counting (for precise timing)
     samples_recorded: Arc<AtomicUsize>,
 
-    // Audio configuration
-    sample_rate: u32,
-    channels: u16,
-
-    // Performance configuration
-    buffer_size: usize,
-
-    // Safety limit: maximum number of interleaved samples per recording
-    max_recording_samples: usize,
+    // Configuration
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub hw_channels: u16,
+    pub channel_routing: ChannelRouting,
+    pub buffer_size: usize,
+    pub max_recording_samples: usize,
 
     // Consumer thread handle
     consumer_thread: Option<thread::JoinHandle<Result<Vec<f32>>>>,
@@ -59,14 +56,8 @@ pub struct LockFreeRecorder {
 /// Configuration for lock-free recording following professional standards
 #[derive(Debug, Clone)]
 pub struct LockFreeRecordingConfig {
-    /// Ring buffer size in samples (default: 44100 * 2 = 2 seconds)
-    /// Professional DAWs use 1-4 second buffers for recording
     pub ring_buffer_size: usize,
-
-    /// Sample rate (standardized to 44.1kHz)
     pub sample_rate: u32,
-
-    /// Number of channels (standardized to stereo)
     pub channels: u16,
 
     /// Maximum recording duration in **interleaved** samples (safety limit).
@@ -75,6 +66,7 @@ pub struct LockFreeRecordingConfig {
     /// Choose a value that is a multiple of the channel count to avoid
     /// truncating mid-frame.
     pub max_recording_samples: usize,
+    pub channel_routing: ChannelRouting,
 }
 
 impl Default for LockFreeRecordingConfig {
@@ -84,6 +76,7 @@ impl Default for LockFreeRecordingConfig {
             sample_rate: 44100,                    // Professional standard
             channels: 2,                           // Stereo
             max_recording_samples: 44100 * 60 * 5, // 5 minutes max
+            channel_routing: ChannelRouting::Stereo,
         }
     }
 }
@@ -97,6 +90,7 @@ impl LockFreeRecorder {
         // Create lock-free ring buffer for meter data (60fps = 60 updates/sec)
         let (meter_producer, meter_consumer) = RingBuffer::<RealtimeMeterData>::new(128);
 
+        let output_channels = config.channel_routing.output_channels(config.channels);
         Ok(Self {
             sample_producer: Arc::new(std::sync::Mutex::new(Some(sample_producer))),
             sample_consumer: Some(sample_consumer),
@@ -105,7 +99,9 @@ impl LockFreeRecorder {
             is_recording: Arc::new(AtomicBool::new(false)),
             samples_recorded: Arc::new(AtomicUsize::new(0)),
             sample_rate: config.sample_rate,
-            channels: config.channels,
+            channels: output_channels,
+            hw_channels: config.channels,
+            channel_routing: config.channel_routing,
             buffer_size: config.ring_buffer_size,
             max_recording_samples: config.max_recording_samples,
             consumer_thread: None,
@@ -233,11 +229,12 @@ impl LockFreeRecorder {
 
         let is_recording = Arc::clone(&self.is_recording);
         let sample_rate = self.sample_rate;
-        let channels = self.channels;
+        let hw_channels = self.hw_channels;
+        let channel_routing = self.channel_routing;
 
-        // Create standard audio configuration
+        // Create audio configuration with hardware channel count
         let stream_config = cpal::StreamConfig {
-            channels: self.channels,
+            channels: self.hw_channels,
             sample_rate: cpal::SampleRate(sample_rate),
             buffer_size: cpal::BufferSize::Default,
         };
@@ -249,7 +246,8 @@ impl LockFreeRecorder {
                 producer,
                 meter_producer,
                 is_recording,
-                channels,
+                hw_channels,
+                channel_routing,
             )?,
             SampleFormat::I16 => self.build_i16_stream(
                 device,
@@ -257,7 +255,8 @@ impl LockFreeRecorder {
                 producer,
                 meter_producer,
                 is_recording,
-                channels,
+                hw_channels,
+                channel_routing,
             )?,
             SampleFormat::U16 => self.build_u16_stream(
                 device,
@@ -265,7 +264,8 @@ impl LockFreeRecorder {
                 producer,
                 meter_producer,
                 is_recording,
-                channels,
+                hw_channels,
+                channel_routing,
             )?,
             _ => {
                 return Err(BatcherbirdError::Audio(
@@ -285,7 +285,8 @@ impl LockFreeRecorder {
         mut producer: Producer<f32>,
         mut meter_producer: Producer<RealtimeMeterData>,
         is_recording: Arc<AtomicBool>,
-        channels: u16,
+        hw_channels: u16,
+        channel_routing: ChannelRouting,
     ) -> Result<Stream> {
         let mut sample_count = 0u64;
         let mut rms_accumulator_left = 0.0f32;
@@ -293,7 +294,7 @@ impl LockFreeRecorder {
         let mut rms_window_samples = 0usize;
         let rms_window_size = 512; // ~11ms at 44.1kHz for smooth meters
         // sample_count below counts interleaved samples across all channels
-        let interleaved_samples_per_sec = self.sample_rate.max(1) as u64 * channels.max(1) as u64;
+        let interleaved_samples_per_sec = self.sample_rate.max(1) as u64 * hw_channels.max(1) as u64;
 
         let stream = device
             .build_input_stream(
@@ -301,12 +302,26 @@ impl LockFreeRecorder {
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
                     // ✅ PROFESSIONAL AUDIO: Lock-free recording in audio thread
                     if is_recording.load(Ordering::Relaxed) {
-                        // Push samples to ring buffer (never blocks, never allocates)
-                        for &sample in data {
-                            if producer.push(sample).is_err() {
-                                // Ring buffer full - this is expected behavior
-                                // Professional DAWs handle this gracefully
-                                break;
+                        if hw_channels >= 2 {
+                            for chunk in data.chunks(hw_channels as usize) {
+                                match channel_routing {
+                                    ChannelRouting::Stereo => {
+                                        let _ = producer.push(chunk[0]);
+                                        let _ = producer.push(chunk[1]);
+                                    }
+                                    ChannelRouting::MonoLeft => {
+                                        let _ = producer.push(chunk[0]);
+                                    }
+                                    ChannelRouting::MonoRight => {
+                                        let _ = producer.push(chunk[1]);
+                                    }
+                                }
+                            }
+                        } else {
+                            for &sample in data {
+                                if producer.push(sample).is_err() {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -317,23 +332,24 @@ impl LockFreeRecorder {
                     let mut is_clipping = false;
 
                     // Process samples based on channel configuration
-                    if channels == 2 {
-                        // Stereo: interleaved L/R samples
-                        for chunk in data.chunks(2) {
-                            if let [left, right] = chunk {
-                                // Peak detection
-                                peak_left = peak_left.max(left.abs());
-                                peak_right = peak_right.max(right.abs());
+                    if hw_channels >= 2 {
+                        // Stereo / Multi-channel: interleaved samples
+                        for chunk in data.chunks(hw_channels as usize) {
+                            let left = chunk[0];
+                            let right = chunk[1];
 
-                                // RMS accumulation
-                                rms_accumulator_left += left * left;
-                                rms_accumulator_right += right * right;
-                                rms_window_samples += 1;
+                            // Peak detection
+                            peak_left = peak_left.max(left.abs());
+                            peak_right = peak_right.max(right.abs());
 
-                                // Clipping detection
-                                if left.abs() >= 0.999 || right.abs() >= 0.999 {
-                                    is_clipping = true;
-                                }
+                            // RMS accumulation
+                            rms_accumulator_left += left * left;
+                            rms_accumulator_right += right * right;
+                            rms_window_samples += 1;
+
+                            // Clipping detection
+                            if left.abs() >= 0.999 || right.abs() >= 0.999 {
+                                is_clipping = true;
                             }
                         }
                     } else {
@@ -395,7 +411,8 @@ impl LockFreeRecorder {
         mut producer: Producer<f32>,
         _meter_producer: Producer<RealtimeMeterData>,
         is_recording: Arc<AtomicBool>,
-        _channels: u16,
+        hw_channels: u16,
+        channel_routing: ChannelRouting,
     ) -> Result<Stream> {
         let stream = device
             .build_input_stream(
@@ -403,11 +420,27 @@ impl LockFreeRecorder {
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
                     // ✅ PROFESSIONAL AUDIO: Lock-free recording in audio thread
                     if is_recording.load(Ordering::Relaxed) {
-                        // Convert and push samples (no Vec allocation)
-                        for &sample in data {
-                            let f32_sample = sample as f32 / i16::MAX as f32;
-                            if producer.push(f32_sample).is_err() {
-                                break;
+                        if hw_channels >= 2 {
+                            for chunk in data.chunks(hw_channels as usize) {
+                                match channel_routing {
+                                    ChannelRouting::Stereo => {
+                                        let _ = producer.push(chunk[0] as f32 / i16::MAX as f32);
+                                        let _ = producer.push(chunk[1] as f32 / i16::MAX as f32);
+                                    }
+                                    ChannelRouting::MonoLeft => {
+                                        let _ = producer.push(chunk[0] as f32 / i16::MAX as f32);
+                                    }
+                                    ChannelRouting::MonoRight => {
+                                        let _ = producer.push(chunk[1] as f32 / i16::MAX as f32);
+                                    }
+                                }
+                            }
+                        } else {
+                            for &sample in data {
+                                let f32_sample = sample as f32 / i16::MAX as f32;
+                                if producer.push(f32_sample).is_err() {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -428,7 +461,8 @@ impl LockFreeRecorder {
         mut producer: Producer<f32>,
         _meter_producer: Producer<RealtimeMeterData>,
         is_recording: Arc<AtomicBool>,
-        _channels: u16,
+        hw_channels: u16,
+        channel_routing: ChannelRouting,
     ) -> Result<Stream> {
         let stream = device
             .build_input_stream(
@@ -436,11 +470,27 @@ impl LockFreeRecorder {
                 move |data: &[u16], _: &cpal::InputCallbackInfo| {
                     // ✅ PROFESSIONAL AUDIO: Lock-free recording in audio thread
                     if is_recording.load(Ordering::Relaxed) {
-                        // Convert and push samples (no Vec allocation)
-                        for &sample in data {
-                            let f32_sample = (sample as f32 - 32768.0) / 32768.0;
-                            if producer.push(f32_sample).is_err() {
-                                break;
+                        if hw_channels >= 2 {
+                            for chunk in data.chunks(hw_channels as usize) {
+                                match channel_routing {
+                                    ChannelRouting::Stereo => {
+                                        let _ = producer.push((chunk[0] as f32 - 32768.0) / 32768.0);
+                                        let _ = producer.push((chunk[1] as f32 - 32768.0) / 32768.0);
+                                    }
+                                    ChannelRouting::MonoLeft => {
+                                        let _ = producer.push((chunk[0] as f32 - 32768.0) / 32768.0);
+                                    }
+                                    ChannelRouting::MonoRight => {
+                                        let _ = producer.push((chunk[1] as f32 - 32768.0) / 32768.0);
+                                    }
+                                }
+                            }
+                        } else {
+                            for &sample in data {
+                                let f32_sample = (sample as f32 - 32768.0) / 32768.0;
+                                if producer.push(f32_sample).is_err() {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -538,6 +588,7 @@ mod tests {
             sample_rate: 44100,
             channels: 1,
             max_recording_samples: 100,
+            ..Default::default()
         };
         let mut recorder = LockFreeRecorder::new(config).unwrap();
 
@@ -579,6 +630,7 @@ mod tests {
             channels: 2,
             ring_buffer_size: 44100 * 2,       // 2 seconds
             max_recording_samples: 44100 * 60, // 1 minute
+            ..Default::default()
         };
 
         let recorder = LockFreeRecorder::new(config).unwrap();

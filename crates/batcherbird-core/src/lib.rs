@@ -4,6 +4,7 @@
 
 pub mod audio;
 pub mod audio_diagnostics;
+pub mod channel_routing;
 pub mod detection;
 pub mod error;
 pub mod export;
@@ -17,6 +18,7 @@ pub mod sampler;
 pub use audio_diagnostics::{
     AudioDiagnostics, AudioPerformanceReport, CallbackTimer, LockTimer, PerformanceStatus,
 };
+pub use channel_routing::ChannelRouting;
 pub use error::{BatcherbirdError, Result};
 pub use lock_free_recording::{LockFreeRecorder, LockFreeRecordingConfig, RealtimeMeterData};
 pub use preview_player::PreviewPlayer;

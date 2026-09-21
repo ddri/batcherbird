@@ -63,6 +63,8 @@ pub enum AppEvent {
     TestNoteError(String),
     TogglePlaythrough,
     SetPlaythrough(bool),
+    SelectChannelRouting(usize),
+    CycleChannelRouting,
 
     // Internal events (from background threads)
     RecordingProgress {

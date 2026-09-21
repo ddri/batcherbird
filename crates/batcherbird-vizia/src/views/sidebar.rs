@@ -120,6 +120,18 @@ pub fn sidebar(cx: &mut Context) {
             .height(Auto)
             .vertical_gap(Pixels(2.0));
 
+            // Channel Routing
+            VStack::new(cx, |cx| {
+                Label::new(cx, "Channels")
+                    .font_size(9.0)
+                    .color(Color::from("#555555"));
+                PickList::new(cx, AppData::channel_routing_options, AppData::selected_channel_routing, true)
+                    .on_select(|cx, idx| cx.emit(AppEvent::SelectChannelRouting(idx)))
+                    .width(Stretch(1.0));
+            })
+            .height(Auto)
+            .vertical_gap(Pixels(2.0));
+
             // Playthrough toggle
             HStack::new(cx, |cx| {
                 Label::new(cx, "PLAYTHROUGH")

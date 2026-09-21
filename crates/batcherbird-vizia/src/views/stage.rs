@@ -168,44 +168,70 @@ pub fn stage(cx: &mut Context) {
                 .width(Stretch(1.0))
                 .alignment(Alignment::Center);
 
-            // Playthrough toggle in Armed view
-            Binding::new(cx, AppData::playthrough_enabled, |cx, enabled| {
-                let is_on = enabled.get(cx);
-                HStack::new(cx, move |cx| {
-                    Label::new(
-                        cx,
-                        if is_on {
-                            "🔊 Playthrough: ON"
+            // Quick toggles in Armed view: Playthrough & Channel Routing
+            HStack::new(cx, |cx| {
+                // Playthrough toggle
+                Binding::new(cx, AppData::playthrough_enabled, |cx, enabled| {
+                    let is_on = enabled.get(cx);
+                    HStack::new(cx, move |cx| {
+                        Label::new(
+                            cx,
+                            if is_on {
+                                "🔊 Playthrough: ON"
+                            } else {
+                                "🔈 Playthrough: OFF"
+                            },
+                        )
+                        .font_size(12.0)
+                        .color(if is_on {
+                            Color::from("#00e676")
                         } else {
-                            "🔈 Playthrough: OFF"
-                        },
-                    )
-                    .font_size(12.0)
-                    .color(if is_on {
-                        Color::from("#00e676")
+                            Color::from("#888899")
+                        });
+                    })
+                    .alignment(Alignment::Center)
+                    .height(Pixels(26.0))
+                    .padding_left(Pixels(12.0))
+                    .padding_right(Pixels(12.0))
+                    .background_color(if is_on {
+                        Color::from("#12251a")
                     } else {
-                        Color::from("#888899")
-                    });
-                })
-                .alignment(Alignment::Center)
-                .height(Pixels(26.0))
-                .padding_left(Pixels(12.0))
-                .padding_right(Pixels(12.0))
-                .background_color(if is_on {
-                    Color::from("#12251a")
-                } else {
-                    Color::from("#14141d")
-                })
-                .border_width(Pixels(1.0))
-                .border_color(if is_on {
-                    Color::from("#00e67655")
-                } else {
-                    Color::from("#252535")
-                })
-                .corner_radius(Pixels(13.0))
-                .cursor(CursorIcon::Hand)
-                .on_press(|cx| cx.emit(AppEvent::TogglePlaythrough));
-            });
+                        Color::from("#14141d")
+                    })
+                    .border_width(Pixels(1.0))
+                    .border_color(if is_on {
+                        Color::from("#00e67655")
+                    } else {
+                        Color::from("#252535")
+                    })
+                    .corner_radius(Pixels(13.0))
+                    .cursor(CursorIcon::Hand)
+                    .on_press(|cx| cx.emit(AppEvent::TogglePlaythrough));
+                });
+
+                // Channel Routing toggle pill
+                Binding::new(cx, AppData::channel_routing_display, |cx, display| {
+                    let text = display.get(cx);
+                    HStack::new(cx, move |cx| {
+                        Label::new(cx, &format!("🎛 Routing: {}", text))
+                            .font_size(12.0)
+                            .color(Color::from("#00b0ff"));
+                    })
+                    .alignment(Alignment::Center)
+                    .height(Pixels(26.0))
+                    .padding_left(Pixels(12.0))
+                    .padding_right(Pixels(12.0))
+                    .background_color(Color::from("#101a26"))
+                    .border_width(Pixels(1.0))
+                    .border_color(Color::from("#00b0ff44"))
+                    .corner_radius(Pixels(13.0))
+                    .cursor(CursorIcon::Hand)
+                    .on_press(|cx| cx.emit(AppEvent::CycleChannelRouting));
+                });
+            })
+            .alignment(Alignment::Center)
+            .horizontal_gap(Pixels(10.0))
+            .height(Auto);
 
             // Optional gain staging feedback banner
             Binding::new(cx, AppData::gain_check_message, |cx, msg| {

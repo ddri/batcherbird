@@ -281,5 +281,38 @@ fn test_playthrough_settings() {
     assert!(!data.playthrough_enabled);
 }
 
+#[test]
+fn test_channel_routing_selection_and_cycling() {
+    use batcherbird_core::channel_routing::ChannelRouting;
+
+    let mut data = AppData::default();
+    // Default: Stereo (1+2)
+    assert_eq!(data.channel_routing, ChannelRouting::Stereo);
+    assert_eq!(data.selected_channel_routing, 0);
+    assert_eq!(data.channel_routing_display, "Stereo (1+2)");
+
+    // Select Mono In 1 (index 1)
+    data.set_channel_routing_index(1);
+    assert_eq!(data.channel_routing, ChannelRouting::MonoLeft);
+    assert_eq!(data.selected_channel_routing, 1);
+    assert_eq!(data.channel_routing_display, "Mono In 1 (L)");
+
+    // Select Mono In 2 (index 2)
+    data.set_channel_routing_index(2);
+    assert_eq!(data.channel_routing, ChannelRouting::MonoRight);
+    assert_eq!(data.selected_channel_routing, 2);
+    assert_eq!(data.channel_routing_display, "Mono In 2 (R)");
+
+    // Cycling wraps: 2 -> 0 -> 1 -> 2
+    data.cycle_channel_routing();
+    assert_eq!(data.channel_routing, ChannelRouting::Stereo);
+    assert_eq!(data.selected_channel_routing, 0);
+
+    data.cycle_channel_routing();
+    assert_eq!(data.channel_routing, ChannelRouting::MonoLeft);
+    assert_eq!(data.selected_channel_routing, 1);
+}
+
+
 
 
