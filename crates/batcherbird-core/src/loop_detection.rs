@@ -341,33 +341,74 @@ impl LoopDetector {
         score.clamp(0.0, 1.0)
     }
 
-    /// Apply the detected loop to audio data with crossfading
+    /// Apply equal-power crossfading at the detected loop points across all channels.
+    ///
+    /// Uses equal-power sine/cosine gain curves:
+    /// - gain_in(t) = sin(pi/2 * t)
+    /// - gain_out(t) = cos(pi/2 * t)
+    ///
+    /// Preserves total acoustic energy (gain_in^2 + gain_out^2 == 1.0) and eliminates
+    /// volume dips and clicks at the loop boundary.
+    pub fn apply_loop_with_crossfade_channels(
+        &self,
+        audio_data: &mut [f32],
+        loop_candidate: &LoopCandidate,
+        sample_rate: u32,
+        channels: u16,
+    ) -> Result<()> {
+        let num_channels = (channels as usize).max(1);
+        let crossfade_frames =
+            (self.config.crossfade_ms * sample_rate as f32 / 1000.0).round() as usize;
+
+        if crossfade_frames == 0 || crossfade_frames >= loop_candidate.length_samples / 2 {
+            return Ok(()); // Skip crossfade if not applicable
+        }
+
+        let start = loop_candidate.start_sample;
+        let end = loop_candidate.end_sample;
+        let total_frames = audio_data.len() / num_channels;
+
+        if end > total_frames || start + crossfade_frames > end || end < crossfade_frames {
+            return Ok(());
+        }
+
+        use std::f32::consts::FRAC_PI_2;
+
+        for i in 0..crossfade_frames {
+            let t = i as f32 / crossfade_frames as f32;
+            let angle = FRAC_PI_2 * t;
+            let gain_in = angle.sin();
+            let gain_out = angle.cos();
+
+            let start_frame = start + i;
+            let end_frame = end - crossfade_frames + i;
+
+            if start_frame < total_frames && end_frame < total_frames {
+                for c in 0..num_channels {
+                    let start_idx = start_frame * num_channels + c;
+                    let end_idx = end_frame * num_channels + c;
+
+                    let start_val = audio_data[start_idx];
+                    let end_val = audio_data[end_idx];
+
+                    // Equal-power crossfade blend
+                    let blended = start_val * gain_in + end_val * gain_out;
+                    audio_data[start_idx] = blended;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Apply the detected loop to audio data with crossfading (mono fallback)
     pub fn apply_loop_with_crossfade(
         &self,
         audio_data: &mut [f32],
         loop_candidate: &LoopCandidate,
         sample_rate: u32,
     ) -> Result<()> {
-        let crossfade_samples = (self.config.crossfade_ms * sample_rate as f32 / 1000.0) as usize;
-
-        if crossfade_samples == 0 || crossfade_samples >= loop_candidate.length_samples / 2 {
-            return Ok(()); // Skip crossfade if not applicable
-        }
-
-        let start = loop_candidate.start_sample;
-        let end = loop_candidate.end_sample;
-
-        // Apply linear crossfade
-        for i in 0..crossfade_samples {
-            if start + i < audio_data.len() && end - crossfade_samples + i < audio_data.len() {
-                let fade_ratio = i as f32 / crossfade_samples as f32;
-                let start_value = audio_data[start + i] * (1.0 - fade_ratio);
-                let end_value = audio_data[end - crossfade_samples + i] * fade_ratio;
-                audio_data[start + i] = start_value + end_value;
-            }
-        }
-
-        Ok(())
+        self.apply_loop_with_crossfade_channels(audio_data, loop_candidate, sample_rate, 1)
     }
 }
 
@@ -393,5 +434,71 @@ mod tests {
 
         // Identical signals should have perfect correlation
         assert!((correlation - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_equal_power_crossfade_smoothing_mono() {
+        let detector = LoopDetector::new(LoopDetectionConfig {
+            crossfade_ms: 10.0,
+            ..Default::default()
+        });
+
+        // 1000 samples buffer (mono)
+        let mut audio = vec![0.5f32; 1000];
+        let candidate = LoopCandidate {
+            start_sample: 100,
+            end_sample: 600,
+            length_samples: 500,
+            quality_score: 0.9,
+            zero_crossing_aligned: true,
+            correlation: 0.95,
+        };
+
+        let res = detector.apply_loop_with_crossfade(&mut audio, &candidate, 10000);
+        assert!(res.is_ok());
+
+        // Crossfade frames = (10ms * 10000 / 1000) = 100 frames
+        // At start + 0: gain_in = 0, gain_out = 1.0 => 0.5 * 0 + 0.5 * 1.0 = 0.5
+        assert!((audio[100] - 0.5).abs() < 1e-4);
+        // At start + 50 (midpoint): gain_in = sin(pi/4) = sqrt(2)/2, gain_out = sqrt(2)/2
+        // sum = 0.5 * sqrt(2) approx 0.7071 (coherent gain), energy = 0.5^2*(sin^2+cos^2) = 0.25 (exact energy preservation)
+        let mid_val = audio[150];
+        let energy = (mid_val / 2.0_f32.sqrt()).powi(2);
+        assert!((energy - 0.25).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_equal_power_crossfade_stereo_channels() {
+        let detector = LoopDetector::new(LoopDetectionConfig {
+            crossfade_ms: 10.0,
+            ..Default::default()
+        });
+
+        // Interleaved stereo: Left = 0.4, Right = -0.8
+        let mut stereo_audio = Vec::new();
+        for _ in 0..1000 {
+            stereo_audio.push(0.4f32);
+            stereo_audio.push(-0.8f32);
+        }
+
+        let candidate = LoopCandidate {
+            start_sample: 100,
+            end_sample: 600,
+            length_samples: 500,
+            quality_score: 0.9,
+            zero_crossing_aligned: true,
+            correlation: 0.95,
+        };
+
+        let res = detector.apply_loop_with_crossfade_channels(&mut stereo_audio, &candidate, 10000, 2);
+        assert!(res.is_ok());
+
+        // Verify Left channel remains positive and Right channel remains negative without crosstalk
+        for frame in 100..200 {
+            let left = stereo_audio[frame * 2];
+            let right = stereo_audio[frame * 2 + 1];
+            assert!(left > 0.0, "Left channel corrupted at frame {}", frame);
+            assert!(right < 0.0, "Right channel corrupted at frame {}", frame);
+        }
     }
 }

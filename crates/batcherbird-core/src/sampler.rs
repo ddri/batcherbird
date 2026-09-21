@@ -1291,11 +1291,12 @@ impl Sample {
 
         if loop_result.success {
             if let Some(ref candidate) = loop_result.best_candidate {
-                // Apply the loop with crossfading
-                let _ = detector.apply_loop_with_crossfade(
+                // Apply the loop with equal-power crossfading across all channels
+                let _ = detector.apply_loop_with_crossfade_channels(
                     &mut self.audio_data,
                     candidate,
                     self.sample_rate,
+                    self.channels,
                 );
             }
         }

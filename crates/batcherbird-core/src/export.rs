@@ -484,14 +484,14 @@ impl SampleExporter {
                     );
 
                     if self.config.apply_detection {
-                        let detector = crate::loop_detection::LoopDetector::new(
-                            crate::loop_detection::LoopDetectionConfig::default(),
-                        );
+                        let detector_cfg = crate::loop_detection::LoopDetectionConfig::default();
+                        let crossfade_sec = detector_cfg.crossfade_ms / 1000.0;
+                        let detector = crate::loop_detection::LoopDetector::new(detector_cfg);
                         let res = detector.detect_loop_points(&sample.audio_data, sample.sample_rate);
                         if let Some(cand) = res.best_candidate {
                             sample_tag.push_str(&format!(
-                                " loopEnabled=\"true\" loopStart=\"{}\" loopEnd=\"{}\"",
-                                cand.start_sample, cand.end_sample
+                                " loopEnabled=\"true\" loopStart=\"{}\" loopEnd=\"{}\" loopCrossfade=\"{:.3}\"",
+                                cand.start_sample, cand.end_sample, crossfade_sec
                             ));
                         }
                     }
@@ -640,14 +640,15 @@ impl SampleExporter {
                     }
 
                     if self.config.apply_detection {
-                        let detector = crate::loop_detection::LoopDetector::new(
-                            crate::loop_detection::LoopDetectionConfig::default(),
-                        );
+                        let detector_cfg = crate::loop_detection::LoopDetectionConfig::default();
+                        let crossfade_sec = detector_cfg.crossfade_ms / 1000.0;
+                        let detector = crate::loop_detection::LoopDetector::new(detector_cfg);
                         let res = detector.detect_loop_points(&sample.audio_data, sample.sample_rate);
                         if let Some(cand) = res.best_candidate {
                             sfz.push_str("loop_mode=loop_continuous\n");
                             sfz.push_str(&format!("loop_start={}\n", cand.start_sample));
                             sfz.push_str(&format!("loop_end={}\n", cand.end_sample));
+                            sfz.push_str(&format!("loop_crossfade={:.3}\n", crossfade_sec));
                         }
                     }
 

@@ -140,6 +140,58 @@ fn test_decent_sampler_export() {
     assert!(dspreset_content.contains("path="));
     assert!(dspreset_content.contains("loNote=\"64\""));
     assert!(dspreset_content.contains("loopEnabled=\"true\""));
+    assert!(dspreset_content.contains("loopCrossfade="));
+
+    // Cleanup
+    std::fs::remove_dir_all(&temp_dir).ok();
+}
+
+#[test]
+fn test_sfz_export_with_loop_crossfade() {
+    let sine_wave: Vec<f32> = (0..44100)
+        .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 44100.0).sin() * 0.5)
+        .collect();
+
+    let test_samples = vec![Sample {
+        note: 60,
+        velocity: 100,
+        audio_data: sine_wave,
+        sample_rate: 44100,
+        channels: 1,
+        recorded_at: SystemTime::now(),
+        midi_timing: Duration::from_millis(100),
+        audio_timing: Duration::from_millis(2000),
+    }];
+
+    let temp_dir = std::env::temp_dir().join("batcherbird_test_sfz_loop");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let config = ExportConfig {
+        output_directory: temp_dir.clone(),
+        naming_pattern: "Test_{note_name}_{note}_{velocity}.wav".to_string(),
+        sample_format: AudioFormat::SFZ,
+        normalize: false,
+        fade_in_ms: 0.0,
+        fade_out_ms: 0.0,
+        apply_detection: true,
+        detection_config: DetectionConfig::default(),
+        creator_name: Some("Test User".to_string()),
+        instrument_description: Some("Test SFZ Loop instrument".to_string()),
+    };
+
+    let exporter = SampleExporter::new(config).unwrap();
+    let files = exporter.export_samples(&test_samples).unwrap();
+
+    let sfz_file = files
+        .iter()
+        .find(|f| f.extension().is_some_and(|ext| ext == "sfz"))
+        .unwrap();
+    let sfz_content = std::fs::read_to_string(sfz_file).unwrap();
+
+    assert!(sfz_content.contains("loop_mode=loop_continuous"));
+    assert!(sfz_content.contains("loop_start="));
+    assert!(sfz_content.contains("loop_end="));
+    assert!(sfz_content.contains("loop_crossfade="));
 
     // Cleanup
     std::fs::remove_dir_all(&temp_dir).ok();
