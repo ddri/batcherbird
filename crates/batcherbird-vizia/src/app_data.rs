@@ -82,6 +82,9 @@ pub struct AppData {
     pub meter_left_db: f32,
     pub meter_right_db: f32,
     pub is_clipping: bool,
+    pub is_testing_note: bool,
+    pub gain_check_message: Option<String>,
+    pub gain_check_status_color: String,
 
     // Recording progress
     pub current_note: u8,
@@ -182,6 +185,9 @@ impl Default for AppData {
             meter_left_db: -60.0,
             meter_right_db: -60.0,
             is_clipping: false,
+            is_testing_note: false,
+            gain_check_message: None,
+            gain_check_status_color: "#888888".to_string(),
 
             current_note: 0,
             current_velocity: 0,
@@ -322,6 +328,36 @@ impl AppData {
             }
         }
         self.update_summary();
+    }
+
+    /// Evaluate audio peak level and determine gain staging advice and status color.
+    pub fn evaluate_gain_staging(peak_db: f32, peak_linear: f32) -> (String, &'static str) {
+        if peak_linear >= 0.99 || peak_db >= -0.1 {
+            (
+                format!("⚠️ Clipping detected ({:.1} dB)! Lower hardware gain.", peak_db),
+                "#ff4444", // Red
+            )
+        } else if peak_db > -3.0 {
+            (
+                format!("⚠️ Hot signal ({:.1} dB). Recommend lowering gain slightly.", peak_db),
+                "#ffaa00", // Amber
+            )
+        } else if peak_db >= -18.0 {
+            (
+                format!("✓ Optimal headroom ({:.1} dB). Ready to record!", peak_db),
+                "#00e676", // Green
+            )
+        } else if peak_db > -45.0 {
+            (
+                format!("ℹ Level low ({:.1} dB). Increase gain for better SNR.", peak_db),
+                "#4a9eff", // Blue
+            )
+        } else {
+            (
+                "⚠️ No signal detected. Check audio cable & synth volume.".to_string(),
+                "#888899", // Muted gray
+            )
+        }
     }
 
     pub fn note_name(note: u8) -> String {
@@ -611,6 +647,8 @@ impl Model for AppData {
 
             AppEvent::Arm => {
                 if self.app_state == AppState::Idle {
+                    self.is_testing_note = false;
+                    self.gain_check_message = None;
                     let config = self.build_sampling_config();
                     match SamplingEngine::new(config) {
                         Ok(engine) => match engine.start_monitoring_stream() {
@@ -632,10 +670,95 @@ impl Model for AppData {
             AppEvent::Disarm => {
                 if self.app_state == AppState::Armed || self.app_state == AppState::Review {
                     self.stop_preview();
+                    self.is_testing_note = false;
+                    self.gain_check_message = None;
                     self.monitoring_stream = None;
                     self.sampling_engine = None;
                     self.app_state = AppState::Idle;
                 }
+            }
+            AppEvent::PlayTestNote => {
+                if self.app_state == AppState::Armed && !self.is_testing_note {
+                    if let Some(engine) = &self.sampling_engine {
+                        self.is_testing_note = true;
+                        self.gain_check_message = Some("Testing input level (vel 127)...".to_string());
+                        self.gain_check_status_color = "#4a9eff".to_string();
+
+                        let meter_state = engine.get_level_meter_state();
+                        let test_note = self.start_note;
+                        let midi_device_idx = self.selected_midi_device;
+                        let mut proxy = cx.get_proxy();
+
+                        std::thread::spawn(move || {
+                            let mut midi_mgr = match batcherbird_core::midi::MidiManager::new() {
+                                Ok(m) => m,
+                                Err(e) => {
+                                    let _ = proxy.emit(AppEvent::TestNoteError(format!("MIDI error: {}", e)));
+                                    return;
+                                }
+                            };
+                            let mut midi_conn = match midi_mgr.connect_output(midi_device_idx) {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    let _ = proxy.emit(AppEvent::TestNoteError(format!("Failed to connect MIDI: {}", e)));
+                                    return;
+                                }
+                            };
+
+                            // Send max velocity note on (test worst-case headroom)
+                            if let Err(e) = batcherbird_core::midi::MidiManager::send_note_on(&mut midi_conn, 0, test_note, 127) {
+                                let _ = proxy.emit(AppEvent::TestNoteError(format!("Failed to send Note On: {}", e)));
+                                return;
+                            }
+
+                            let mut max_peak = 0.0f32;
+                            let mut max_peak_db = -60.0f32;
+
+                            // Sample levels during note sustain (700ms)
+                            for _ in 0..70 {
+                                std::thread::sleep(std::time::Duration::from_millis(10));
+                                let levels = meter_state.get_levels();
+                                if levels.peak > max_peak {
+                                    max_peak = levels.peak;
+                                }
+                                if levels.peak_db > max_peak_db {
+                                    max_peak_db = levels.peak_db;
+                                }
+                            }
+
+                            // Send note off
+                            let _ = batcherbird_core::midi::MidiManager::send_note_off(&mut midi_conn, 0, test_note, 0);
+
+                            // Sample release tail (300ms)
+                            for _ in 0..30 {
+                                std::thread::sleep(std::time::Duration::from_millis(10));
+                                let levels = meter_state.get_levels();
+                                if levels.peak > max_peak {
+                                    max_peak = levels.peak;
+                                }
+                                if levels.peak_db > max_peak_db {
+                                    max_peak_db = levels.peak_db;
+                                }
+                            }
+
+                            let _ = proxy.emit(AppEvent::TestNoteResult {
+                                peak_db: max_peak_db,
+                                peak_linear: max_peak,
+                            });
+                        });
+                    }
+                }
+            }
+            AppEvent::TestNoteResult { peak_db, peak_linear } => {
+                self.is_testing_note = false;
+                let (msg, color) = Self::evaluate_gain_staging(*peak_db, *peak_linear);
+                self.gain_check_message = Some(msg);
+                self.gain_check_status_color = color.to_string();
+            }
+            AppEvent::TestNoteError(err) => {
+                self.is_testing_note = false;
+                self.gain_check_message = Some(format!("⚠️ {}", err));
+                self.gain_check_status_color = "#ff4444".to_string();
             }
             AppEvent::StartRecording => {
                 if self.app_state == AppState::Armed {

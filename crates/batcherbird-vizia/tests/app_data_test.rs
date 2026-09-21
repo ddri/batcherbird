@@ -158,3 +158,40 @@ fn instrument_presets_application() {
     // 25 notes * 4 layers = 100 samples
     assert_eq!(data.total_samples(), 100);
 }
+
+#[test]
+fn test_gain_staging_evaluation() {
+    // 1. Clipping (>= -0.1 dB or linear >= 0.99)
+    let (msg, color) = AppData::evaluate_gain_staging(0.0, 1.0);
+    assert!(msg.contains("Clipping detected"));
+    assert_eq!(color, "#ff4444");
+
+    let (msg_clip2, color_clip2) = AppData::evaluate_gain_staging(-0.05, 0.995);
+    assert!(msg_clip2.contains("Clipping detected"));
+    assert_eq!(color_clip2, "#ff4444");
+
+    // 2. Hot signal (> -3.0 dB)
+    let (msg_hot, color_hot) = AppData::evaluate_gain_staging(-1.5, 0.84);
+    assert!(msg_hot.contains("Hot signal"));
+    assert_eq!(color_hot, "#ffaa00");
+
+    // 3. Optimal headroom (-18.0 dB to -3.0 dB)
+    let (msg_opt, color_opt) = AppData::evaluate_gain_staging(-12.0, 0.25);
+    assert!(msg_opt.contains("Optimal headroom"));
+    assert_eq!(color_opt, "#00e676");
+
+    let (msg_opt2, color_opt2) = AppData::evaluate_gain_staging(-3.1, 0.7);
+    assert!(msg_opt2.contains("Optimal headroom"));
+    assert_eq!(color_opt2, "#00e676");
+
+    // 4. Low level (-45.0 dB to -18.0 dB)
+    let (msg_low, color_low) = AppData::evaluate_gain_staging(-24.0, 0.063);
+    assert!(msg_low.contains("Level low"));
+    assert_eq!(color_low, "#4a9eff");
+
+    // 5. No signal (<= -45.0 dB)
+    let (msg_silent, color_silent) = AppData::evaluate_gain_staging(-60.0, 0.001);
+    assert!(msg_silent.contains("No signal detected"));
+    assert_eq!(color_silent, "#888899");
+}
+

@@ -354,6 +354,11 @@ impl SamplingEngine {
         self.level_meter_state.get_levels()
     }
 
+    /// Get shared level meter state for monitoring and level testing (thread-safe)
+    pub fn get_level_meter_state(&self) -> Arc<LevelMeterState> {
+        Arc::clone(&self.level_meter_state)
+    }
+
     /// Get comprehensive audio performance diagnostics
     pub fn get_performance_diagnostics(&self) -> AudioPerformanceReport {
         self.audio_diagnostics.get_performance_report()

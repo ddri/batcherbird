@@ -162,23 +162,76 @@ pub fn stage(cx: &mut Context) {
 
         // --- Armed content ---
         VStack::new(cx, |cx| {
-            Label::new(cx, "Monitoring — press Record")
+            Label::new(cx, "Monitoring — press Record or Test Note")
                 .color(Color::from("#888888"))
                 .font_size(13.0)
                 .width(Stretch(1.0))
                 .alignment(Alignment::Center);
 
-            // RECORD button — red bg
-            Label::new(cx, "RECORD")
-                .font_size(16.0)
-                .color(Color::white())
-                .width(Stretch(1.0))
-                .height(Pixels(42.0))
-                .alignment(Alignment::Center)
-                .background_color(Color::from("#e53935"))
-                .corner_radius(Pixels(6.0))
-                .cursor(CursorIcon::Hand)
-                .on_press(|cx| cx.emit(AppEvent::StartRecording));
+            // Optional gain staging feedback banner
+            Binding::new(cx, AppData::gain_check_message, |cx, msg| {
+                if let Some(text) = msg.get(cx) {
+                    let color_hex = AppData::gain_check_status_color.get(cx);
+                    let text_color = color_hex.clone();
+                    HStack::new(cx, move |cx| {
+                        Label::new(cx, &text)
+                            .color(Color::from(text_color.as_str()))
+                            .font_size(12.0)
+                            .width(Stretch(1.0))
+                            .alignment(Alignment::Center);
+                    })
+                    .width(Stretch(1.0))
+                    .height(Auto)
+                    .background_color(Color::from("#121820"))
+                    .border_width(Pixels(1.0))
+                    .border_color(Color::from(color_hex.as_str()))
+                    .corner_radius(Pixels(4.0))
+                    .padding(Pixels(6.0));
+                }
+            });
+
+            // Action row: Test Note button + Record button
+            HStack::new(cx, |cx| {
+                Binding::new(cx, AppData::is_testing_note, |cx, testing| {
+                    let is_testing = testing.get(cx);
+                    let label = if is_testing {
+                        "TESTING..."
+                    } else {
+                        "TEST NOTE (VEL 127)"
+                    };
+                    Label::new(cx, label)
+                        .font_size(14.0)
+                        .color(if is_testing { Color::from("#888888") } else { Color::from("#4a9eff") })
+                        .width(Stretch(1.0))
+                        .height(Pixels(42.0))
+                        .alignment(Alignment::Center)
+                        .background_color(Color::from("#141824"))
+                        .border_width(Pixels(1.5))
+                        .border_color(if is_testing { Color::from("#2e3b52") } else { Color::from("#4a9eff88") })
+                        .corner_radius(Pixels(6.0))
+                        .cursor(if is_testing { CursorIcon::Default } else { CursorIcon::Hand })
+                        .on_press(move |cx| {
+                            if !is_testing {
+                                cx.emit(AppEvent::PlayTestNote);
+                            }
+                        });
+                });
+
+                // RECORD button — red bg
+                Label::new(cx, "RECORD")
+                    .font_size(16.0)
+                    .color(Color::white())
+                    .width(Stretch(1.0))
+                    .height(Pixels(42.0))
+                    .alignment(Alignment::Center)
+                    .background_color(Color::from("#e53935"))
+                    .corner_radius(Pixels(6.0))
+                    .cursor(CursorIcon::Hand)
+                    .on_press(|cx| cx.emit(AppEvent::StartRecording));
+            })
+            .width(Stretch(1.0))
+            .height(Auto)
+            .horizontal_gap(Pixels(8.0));
 
             Label::new(cx, "Cancel")
                 .font_size(12.0)

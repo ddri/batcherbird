@@ -51,6 +51,12 @@ pub enum AppEvent {
     Disarm,
     StartRecording,
     CancelRecording,
+    PlayTestNote,
+    TestNoteResult {
+        peak_db: f32,
+        peak_linear: f32,
+    },
+    TestNoteError(String),
 
     // Internal events (from background threads)
     RecordingProgress {
