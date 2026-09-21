@@ -267,4 +267,19 @@ fn test_keyboard_hit_testing() {
     assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 2.0, 15.0), Some(36));
 }
 
+#[test]
+fn test_playthrough_settings() {
+    let mut data = AppData::default();
+    // Default: playthrough is disabled
+    assert!(!data.playthrough_enabled);
+    assert!(data.playthrough_stream.is_none());
+
+    data.set_playthrough(true);
+    assert!(data.playthrough_enabled);
+
+    data.set_playthrough(false);
+    assert!(!data.playthrough_enabled);
+}
+
+
 

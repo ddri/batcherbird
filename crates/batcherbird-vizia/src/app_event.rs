@@ -61,6 +61,8 @@ pub enum AppEvent {
         peak_linear: f32,
     },
     TestNoteError(String),
+    TogglePlaythrough,
+    SetPlaythrough(bool),
 
     // Internal events (from background threads)
     RecordingProgress {

@@ -104,6 +104,9 @@ pub struct AppData {
     pub sampling_engine: Option<SamplingEngine>,
     #[lens(ignore)]
     pub monitoring_stream: Option<cpal::Stream>,
+    #[lens(ignore)]
+    pub playthrough_stream: Option<cpal::Stream>,
+    pub playthrough_enabled: bool,
 
     // Waveform data
     #[lens(ignore)]
@@ -204,6 +207,8 @@ impl Default for AppData {
             meter_consumer: None,
             sampling_engine: None,
             monitoring_stream: None,
+            playthrough_stream: None,
+            playthrough_enabled: false,
 
             viz_chunks: Vec::new(),
             viz_peaks: Vec::new(),
@@ -355,6 +360,13 @@ impl AppData {
             self.start_note = note;
         }
         self.update_summary();
+    }
+
+    pub fn set_playthrough(&mut self, enabled: bool) {
+        self.playthrough_enabled = enabled;
+        if let Some(engine) = &self.sampling_engine {
+            engine.set_playthrough(enabled);
+        }
     }
 
     /// Evaluate audio peak level and determine gain staging advice and status color.
@@ -646,6 +658,14 @@ impl Model for AppData {
                 }
             }
 
+            AppEvent::TogglePlaythrough => {
+                let new_val = !self.playthrough_enabled;
+                self.set_playthrough(new_val);
+            }
+            AppEvent::SetPlaythrough(enabled) => {
+                self.set_playthrough(*enabled);
+            }
+
             AppEvent::IncrementStartNote => {
                 if self.start_note < 127 && self.start_note < self.end_note {
                     self.start_note += 1;
@@ -701,15 +721,16 @@ impl Model for AppData {
                     self.gain_check_message = None;
                     let config = self.build_sampling_config();
                     match SamplingEngine::new(config) {
-                        Ok(engine) => match engine.start_monitoring_stream() {
-                            Ok(stream) => {
-                                self.monitoring_stream = Some(stream);
+                        Ok(engine) => match engine.start_monitoring_stream_with_playthrough(self.playthrough_enabled) {
+                            Ok((input_stream, output_stream)) => {
+                                self.monitoring_stream = Some(input_stream);
+                                self.playthrough_stream = output_stream;
                                 self.sampling_engine = Some(engine);
                                 self.app_state = AppState::Armed;
                             }
                             Err(e) => {
-                            self.error_message = Some(format!("Failed to start monitoring: {}", e));
-                        }
+                                self.error_message = Some(format!("Failed to start monitoring: {}", e));
+                            }
                         },
                         Err(e) => {
                             self.error_message = Some(format!("Failed to create engine: {}", e));
@@ -725,6 +746,7 @@ impl Model for AppData {
                     self.audition_note = None;
                     self.audition_midi_conn = None;
                     self.monitoring_stream = None;
+                    self.playthrough_stream = None;
                     self.sampling_engine = None;
                     self.app_state = AppState::Idle;
                 }
@@ -827,6 +849,7 @@ impl Model for AppData {
 
                     // Stop monitoring before recording
                     self.monitoring_stream = None;
+                    self.playthrough_stream = None;
                     self.sampling_engine = None;
                     self.audition_note = None;
                     self.audition_midi_conn = None;

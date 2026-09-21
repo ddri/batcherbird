@@ -119,6 +119,47 @@ pub fn sidebar(cx: &mut Context) {
             })
             .height(Auto)
             .vertical_gap(Pixels(2.0));
+
+            // Playthrough toggle
+            HStack::new(cx, |cx| {
+                Label::new(cx, "PLAYTHROUGH")
+                    .font_size(10.0)
+                    .color(Color::from("#555555"))
+                    .width(Stretch(1.0));
+
+                Binding::new(cx, AppData::playthrough_enabled, |cx, enabled| {
+                    let is_on = enabled.get(cx);
+                    HStack::new(cx, move |cx| {
+                        Label::new(cx, if is_on { "ON" } else { "OFF" })
+                            .font_size(10.0)
+                            .color(if is_on {
+                                Color::from("#00e676")
+                            } else {
+                                Color::from("#666666")
+                            });
+                    })
+                    .padding_left(Pixels(6.0))
+                    .padding_right(Pixels(6.0))
+                    .padding_top(Pixels(2.0))
+                    .padding_bottom(Pixels(2.0))
+                    .background_color(if is_on {
+                        Color::from("#12251a")
+                    } else {
+                        Color::from("#1a1a25")
+                    })
+                    .border_width(Pixels(1.0))
+                    .border_color(if is_on {
+                        Color::from("#00e67644")
+                    } else {
+                        Color::from("#252535")
+                    })
+                    .corner_radius(Pixels(2.0))
+                    .cursor(CursorIcon::Hand)
+                    .on_press(|cx| cx.emit(AppEvent::TogglePlaythrough));
+                });
+            })
+            .height(Auto)
+            .alignment(Alignment::Center);
         })
         .width(Stretch(1.0))
         .height(Auto)

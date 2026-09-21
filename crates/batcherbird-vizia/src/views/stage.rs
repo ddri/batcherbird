@@ -168,6 +168,45 @@ pub fn stage(cx: &mut Context) {
                 .width(Stretch(1.0))
                 .alignment(Alignment::Center);
 
+            // Playthrough toggle in Armed view
+            Binding::new(cx, AppData::playthrough_enabled, |cx, enabled| {
+                let is_on = enabled.get(cx);
+                HStack::new(cx, move |cx| {
+                    Label::new(
+                        cx,
+                        if is_on {
+                            "🔊 Playthrough: ON"
+                        } else {
+                            "🔈 Playthrough: OFF"
+                        },
+                    )
+                    .font_size(12.0)
+                    .color(if is_on {
+                        Color::from("#00e676")
+                    } else {
+                        Color::from("#888899")
+                    });
+                })
+                .alignment(Alignment::Center)
+                .height(Pixels(26.0))
+                .padding_left(Pixels(12.0))
+                .padding_right(Pixels(12.0))
+                .background_color(if is_on {
+                    Color::from("#12251a")
+                } else {
+                    Color::from("#14141d")
+                })
+                .border_width(Pixels(1.0))
+                .border_color(if is_on {
+                    Color::from("#00e67655")
+                } else {
+                    Color::from("#252535")
+                })
+                .corner_radius(Pixels(13.0))
+                .cursor(CursorIcon::Hand)
+                .on_press(|cx| cx.emit(AppEvent::TogglePlaythrough));
+            });
+
             // Optional gain staging feedback banner
             Binding::new(cx, AppData::gain_check_message, |cx, msg| {
                 if let Some(text) = msg.get(cx) {

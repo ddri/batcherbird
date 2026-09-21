@@ -10,7 +10,7 @@ use cpal::traits::{DeviceTrait, StreamTrait};
 use midir::MidiOutputConnection;
 use rtrb::{Consumer, Producer, RingBuffer};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -266,6 +266,7 @@ pub struct SamplingEngine {
     config: SamplingConfig,
     level_meter_state: Arc<LevelMeterState>,
     audio_diagnostics: Arc<AudioDiagnostics>,
+    playthrough_active: Arc<AtomicBool>,
 }
 
 /// Progress update emitted while recording a range of notes (optionally across
@@ -346,7 +347,23 @@ impl SamplingEngine {
             config,
             level_meter_state: Arc::new(LevelMeterState::new()),
             audio_diagnostics: diagnostics,
+            playthrough_active: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Set software playthrough monitoring state (thread-safe, click-free)
+    pub fn set_playthrough(&self, enabled: bool) {
+        self.playthrough_active.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Check if software playthrough monitoring is active
+    pub fn is_playthrough_enabled(&self) -> bool {
+        self.playthrough_active.load(Ordering::Relaxed)
+    }
+
+    /// Get shared atomic handle for software playthrough monitoring
+    pub fn get_playthrough_state(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.playthrough_active)
     }
 
     /// Get current audio levels for UI (thread-safe)
@@ -382,15 +399,13 @@ impl SamplingEngine {
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
 
         let sample_rate = input_config.sample_rate().0;
-        let _channels = input_config.channels();
+        let input_channels = input_config.channels() as usize;
         let level_state = Arc::clone(&self.level_meter_state);
+        let playthrough_active = Arc::clone(&self.playthrough_active);
+        playthrough_active.store(enable_playthrough, Ordering::Relaxed);
 
-        // Create shared buffer for input->output if playthrough enabled
-        let shared_buffer: Option<Arc<Mutex<Vec<f32>>>> = if enable_playthrough {
-            Some(Arc::new(Mutex::new(Vec::new())))
-        } else {
-            None
-        };
+        // Lock-free wait-free ring buffer for playthrough (8192 samples = ~185ms buffer at 44.1kHz)
+        let (mut producer, mut consumer) = RingBuffer::<f32>::new(8192);
 
         use cpal::SampleFormat;
         let input_stream_config = AudioManager::get_standard_stream_config();
@@ -399,22 +414,29 @@ impl SamplingEngine {
         let input_stream = match input_config.sample_format() {
             SampleFormat::F32 => {
                 let level_state_clone = Arc::clone(&level_state);
-                let shared_buffer_clone = shared_buffer.clone();
+                let playthrough_active_clone = Arc::clone(&playthrough_active);
                 let mut level_detector = AudioLevelDetector::new(sample_rate);
 
                 input_device
                     .build_input_stream(
                         &input_stream_config,
                         move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                            // Level detection for UI meters
+                            // Continuous level detection for UI meters
                             let levels = level_detector.process_samples(data);
                             level_state_clone.update_levels(levels);
 
-                            // Store for playthrough if enabled
-                            if let Some(ref buffer) = shared_buffer_clone {
-                                if let Ok(mut buf) = buffer.try_lock() {
-                                    buf.clear();
-                                    buf.extend_from_slice(data);
+                            // Forward to playthrough output if active (lock-free)
+                            if playthrough_active_clone.load(Ordering::Relaxed) {
+                                // If input is mono and destination is stereo (2ch), duplicate each sample
+                                if input_channels == 1 {
+                                    for &sample in data {
+                                        let _ = producer.push(sample);
+                                        let _ = producer.push(sample);
+                                    }
+                                } else {
+                                    for &sample in data {
+                                        let _ = producer.push(sample);
+                                    }
                                 }
                             }
                         },
@@ -432,57 +454,62 @@ impl SamplingEngine {
             }
         };
 
-        // Build output stream for playthrough if enabled
-        let output_stream = if enable_playthrough {
-            let output_device = self.audio_manager.get_default_output_device()?;
-            let output_config = output_device.default_output_config().map_err(|e| {
-                BatcherbirdError::Audio(format!("Failed to get output config: {}", e))
-            })?;
+        input_stream
+            .play()
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to start input monitoring stream: {}", e)))?;
 
-            let output_stream_config = AudioManager::get_standard_stream_config();
+        // Build output stream for playthrough
+        let output_stream = match self.audio_manager.get_default_output_device() {
+            Ok(output_device) => match output_device.default_output_config() {
+                Ok(output_config) => {
+                    let output_stream_config = AudioManager::get_standard_stream_config();
+                    let playthrough_active_out = Arc::clone(&playthrough_active);
 
-            let shared_buffer_output = shared_buffer.unwrap(); // Safe because we created it above
-
-            let stream = match output_config.sample_format() {
-                SampleFormat::F32 => {
-                    output_device
-                        .build_output_stream(
-                            &output_stream_config,
-                            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                                // Copy input to output (playthrough)
-                                if let Ok(buf) = shared_buffer_output.try_lock() {
-                                    if !buf.is_empty() {
-                                        let copy_len = data.len().min(buf.len());
-                                        data[..copy_len].copy_from_slice(&buf[..copy_len]);
-                                        // Fill remainder with silence if needed
-                                        for sample in data[copy_len..].iter_mut() {
-                                            *sample = 0.0;
+                    match output_config.sample_format() {
+                        SampleFormat::F32 => {
+                            match output_device.build_output_stream(
+                                &output_stream_config,
+                                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                                    if playthrough_active_out.load(Ordering::Relaxed) {
+                                        for out in data.iter_mut() {
+                                            *out = consumer.pop().unwrap_or(0.0);
                                         }
                                     } else {
-                                        // Silence if no input data
                                         data.fill(0.0);
                                     }
-                                } else {
-                                    // Silence if can't lock buffer
-                                    data.fill(0.0);
+                                },
+                                |err| tracing::error!("Audio output error: {}", err),
+                                None,
+                            ) {
+                                Ok(stream) => {
+                                    if let Err(e) = stream.play() {
+                                        tracing::warn!("Failed to start playthrough output stream: {}", e);
+                                        None
+                                    } else {
+                                        Some(stream)
+                                    }
                                 }
-                            },
-                            |err| tracing::error!("Audio output error: {}", err),
-                            None,
-                        )
-                        .map_err(|e| {
-                            BatcherbirdError::Audio(format!("Failed to build output stream: {}", e))
-                        })?
+                                Err(e) => {
+                                    tracing::warn!("Failed to build playthrough output stream: {}", e);
+                                    None
+                                }
+                            }
+                        }
+                        _ => {
+                            tracing::warn!("Playthrough output requires F32 sample format");
+                            None
+                        }
+                    }
                 }
-                _ => {
-                    return Err(BatcherbirdError::Audio(
-                        "Playthrough output currently only supports F32 format".to_string(),
-                    ));
+                Err(e) => {
+                    tracing::warn!("Failed to get output config for playthrough: {}", e);
+                    None
                 }
-            };
-            Some(stream)
-        } else {
-            None
+            },
+            Err(e) => {
+                tracing::warn!("No default output device for playthrough: {}", e);
+                None
+            }
         };
 
         Ok((input_stream, output_stream))
@@ -579,6 +606,10 @@ impl SamplingEngine {
                 )));
             }
         };
+
+        stream
+            .play()
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to start monitoring stream: {}", e)))?;
 
         Ok(stream)
     }
@@ -1443,5 +1474,17 @@ mod tests {
             chunks_received < 1000,
             "Should not receive all chunks due to 60fps consumption"
         );
+    }
+
+    #[test]
+    fn test_playthrough_state_toggle() {
+        let config = SamplingConfig::default();
+        if let Ok(engine) = SamplingEngine::new(config) {
+            assert!(!engine.is_playthrough_enabled());
+            engine.set_playthrough(true);
+            assert!(engine.is_playthrough_enabled());
+            engine.set_playthrough(false);
+            assert!(!engine.is_playthrough_enabled());
+        }
     }
 }
