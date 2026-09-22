@@ -20,6 +20,7 @@ pub use audio_diagnostics::{
 };
 pub use channel_routing::ChannelRouting;
 pub use error::{BatcherbirdError, Result};
+pub use export::{read_wav_metadata, AudioFormat, ExportConfig, SampleExporter, WavMetadata};
 pub use lock_free_recording::{LockFreeRecorder, LockFreeRecordingConfig, RealtimeMeterData};
 pub use preview_player::PreviewPlayer;
 pub use professional_meters::{

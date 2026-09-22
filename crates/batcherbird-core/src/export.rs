@@ -31,6 +31,8 @@ pub struct ExportConfig {
     // Decent Sampler metadata
     pub creator_name: Option<String>,
     pub instrument_description: Option<String>,
+    /// Whether to embed standard RIFF metadata (smpl, bext, LIST-INFO) into exported WAV files
+    pub embed_metadata: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -55,8 +57,26 @@ impl Default for ExportConfig {
             detection_config: DetectionConfig::default(),
             creator_name: None,
             instrument_description: None,
+            embed_metadata: true,
         }
     }
+}
+
+/// Metadata parsed from standard RIFF chunks (`smpl`, `bext`, `LIST-INFO`) in a WAV file.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WavMetadata {
+    pub sample_period_ns: Option<u32>,
+    pub midi_unity_note: Option<u8>,
+    pub loop_points: Option<(u32, u32)>,
+    pub bext_description: Option<String>,
+    pub bext_originator: Option<String>,
+    pub bext_origination_date: Option<String>,
+    pub bext_origination_time: Option<String>,
+    pub info_title: Option<String>,
+    pub info_artist: Option<String>,
+    pub info_date: Option<String>,
+    pub info_software: Option<String>,
+    pub info_comment: Option<String>,
 }
 
 pub struct SampleExporter {
@@ -335,6 +355,59 @@ impl SampleExporter {
         // Explicitly sync file to disk to prevent corruption during rapid batch exports
         if let Ok(file) = std::fs::File::open(filepath) {
             let _ = file.sync_all();
+        }
+
+        // If metadata embedding is enabled, inject bext, LIST-INFO, and smpl chunks
+        if self.config.embed_metadata {
+            let mut chunks = Vec::new();
+
+            // 1. Loop detection for smpl chunk (if detection is active)
+            let loop_points = if self.config.apply_detection {
+                let detector_cfg = crate::loop_detection::LoopDetectionConfig::default();
+                let detector = crate::loop_detection::LoopDetector::new(detector_cfg);
+                let res = detector.detect_loop_points(audio_data, sample.sample_rate);
+                res.best_candidate.map(|c| (c.start_sample as u32, c.end_sample as u32))
+            } else {
+                None
+            };
+
+            // 2. smpl chunk (MIDI root note & loop points)
+            chunks.push(Self::build_smpl_chunk(
+                sample.sample_rate,
+                sample.note,
+                loop_points,
+            ));
+
+            // 3. bext chunk (Broadcast Wave Format v1)
+            let now = chrono::Utc::now();
+            let desc = self
+                .config
+                .instrument_description
+                .as_deref()
+                .or(Some("Synthesizer Sample"));
+            chunks.push(Self::build_bext_chunk(
+                self.config.creator_name.as_deref(),
+                desc,
+                &now,
+            ));
+
+            // 4. LIST-INFO chunk
+            let note_name = Self::note_to_name(sample.note);
+            let title = format!("{} (Note {})", note_name, sample.note);
+            let date_str = now.format("%Y-%m-%d").to_string();
+            let comment = format!(
+                "Velocity: {}, Sample Rate: {} Hz",
+                sample.velocity, sample.sample_rate
+            );
+            chunks.push(Self::build_info_chunk(
+                &title,
+                self.config.creator_name.as_deref(),
+                &date_str,
+                "Batcherbird",
+                Some(&comment),
+            ));
+
+            Self::append_riff_chunks(filepath, &chunks)?;
         }
 
         // Verify file was created
@@ -660,15 +733,379 @@ impl SampleExporter {
         Ok(sfz)
     }
 
+    /// Build a standard RIFF `smpl` chunk.
+    ///
+    /// Encodes sample period in nanoseconds, MIDI unity note (root key), and
+    /// forward sustain loop points (when provided).
+    pub fn build_smpl_chunk(
+        sample_rate: u32,
+        midi_note: u8,
+        loop_points: Option<(u32, u32)>,
+    ) -> Vec<u8> {
+        let has_loop = loop_points.is_some();
+        let payload_size: u32 = if has_loop { 36 + 24 } else { 36 };
+        let mut chunk = Vec::with_capacity(8 + payload_size as usize);
+
+        // Header: FourCC + payload size
+        chunk.extend_from_slice(b"smpl");
+        chunk.extend_from_slice(&payload_size.to_le_bytes());
+
+        // Payload
+        let sample_period_ns = if sample_rate > 0 {
+            (1_000_000_000.0 / sample_rate as f64).round() as u32
+        } else {
+            0
+        };
+
+        chunk.extend_from_slice(&0u32.to_le_bytes()); // manufacturer: 0
+        chunk.extend_from_slice(&0u32.to_le_bytes()); // product: 0
+        chunk.extend_from_slice(&sample_period_ns.to_le_bytes());
+        chunk.extend_from_slice(&(midi_note as u32).to_le_bytes());
+        chunk.extend_from_slice(&0u32.to_le_bytes()); // midi_pitch_fraction: 0
+        chunk.extend_from_slice(&0u32.to_le_bytes()); // smpte_format: 0
+        chunk.extend_from_slice(&0u32.to_le_bytes()); // smpte_offset: 0
+        chunk.extend_from_slice(&(if has_loop { 1u32 } else { 0u32 }).to_le_bytes()); // num_sample_loops
+        chunk.extend_from_slice(&0u32.to_le_bytes()); // sampler_data: 0
+
+        if let Some((start, end)) = loop_points {
+            chunk.extend_from_slice(&0u32.to_le_bytes()); // cue_point_id: 0
+            chunk.extend_from_slice(&0u32.to_le_bytes()); // type: 0 = forward loop
+            chunk.extend_from_slice(&start.to_le_bytes()); // start sample index
+            chunk.extend_from_slice(&end.to_le_bytes()); // end sample index
+            chunk.extend_from_slice(&0u32.to_le_bytes()); // fraction: 0
+            chunk.extend_from_slice(&0u32.to_le_bytes()); // play_count: 0 = infinite sustain loop
+        }
+
+        chunk
+    }
+
+    /// Build a standard Broadcast Wave Format (BWF v1) `bext` chunk (EBU Tech 3285, 602 bytes payload).
+    pub fn build_bext_chunk(
+        originator: Option<&str>,
+        description: Option<&str>,
+        timestamp: &chrono::DateTime<chrono::Utc>,
+    ) -> Vec<u8> {
+        let payload_size: u32 = 602;
+        let mut chunk = Vec::with_capacity(8 + payload_size as usize);
+
+        chunk.extend_from_slice(b"bext");
+        chunk.extend_from_slice(&payload_size.to_le_bytes());
+
+        // 1. Description: [u8; 256] ASCII (null-padded)
+        let mut desc_buf = [0u8; 256];
+        if let Some(desc) = description {
+            let bytes = desc.as_bytes();
+            let len = bytes.len().min(255);
+            desc_buf[..len].copy_from_slice(&bytes[..len]);
+        }
+        chunk.extend_from_slice(&desc_buf);
+
+        // 2. Originator: [u8; 32] ASCII (null-padded)
+        let mut orig_buf = [0u8; 32];
+        let orig_str = originator.unwrap_or("Batcherbird");
+        let orig_bytes = orig_str.as_bytes();
+        let orig_len = orig_bytes.len().min(31);
+        orig_buf[..orig_len].copy_from_slice(&orig_bytes[..orig_len]);
+        chunk.extend_from_slice(&orig_buf);
+
+        // 3. Originator Reference: [u8; 32] ASCII (null-padded)
+        let mut ref_buf = [0u8; 32];
+        let ref_str = format!("BB-{}", timestamp.format("%Y%m%d%H%M%S"));
+        let ref_bytes = ref_str.as_bytes();
+        let ref_len = ref_bytes.len().min(31);
+        ref_buf[..ref_len].copy_from_slice(&ref_bytes[..ref_len]);
+        chunk.extend_from_slice(&ref_buf);
+
+        // 4. Origination Date: [u8; 10] ASCII (YYYY-MM-DD)
+        let mut date_buf = [0u8; 10];
+        let date_str = timestamp.format("%Y-%m-%d").to_string();
+        let date_bytes = date_str.as_bytes();
+        let date_len = date_bytes.len().min(10);
+        date_buf[..date_len].copy_from_slice(&date_bytes[..date_len]);
+        chunk.extend_from_slice(&date_buf);
+
+        // 5. Origination Time: [u8; 8] ASCII (HH:MM:SS)
+        let mut time_buf = [0u8; 8];
+        let time_str = timestamp.format("%H:%M:%S").to_string();
+        let time_bytes = time_str.as_bytes();
+        let time_len = time_bytes.len().min(8);
+        time_buf[..time_len].copy_from_slice(&time_bytes[..time_len]);
+        chunk.extend_from_slice(&time_buf);
+
+        // 6. Time Reference: u64 (low u32, high u32) = 0
+        chunk.extend_from_slice(&0u32.to_le_bytes()); // low
+        chunk.extend_from_slice(&0u32.to_le_bytes()); // high
+
+        // 7. Version: u16 = 1 (BWF v1)
+        chunk.extend_from_slice(&1u16.to_le_bytes());
+
+        // 8. SMPTE UMID: [u8; 64] = 0
+        chunk.extend_from_slice(&[0u8; 64]);
+
+        // 9. Loudness values: 5 x u16 = 0
+        chunk.extend_from_slice(&0u16.to_le_bytes()); // loudness_value
+        chunk.extend_from_slice(&0u16.to_le_bytes()); // loudness_range
+        chunk.extend_from_slice(&0u16.to_le_bytes()); // max_true_peak
+        chunk.extend_from_slice(&0u16.to_le_bytes()); // max_momentary_loudness
+        chunk.extend_from_slice(&0u16.to_le_bytes()); // max_short_term_loudness
+
+        // 10. Reserved: [u8; 180] = 0
+        chunk.extend_from_slice(&[0u8; 180]);
+
+        chunk
+    }
+
+    /// Helper to push a null-terminated INFO subchunk with 2-byte RIFF alignment.
+    fn push_info_subchunk(buf: &mut Vec<u8>, id: &[u8; 4], text: &str) {
+        buf.extend_from_slice(id);
+        let mut bytes = text.as_bytes().to_vec();
+        bytes.push(0); // null terminator
+        let len = bytes.len() as u32;
+        buf.extend_from_slice(&len.to_le_bytes());
+        buf.extend_from_slice(&bytes);
+        if !len.is_multiple_of(2) {
+            buf.push(0); // RIFF 2-byte alignment padding byte
+        }
+    }
+
+    /// Build a standard RIFF `LIST` chunk containing `INFO` subchunks.
+    pub fn build_info_chunk(
+        title: &str,
+        artist: Option<&str>,
+        date: &str,
+        software: &str,
+        comment: Option<&str>,
+    ) -> Vec<u8> {
+        let mut info_body = Vec::new();
+        info_body.extend_from_slice(b"INFO");
+
+        Self::push_info_subchunk(&mut info_body, b"INAM", title);
+        if let Some(art) = artist {
+            Self::push_info_subchunk(&mut info_body, b"IART", art);
+        }
+        Self::push_info_subchunk(&mut info_body, b"ICRD", date);
+        Self::push_info_subchunk(&mut info_body, b"ISFT", software);
+        if let Some(cmt) = comment {
+            Self::push_info_subchunk(&mut info_body, b"ICMT", cmt);
+        }
+
+        let mut chunk = Vec::new();
+        chunk.extend_from_slice(b"LIST");
+        let list_len = info_body.len() as u32;
+        chunk.extend_from_slice(&list_len.to_le_bytes());
+        chunk.extend_from_slice(&info_body);
+        if !list_len.is_multiple_of(2) {
+            chunk.push(0); // RIFF pad byte
+        }
+
+        chunk
+    }
+
+    /// Append serialized RIFF chunks to a finalized WAV file and update the RIFF size header at offset 4.
+    pub fn append_riff_chunks(filepath: &Path, chunks: &[Vec<u8>]) -> Result<()> {
+        if chunks.is_empty() {
+            return Ok(());
+        }
+
+        use std::io::{Read, Seek, SeekFrom, Write};
+
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(filepath)
+            .map_err(BatcherbirdError::Export)?;
+
+        // Validate RIFF / WAVE header
+        let mut header = [0u8; 12];
+        file.read_exact(&mut header)
+            .map_err(BatcherbirdError::Export)?;
+
+        if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+            return Err(BatcherbirdError::Export(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Target file is not a valid RIFF/WAVE file",
+            )));
+        }
+
+        // Seek to end
+        let original_len = file
+            .seek(SeekFrom::End(0))
+            .map_err(BatcherbirdError::Export)?;
+
+        // Ensure 2-byte chunk alignment before writing new chunks
+        if !original_len.is_multiple_of(2) {
+            file.write_all(&[0u8])
+                .map_err(BatcherbirdError::Export)?;
+        }
+
+        for chunk in chunks {
+            file.write_all(chunk)
+                .map_err(BatcherbirdError::Export)?;
+        }
+
+        // Get final length and update RIFF size at offset 4
+        let final_len = file
+            .seek(SeekFrom::End(0))
+            .map_err(BatcherbirdError::Export)?;
+
+        if final_len < 8 {
+            return Err(BatcherbirdError::Export(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "File too small after writing chunks",
+            )));
+        }
+
+        let riff_size = (final_len - 8) as u32;
+        file.seek(SeekFrom::Start(4))
+            .map_err(BatcherbirdError::Export)?;
+        file.write_all(&riff_size.to_le_bytes())
+            .map_err(BatcherbirdError::Export)?;
+
+        file.flush().map_err(BatcherbirdError::Export)?;
+        file.sync_all().map_err(BatcherbirdError::Export)?;
+
+        Ok(())
+    }
+
     pub fn get_export_info(&self) -> String {
         format!(
-            "Export Configuration:\n  Directory: {}\n  Format: {:?}\n  Normalize: {}\n  Fade out: {}ms",
+            "Export Configuration:\n  Directory: {}\n  Format: {:?}\n  Normalize: {}\n  Fade out: {}ms\n  Embed RIFF Metadata: {}",
             self.config.output_directory.display(),
             self.config.sample_format,
             self.config.normalize,
-            self.config.fade_out_ms
+            self.config.fade_out_ms,
+            self.config.embed_metadata
         )
     }
+}
+
+/// Helper to extract a null-terminated string from a byte slice.
+fn parse_null_terminated_str(bytes: &[u8]) -> Option<String> {
+    let nul_pos = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    let s = String::from_utf8_lossy(&bytes[..nul_pos]).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// Read and parse metadata from standard RIFF chunks (`smpl`, `bext`, `LIST-INFO`) in a WAV file.
+pub fn read_wav_metadata<P: AsRef<Path>>(path: P) -> Result<WavMetadata> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = std::fs::File::open(path.as_ref()).map_err(BatcherbirdError::Export)?;
+    let file_len = file
+        .seek(SeekFrom::End(0))
+        .map_err(BatcherbirdError::Export)?;
+
+    if file_len < 12 {
+        return Err(BatcherbirdError::Export(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "WAV file is too small to contain a RIFF header",
+        )));
+    }
+
+    file.seek(SeekFrom::Start(0))
+        .map_err(BatcherbirdError::Export)?;
+    let mut header = [0u8; 12];
+    file.read_exact(&mut header)
+        .map_err(BatcherbirdError::Export)?;
+
+    if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+        return Err(BatcherbirdError::Export(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "File is not a valid RIFF/WAVE file",
+        )));
+    }
+
+    let mut metadata = WavMetadata::default();
+    let mut current_pos = 12u64;
+
+    while current_pos + 8 <= file_len {
+        file.seek(SeekFrom::Start(current_pos))
+            .map_err(BatcherbirdError::Export)?;
+
+        let mut chunk_header = [0u8; 8];
+        if file.read_exact(&mut chunk_header).is_err() {
+            break;
+        }
+
+        let chunk_id = &chunk_header[0..4];
+        let chunk_size = u32::from_le_bytes(chunk_header[4..8].try_into().unwrap()) as u64;
+
+        let data_pos = current_pos + 8;
+        if data_pos + chunk_size > file_len {
+            break;
+        }
+
+        let mut data = vec![0u8; chunk_size as usize];
+        file.read_exact(&mut data)
+            .map_err(BatcherbirdError::Export)?;
+
+        match chunk_id {
+            b"smpl" => {
+                if data.len() >= 36 {
+                    let period = u32::from_le_bytes(data[8..12].try_into().unwrap());
+                    let note = u32::from_le_bytes(data[12..16].try_into().unwrap()) as u8;
+                    let num_loops = u32::from_le_bytes(data[28..32].try_into().unwrap());
+
+                    metadata.sample_period_ns = Some(period);
+                    metadata.midi_unity_note = Some(note);
+
+                    if num_loops >= 1 && data.len() >= 60 {
+                        let loop_start = u32::from_le_bytes(data[44..48].try_into().unwrap());
+                        let loop_end = u32::from_le_bytes(data[48..52].try_into().unwrap());
+                        metadata.loop_points = Some((loop_start, loop_end));
+                    }
+                }
+            }
+            b"bext" => {
+                if data.len() >= 338 {
+                    metadata.bext_description = parse_null_terminated_str(&data[0..256]);
+                    metadata.bext_originator = parse_null_terminated_str(&data[256..288]);
+                    metadata.bext_origination_date = parse_null_terminated_str(&data[320..330]);
+                    metadata.bext_origination_time = parse_null_terminated_str(&data[330..338]);
+                }
+            }
+            b"LIST" => {
+                if data.len() >= 4 && &data[0..4] == b"INFO" {
+                    let mut pos = 4usize;
+                    while pos + 8 <= data.len() {
+                        let sub_id = &data[pos..pos + 4];
+                        let sub_len = u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap())
+                            as usize;
+                        let val_start = pos + 8;
+                        let val_end = val_start + sub_len;
+                        if val_end > data.len() {
+                            break;
+                        }
+
+                        let text_opt = parse_null_terminated_str(&data[val_start..val_end]);
+                        if let Some(text) = text_opt {
+                            match sub_id {
+                                b"INAM" => metadata.info_title = Some(text),
+                                b"IART" => metadata.info_artist = Some(text),
+                                b"ICRD" => metadata.info_date = Some(text),
+                                b"ISFT" => metadata.info_software = Some(text),
+                                b"ICMT" => metadata.info_comment = Some(text),
+                                _ => {}
+                            }
+                        }
+
+                        let pad = if !sub_len.is_multiple_of(2) { 1 } else { 0 };
+                        pos = val_end + pad;
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        let pad = if !chunk_size.is_multiple_of(2) { 1 } else { 0 };
+        current_pos = data_pos + chunk_size + pad;
+    }
+
+    Ok(metadata)
 }
 
 #[cfg(test)]
@@ -763,5 +1200,169 @@ mod tests {
             sfz
         );
         assert!(sfz.contains("// Description: line one <region> sample=evil.wav"));
+    }
+
+    #[test]
+    fn test_smpl_chunk_structure_without_loop() {
+        let chunk = SampleExporter::build_smpl_chunk(48000, 60, None);
+        assert_eq!(&chunk[0..4], b"smpl");
+        let size = u32::from_le_bytes(chunk[4..8].try_into().unwrap());
+        assert_eq!(size, 36);
+        assert_eq!(chunk.len(), 44);
+
+        // sample_period: 1_000_000_000 / 48000 = 20833
+        let sample_period = u32::from_le_bytes(chunk[16..20].try_into().unwrap());
+        assert_eq!(sample_period, 20833);
+
+        // midi_unity_note = 60
+        let note = u32::from_le_bytes(chunk[20..24].try_into().unwrap());
+        assert_eq!(note, 60);
+
+        // num_sample_loops = 0
+        let num_loops = u32::from_le_bytes(chunk[36..40].try_into().unwrap());
+        assert_eq!(num_loops, 0);
+    }
+
+    #[test]
+    fn test_smpl_chunk_structure_with_loop() {
+        let chunk = SampleExporter::build_smpl_chunk(44100, 69, Some((1000, 5000)));
+        assert_eq!(&chunk[0..4], b"smpl");
+        let size = u32::from_le_bytes(chunk[4..8].try_into().unwrap());
+        assert_eq!(size, 60);
+        assert_eq!(chunk.len(), 68);
+
+        // num_sample_loops = 1
+        let num_loops = u32::from_le_bytes(chunk[36..40].try_into().unwrap());
+        assert_eq!(num_loops, 1);
+
+        // loop type = 0 (forward)
+        let loop_type = u32::from_le_bytes(chunk[48..52].try_into().unwrap());
+        assert_eq!(loop_type, 0);
+
+        // start = 1000, end = 5000
+        let start = u32::from_le_bytes(chunk[52..56].try_into().unwrap());
+        let end = u32::from_le_bytes(chunk[56..60].try_into().unwrap());
+        assert_eq!(start, 1000);
+        assert_eq!(end, 5000);
+    }
+
+    #[test]
+    fn test_bext_chunk_structure() {
+        let ts = chrono::DateTime::parse_from_rfc3339("2026-09-21T15:30:45Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let chunk = SampleExporter::build_bext_chunk(
+            Some("My Originator"),
+            Some("Bass Lead"),
+            &ts,
+        );
+
+        assert_eq!(&chunk[0..4], b"bext");
+        let size = u32::from_le_bytes(chunk[4..8].try_into().unwrap());
+        assert_eq!(size, 602);
+        assert_eq!(chunk.len(), 610);
+
+        let desc = parse_null_terminated_str(&chunk[8..264]).unwrap();
+        assert_eq!(desc, "Bass Lead");
+
+        let orig = parse_null_terminated_str(&chunk[264..296]).unwrap();
+        assert_eq!(orig, "My Originator");
+
+        let date = parse_null_terminated_str(&chunk[328..338]).unwrap();
+        assert_eq!(date, "2026-09-21");
+
+        let time = parse_null_terminated_str(&chunk[338..346]).unwrap();
+        assert_eq!(time, "15:30:45");
+    }
+
+    #[test]
+    fn test_info_chunk_structure() {
+        let chunk = SampleExporter::build_info_chunk(
+            "C4 Piano",
+            Some("Test Artist"),
+            "2026-09-21",
+            "Batcherbird",
+            Some("Vel 127"),
+        );
+
+        assert_eq!(&chunk[0..4], b"LIST");
+        assert_eq!(&chunk[8..12], b"INFO");
+
+        // Length must be 2-byte aligned
+        assert!(chunk.len().is_multiple_of(2));
+    }
+
+    #[test]
+    fn test_wav_export_with_and_without_metadata() {
+        let temp_dir = std::env::temp_dir().join("batcherbird_test_export_meta_flag");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let sample = Sample {
+            note: 60,
+            velocity: 99,
+            audio_data: vec![0.1, -0.2, 0.3, -0.4, 0.5, 0.0, -0.1],
+            sample_rate: 44100,
+            channels: 1,
+            recorded_at: std::time::SystemTime::now(),
+            midi_timing: std::time::Duration::from_millis(50),
+            audio_timing: std::time::Duration::from_millis(500),
+        };
+
+        // 1. Export with embed_metadata = true
+        let config_with = ExportConfig {
+            output_directory: temp_dir.clone(),
+            naming_pattern: "with_meta.wav".to_string(),
+            sample_format: AudioFormat::Wav16Bit,
+            normalize: false,
+            fade_in_ms: 0.0,
+            fade_out_ms: 0.0,
+            apply_detection: false,
+            creator_name: Some("Audio Maker".to_string()),
+            instrument_description: Some("Preset 1".to_string()),
+            embed_metadata: true,
+            ..Default::default()
+        };
+        let exp_with = SampleExporter::new(config_with).unwrap();
+        let path_with = exp_with.export_sample(&sample).unwrap();
+
+        let meta_with = read_wav_metadata(&path_with).unwrap();
+        assert_eq!(meta_with.midi_unity_note, Some(60));
+        assert_eq!(meta_with.bext_originator.as_deref(), Some("Audio Maker"));
+        assert_eq!(meta_with.info_software.as_deref(), Some("Batcherbird"));
+
+        // Verify hound reads audio data cleanly
+        let mut reader = hound::WavReader::open(&path_with).unwrap();
+        let samples: Vec<i16> = reader.samples::<i16>().map(|s| s.unwrap()).collect();
+        assert_eq!(samples.len(), 7);
+
+        // 2. Export with embed_metadata = false
+        let config_without = ExportConfig {
+            output_directory: temp_dir.clone(),
+            naming_pattern: "without_meta.wav".to_string(),
+            sample_format: AudioFormat::Wav16Bit,
+            normalize: false,
+            fade_in_ms: 0.0,
+            fade_out_ms: 0.0,
+            apply_detection: false,
+            creator_name: Some("Audio Maker".to_string()),
+            instrument_description: Some("Preset 1".to_string()),
+            embed_metadata: false,
+            ..Default::default()
+        };
+        let exp_without = SampleExporter::new(config_without).unwrap();
+        let path_without = exp_without.export_sample(&sample).unwrap();
+
+        let meta_without = read_wav_metadata(&path_without).unwrap();
+        assert_eq!(meta_without.midi_unity_note, None);
+        assert_eq!(meta_without.bext_originator, None);
+        assert_eq!(meta_without.info_software, None);
+
+        // Verify audio data is identical between both
+        let mut reader_no_meta = hound::WavReader::open(&path_without).unwrap();
+        let samples_no_meta: Vec<i16> = reader_no_meta.samples::<i16>().map(|s| s.unwrap()).collect();
+        assert_eq!(samples, samples_no_meta);
+
+        // Cleanup
+        std::fs::remove_dir_all(&temp_dir).ok();
     }
 }

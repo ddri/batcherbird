@@ -560,6 +560,7 @@ fn sample_and_export(
         detection_config: Default::default(),
         creator_name: None,
         instrument_description: None,
+        embed_metadata: true,
     };
 
     let exporter = SampleExporter::new(export_config)?;

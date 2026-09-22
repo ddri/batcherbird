@@ -1,5 +1,5 @@
 use batcherbird_core::detection::DetectionConfig;
-use batcherbird_core::export::{AudioFormat, ExportConfig, SampleExporter};
+use batcherbird_core::export::{read_wav_metadata, AudioFormat, ExportConfig, SampleExporter};
 use batcherbird_core::sampler::Sample;
 use std::time::{Duration, SystemTime};
 
@@ -44,6 +44,7 @@ fn test_sfz_export() {
         detection_config: DetectionConfig::default(),
         creator_name: Some("Test User".to_string()),
         instrument_description: Some("Test SFZ instrument".to_string()),
+        embed_metadata: true,
     };
 
     let exporter = SampleExporter::new(config).unwrap();
@@ -117,6 +118,7 @@ fn test_decent_sampler_export() {
         detection_config: DetectionConfig::default(),
         creator_name: Some("Test User".to_string()),
         instrument_description: Some("Test Decent Sampler instrument".to_string()),
+        embed_metadata: true,
     };
 
     let exporter = SampleExporter::new(config).unwrap();
@@ -177,6 +179,7 @@ fn test_sfz_export_with_loop_crossfade() {
         detection_config: DetectionConfig::default(),
         creator_name: Some("Test User".to_string()),
         instrument_description: Some("Test SFZ Loop instrument".to_string()),
+        embed_metadata: true,
     };
 
     let exporter = SampleExporter::new(config).unwrap();
@@ -196,3 +199,77 @@ fn test_sfz_export_with_loop_crossfade() {
     // Cleanup
     std::fs::remove_dir_all(&temp_dir).ok();
 }
+
+#[test]
+fn test_riff_metadata_embedding_roundtrip() {
+    let sine_wave: Vec<f32> = (0..44100)
+        .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 44100.0).sin() * 0.5)
+        .collect();
+
+    let sample = Sample {
+        note: 69, // A4
+        velocity: 110,
+        audio_data: sine_wave,
+        sample_rate: 44100,
+        channels: 1,
+        recorded_at: SystemTime::now(),
+        midi_timing: Duration::from_millis(100),
+        audio_timing: Duration::from_millis(1000),
+    };
+
+    let temp_dir = std::env::temp_dir().join("batcherbird_test_riff_metadata");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let config = ExportConfig {
+        output_directory: temp_dir.clone(),
+        naming_pattern: "Meta_{note_name}_{note}_{velocity}.wav".to_string(),
+        sample_format: AudioFormat::Wav24Bit,
+        normalize: false,
+        fade_in_ms: 0.0,
+        fade_out_ms: 0.0,
+        apply_detection: true,
+        detection_config: DetectionConfig::default(),
+        creator_name: Some("Batcherbird Studio".to_string()),
+        instrument_description: Some("Custom Prophet-5 Lead".to_string()),
+        embed_metadata: true,
+    };
+
+    let exporter = SampleExporter::new(config).unwrap();
+    let wav_path = exporter.export_sample(&sample).unwrap();
+
+    // Verify file exists
+    assert!(wav_path.exists());
+
+    // Verify hound can read audio data without any corruption
+    let mut reader = hound::WavReader::open(&wav_path).unwrap();
+    let spec = reader.spec();
+    assert_eq!(spec.sample_rate, 44100);
+    assert_eq!(spec.channels, 1);
+    assert_eq!(spec.bits_per_sample, 24);
+    let sample_count = reader.samples::<i32>().count();
+    assert_eq!(sample_count, 44100);
+
+    // Read and verify RIFF chunk metadata
+    let meta = read_wav_metadata(&wav_path).unwrap();
+
+    // smpl chunk
+    assert_eq!(meta.midi_unity_note, Some(69));
+    assert_eq!(meta.sample_period_ns, Some(22676)); // 1_000_000_000 / 44100 = 22675.7 -> 22676
+    assert!(meta.loop_points.is_some());
+
+    // bext chunk
+    assert_eq!(meta.bext_originator.as_deref(), Some("Batcherbird Studio"));
+    assert_eq!(meta.bext_description.as_deref(), Some("Custom Prophet-5 Lead"));
+    assert!(meta.bext_origination_date.is_some());
+    assert!(meta.bext_origination_time.is_some());
+
+    // INFO chunk
+    assert_eq!(meta.info_title.as_deref(), Some("A4 (Note 69)"));
+    assert_eq!(meta.info_artist.as_deref(), Some("Batcherbird Studio"));
+    assert_eq!(meta.info_software.as_deref(), Some("Batcherbird"));
+    assert!(meta.info_comment.unwrap().contains("Velocity: 110"));
+
+    // Cleanup
+    std::fs::remove_dir_all(&temp_dir).ok();
+}
+
