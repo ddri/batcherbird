@@ -202,6 +202,8 @@ impl Default for AppData {
                 "WAV 32-float".to_string(),
                 "DecentSampler".to_string(),
                 "SFZ".to_string(),
+                "DecentSampler + SFZ".to_string(),
+                "All Formats".to_string(),
             ],
             selected_format_index: 1, // Wav24Bit
             output_directory: dirs::document_dir().unwrap_or_else(|| PathBuf::from(".")),
@@ -483,6 +485,8 @@ impl AppData {
             AudioFormat::Wav32BitFloat => "Wav32Float",
             AudioFormat::DecentSampler => "DecentSampler",
             AudioFormat::SFZ => "SFZ",
+            AudioFormat::DecentSamplerAndSfz => "DecentSampler + SFZ",
+            AudioFormat::All => "All Formats",
         }
     }
 
@@ -492,17 +496,21 @@ impl AppData {
             AudioFormat::Wav24Bit => AudioFormat::Wav32BitFloat,
             AudioFormat::Wav32BitFloat => AudioFormat::DecentSampler,
             AudioFormat::DecentSampler => AudioFormat::SFZ,
-            AudioFormat::SFZ => AudioFormat::Wav16Bit,
+            AudioFormat::SFZ => AudioFormat::DecentSamplerAndSfz,
+            AudioFormat::DecentSamplerAndSfz => AudioFormat::All,
+            AudioFormat::All => AudioFormat::Wav16Bit,
         }
     }
 
     pub fn prev_format(fmt: &AudioFormat) -> AudioFormat {
         match fmt {
-            AudioFormat::Wav16Bit => AudioFormat::SFZ,
+            AudioFormat::Wav16Bit => AudioFormat::All,
             AudioFormat::Wav24Bit => AudioFormat::Wav16Bit,
             AudioFormat::Wav32BitFloat => AudioFormat::Wav24Bit,
             AudioFormat::DecentSampler => AudioFormat::Wav32BitFloat,
             AudioFormat::SFZ => AudioFormat::DecentSampler,
+            AudioFormat::DecentSamplerAndSfz => AudioFormat::SFZ,
+            AudioFormat::All => AudioFormat::DecentSamplerAndSfz,
         }
     }
 
@@ -687,6 +695,8 @@ impl Model for AppData {
                     AudioFormat::Wav32BitFloat,
                     AudioFormat::DecentSampler,
                     AudioFormat::SFZ,
+                    AudioFormat::DecentSamplerAndSfz,
+                    AudioFormat::All,
                 ];
                 if *idx < formats.len() {
                     self.selected_format_index = *idx;
@@ -1174,7 +1184,7 @@ impl Model for AppData {
             AppEvent::ExportComplete { count, directory } => {
                 self.error_message = None;
                 self.info_message = Some(format!(
-                    "Exported {} sample(s) to {}",
+                    "Exported {} file(s) to {}",
                     count,
                     directory.display()
                 ));

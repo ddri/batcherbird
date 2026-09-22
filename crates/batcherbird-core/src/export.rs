@@ -35,13 +35,30 @@ pub struct ExportConfig {
     pub embed_metadata: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AudioFormat {
     Wav16Bit,
     Wav24Bit,
     Wav32BitFloat,
-    DecentSampler, // Generates .dspreset XML file with WAV samples
-    SFZ,           // Generates .sfz file with WAV samples
+    DecentSampler,        // Generates .dspreset XML file with WAV samples
+    SFZ,                  // Generates .sfz file with WAV samples
+    DecentSamplerAndSfz,  // Generates both .dspreset and .sfz files sharing WAV samples
+    All,                  // Complete package: DecentSampler, SFZ, and 24-bit WAV samples
+}
+
+impl AudioFormat {
+    /// Canonical directory name used for structured folder exports.
+    pub fn directory_name(&self) -> &'static str {
+        match self {
+            AudioFormat::Wav16Bit => "WAV_16Bit",
+            AudioFormat::Wav24Bit => "WAV_24Bit",
+            AudioFormat::Wav32BitFloat => "WAV_32BitFloat",
+            AudioFormat::DecentSampler => "DecentSampler",
+            AudioFormat::SFZ => "SFZ",
+            AudioFormat::DecentSamplerAndSfz => "DecentSampler_SFZ",
+            AudioFormat::All => "All_Formats",
+        }
+    }
 }
 
 impl Default for ExportConfig {
@@ -153,21 +170,14 @@ impl SampleExporter {
 
         // Handle different export formats
         match self.config.sample_format {
-            AudioFormat::DecentSampler => {
-                // For DecentSampler, we only write WAV files here
-                // The .dspreset XML will be generated separately via export_samples()
+            AudioFormat::DecentSampler
+            | AudioFormat::SFZ
+            | AudioFormat::DecentSamplerAndSfz
+            | AudioFormat::All => {
+                // For sampler presets, we write 24-bit WAV files here.
+                // Preset files (.dspreset and/or .sfz) will be generated via export_samples()
                 let wav_config = ExportConfig {
-                    sample_format: AudioFormat::Wav24Bit, // Use 24-bit for DecentSampler compatibility
-                    ..self.config.clone()
-                };
-                let temp_exporter = SampleExporter { config: wav_config };
-                temp_exporter.write_wav_file(&filepath, &audio_data, sample)?;
-            }
-            AudioFormat::SFZ => {
-                // For SFZ, we only write WAV files here
-                // The .sfz file will be generated separately via export_samples()
-                let wav_config = ExportConfig {
-                    sample_format: AudioFormat::Wav24Bit, // Use 24-bit for good compatibility
+                    sample_format: AudioFormat::Wav24Bit, // 24-bit standard for sampler compatibility
                     ..self.config.clone()
                 };
                 let temp_exporter = SampleExporter { config: wav_config };
@@ -190,14 +200,20 @@ impl SampleExporter {
             exported_files.push(filepath);
         }
 
-        // Generate .dspreset XML file for DecentSampler format
-        if matches!(self.config.sample_format, AudioFormat::DecentSampler) {
+        // Generate .dspreset XML file for DecentSampler format (or combined formats)
+        if matches!(
+            self.config.sample_format,
+            AudioFormat::DecentSampler | AudioFormat::DecentSamplerAndSfz | AudioFormat::All
+        ) {
             let dspreset_path = self.generate_dspreset_file(samples, &exported_files)?;
             exported_files.push(dspreset_path);
         }
 
-        // Generate .sfz file for SFZ format
-        if matches!(self.config.sample_format, AudioFormat::SFZ) {
+        // Generate .sfz file for SFZ format (or combined formats)
+        if matches!(
+            self.config.sample_format,
+            AudioFormat::SFZ | AudioFormat::DecentSamplerAndSfz | AudioFormat::All
+        ) {
             let sfz_path = self.generate_sfz_file(samples, &exported_files)?;
             exported_files.push(sfz_path);
         }
@@ -290,16 +306,13 @@ impl SampleExporter {
                 bits_per_sample: 32,
                 sample_format: SampleFormat::Float,
             },
-            AudioFormat::DecentSampler => {
+            AudioFormat::DecentSampler
+            | AudioFormat::SFZ
+            | AudioFormat::DecentSamplerAndSfz
+            | AudioFormat::All => {
                 return Err(BatcherbirdError::Export(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "DecentSampler format should be handled separately, not in WAV writing",
-                )));
-            }
-            AudioFormat::SFZ => {
-                return Err(BatcherbirdError::Export(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "SFZ format should not reach write_wav_file - this is a logic error",
+                    "Sampler preset formats should be handled via export_sample/export_samples, not in direct write_wav_file",
                 )));
             }
         };
@@ -333,16 +346,13 @@ impl SampleExporter {
                         .map_err(|e| BatcherbirdError::Export(std::io::Error::other(e)))?;
                 }
             }
-            AudioFormat::DecentSampler => {
+            AudioFormat::DecentSampler
+            | AudioFormat::SFZ
+            | AudioFormat::DecentSamplerAndSfz
+            | AudioFormat::All => {
                 return Err(BatcherbirdError::Export(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "DecentSampler format should not reach write_wav_file - this is a logic error",
-                )));
-            }
-            AudioFormat::SFZ => {
-                return Err(BatcherbirdError::Export(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "SFZ format should not reach write_wav_file - this is a logic error",
+                    "Sampler preset formats should not reach write_wav_file sample writing",
                 )));
             }
         }
@@ -979,6 +989,210 @@ impl SampleExporter {
     }
 }
 
+/// Configuration for exporting samples across multiple formats simultaneously.
+#[derive(Debug, Clone)]
+pub struct BatchExportConfig {
+    pub output_directory: PathBuf,
+    pub naming_pattern: String,
+    pub formats: Vec<AudioFormat>,
+    /// If true, creates dedicated subdirectories for each format (e.g. `DecentSampler/`, `SFZ/`, `WAV_24Bit/`).
+    /// If false, exports files into the shared output directory (reusing WAV files between presets).
+    pub organize_subdirectories: bool,
+    pub normalize: bool,
+    pub fade_in_ms: f32,
+    pub fade_out_ms: f32,
+    pub apply_detection: bool,
+    pub detection_config: DetectionConfig,
+    pub creator_name: Option<String>,
+    pub instrument_description: Option<String>,
+    pub embed_metadata: bool,
+}
+
+impl Default for BatchExportConfig {
+    fn default() -> Self {
+        Self {
+            output_directory: PathBuf::from("./samples"),
+            naming_pattern: "{note_name}_{note}_{velocity}.wav".to_string(),
+            formats: vec![
+                AudioFormat::Wav24Bit,
+                AudioFormat::DecentSampler,
+                AudioFormat::SFZ,
+            ],
+            organize_subdirectories: false,
+            normalize: false,
+            fade_in_ms: 0.0,
+            fade_out_ms: 10.0,
+            apply_detection: true,
+            detection_config: DetectionConfig::default(),
+            creator_name: None,
+            instrument_description: None,
+            embed_metadata: true,
+        }
+    }
+}
+
+/// Results of a batch multi-format export operation.
+#[derive(Debug, Clone, Default)]
+pub struct BatchExportResult {
+    /// Exported file paths grouped by format
+    pub files_by_format: Vec<(AudioFormat, Vec<PathBuf>)>,
+    /// All unique generated file paths
+    pub all_files: Vec<PathBuf>,
+}
+
+/// Multi-format batch exporter for generating multiple sampler formats and audio depths simultaneously.
+pub struct BatchExporter {
+    config: BatchExportConfig,
+}
+
+impl BatchExporter {
+    pub fn new(config: BatchExportConfig) -> Result<Self> {
+        if !config.output_directory.exists() {
+            fs::create_dir_all(&config.output_directory).map_err(BatcherbirdError::Export)?;
+        }
+        Ok(Self { config })
+    }
+
+    pub fn export_samples(&self, samples: &[Sample]) -> Result<BatchExportResult> {
+        if samples.is_empty() {
+            return Ok(BatchExportResult::default());
+        }
+
+        let mut files_by_format = Vec::new();
+        let mut all_files = Vec::new();
+
+        if self.config.organize_subdirectories {
+            for format in &self.config.formats {
+                let sub_dir = self.config.output_directory.join(format.directory_name());
+                if !sub_dir.exists() {
+                    fs::create_dir_all(&sub_dir).map_err(BatcherbirdError::Export)?;
+                }
+
+                let sub_config = ExportConfig {
+                    output_directory: sub_dir,
+                    naming_pattern: self.config.naming_pattern.clone(),
+                    sample_format: format.clone(),
+                    normalize: self.config.normalize,
+                    fade_in_ms: self.config.fade_in_ms,
+                    fade_out_ms: self.config.fade_out_ms,
+                    apply_detection: self.config.apply_detection,
+                    detection_config: self.config.detection_config.clone(),
+                    creator_name: self.config.creator_name.clone(),
+                    instrument_description: self.config.instrument_description.clone(),
+                    embed_metadata: self.config.embed_metadata,
+                };
+
+                let exporter = SampleExporter::new(sub_config)?;
+                let files = exporter.export_samples(samples)?;
+                for f in &files {
+                    if !all_files.contains(f) {
+                        all_files.push(f.clone());
+                    }
+                }
+                files_by_format.push((format.clone(), files));
+            }
+        } else {
+            let has_ds = self.config.formats.contains(&AudioFormat::DecentSampler)
+                || self.config.formats.contains(&AudioFormat::DecentSamplerAndSfz)
+                || self.config.formats.contains(&AudioFormat::All);
+            let has_sfz = self.config.formats.contains(&AudioFormat::SFZ)
+                || self.config.formats.contains(&AudioFormat::DecentSamplerAndSfz)
+                || self.config.formats.contains(&AudioFormat::All);
+            let has_wav24 = self.config.formats.contains(&AudioFormat::Wav24Bit);
+
+            if has_ds && has_sfz {
+                let shared_format = AudioFormat::DecentSamplerAndSfz;
+                let shared_config = ExportConfig {
+                    output_directory: self.config.output_directory.clone(),
+                    naming_pattern: self.config.naming_pattern.clone(),
+                    sample_format: shared_format.clone(),
+                    normalize: self.config.normalize,
+                    fade_in_ms: self.config.fade_in_ms,
+                    fade_out_ms: self.config.fade_out_ms,
+                    apply_detection: self.config.apply_detection,
+                    detection_config: self.config.detection_config.clone(),
+                    creator_name: self.config.creator_name.clone(),
+                    instrument_description: self.config.instrument_description.clone(),
+                    embed_metadata: self.config.embed_metadata,
+                };
+
+                let exporter = SampleExporter::new(shared_config)?;
+                let files = exporter.export_samples(samples)?;
+                for f in &files {
+                    if !all_files.contains(f) {
+                        all_files.push(f.clone());
+                    }
+                }
+                files_by_format.push((shared_format, files));
+
+                for format in &self.config.formats {
+                    if *format == AudioFormat::DecentSampler
+                        || *format == AudioFormat::SFZ
+                        || *format == AudioFormat::DecentSamplerAndSfz
+                        || *format == AudioFormat::All
+                        || (*format == AudioFormat::Wav24Bit && has_wav24)
+                    {
+                        continue;
+                    }
+
+                    let sub_config = ExportConfig {
+                        output_directory: self.config.output_directory.clone(),
+                        naming_pattern: self.config.naming_pattern.clone(),
+                        sample_format: format.clone(),
+                        normalize: self.config.normalize,
+                        fade_in_ms: self.config.fade_in_ms,
+                        fade_out_ms: self.config.fade_out_ms,
+                        apply_detection: self.config.apply_detection,
+                        detection_config: self.config.detection_config.clone(),
+                        creator_name: self.config.creator_name.clone(),
+                        instrument_description: self.config.instrument_description.clone(),
+                        embed_metadata: self.config.embed_metadata,
+                    };
+
+                    let exporter = SampleExporter::new(sub_config)?;
+                    let files = exporter.export_samples(samples)?;
+                    for f in &files {
+                        if !all_files.contains(f) {
+                            all_files.push(f.clone());
+                        }
+                    }
+                    files_by_format.push((format.clone(), files));
+                }
+            } else {
+                for format in &self.config.formats {
+                    let sub_config = ExportConfig {
+                        output_directory: self.config.output_directory.clone(),
+                        naming_pattern: self.config.naming_pattern.clone(),
+                        sample_format: format.clone(),
+                        normalize: self.config.normalize,
+                        fade_in_ms: self.config.fade_in_ms,
+                        fade_out_ms: self.config.fade_out_ms,
+                        apply_detection: self.config.apply_detection,
+                        detection_config: self.config.detection_config.clone(),
+                        creator_name: self.config.creator_name.clone(),
+                        instrument_description: self.config.instrument_description.clone(),
+                        embed_metadata: self.config.embed_metadata,
+                    };
+
+                    let exporter = SampleExporter::new(sub_config)?;
+                    let files = exporter.export_samples(samples)?;
+                    for f in &files {
+                        if !all_files.contains(f) {
+                            all_files.push(f.clone());
+                        }
+                    }
+                    files_by_format.push((format.clone(), files));
+                }
+            }
+        }
+
+        Ok(BatchExportResult {
+            files_by_format,
+            all_files,
+        })
+    }
+}
+
 /// Helper to extract a null-terminated string from a byte slice.
 fn parse_null_terminated_str(bytes: &[u8]) -> Option<String> {
     let nul_pos = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
@@ -1364,5 +1578,141 @@ mod tests {
 
         // Cleanup
         std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_audio_format_directory_name() {
+        assert_eq!(AudioFormat::Wav16Bit.directory_name(), "WAV_16Bit");
+        assert_eq!(AudioFormat::Wav24Bit.directory_name(), "WAV_24Bit");
+        assert_eq!(AudioFormat::Wav32BitFloat.directory_name(), "WAV_32BitFloat");
+        assert_eq!(AudioFormat::DecentSampler.directory_name(), "DecentSampler");
+        assert_eq!(AudioFormat::SFZ.directory_name(), "SFZ");
+        assert_eq!(AudioFormat::DecentSamplerAndSfz.directory_name(), "DecentSampler_SFZ");
+        assert_eq!(AudioFormat::All.directory_name(), "All_Formats");
+    }
+
+    #[test]
+    fn test_simultaneous_decent_sampler_and_sfz_export() {
+        let temp_dir = std::env::temp_dir().join("batcherbird_test_simul_ds_sfz");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let samples = vec![
+            Sample {
+                note: 60,
+                velocity: 64,
+                audio_data: vec![0.1, -0.2, 0.3, 0.0],
+                sample_rate: 44100,
+                channels: 1,
+                recorded_at: std::time::SystemTime::now(),
+                midi_timing: std::time::Duration::from_millis(50),
+                audio_timing: std::time::Duration::from_millis(500),
+            },
+            Sample {
+                note: 64,
+                velocity: 127,
+                audio_data: vec![0.2, -0.4, 0.6, 0.0],
+                sample_rate: 44100,
+                channels: 1,
+                recorded_at: std::time::SystemTime::now(),
+                midi_timing: std::time::Duration::from_millis(50),
+                audio_timing: std::time::Duration::from_millis(500),
+            },
+        ];
+
+        let config = ExportConfig {
+            output_directory: temp_dir.clone(),
+            naming_pattern: "Simul_{note_name}_{note}_{velocity}.wav".to_string(),
+            sample_format: AudioFormat::DecentSamplerAndSfz,
+            creator_name: Some("Patch Master".to_string()),
+            instrument_description: Some("Multi Synth".to_string()),
+            ..Default::default()
+        };
+
+        let exporter = SampleExporter::new(config).unwrap();
+        let files = exporter.export_samples(&samples).unwrap();
+
+        // Should produce 2 WAV files + 1 .dspreset + 1 .sfz = 4 files
+        assert_eq!(files.len(), 4);
+
+        let dspreset_file = files.iter().find(|p| p.extension().is_some_and(|e| e == "dspreset"));
+        let sfz_file = files.iter().find(|p| p.extension().is_some_and(|e| e == "sfz"));
+        let wav_files: Vec<_> = files.iter().filter(|p| p.extension().is_some_and(|e| e == "wav")).collect();
+
+        assert!(dspreset_file.is_some());
+        assert!(sfz_file.is_some());
+        assert_eq!(wav_files.len(), 2);
+
+        // Verify both presets exist and have valid content referencing the WAVs
+        let ds_content = std::fs::read_to_string(dspreset_file.unwrap()).unwrap();
+        assert!(ds_content.contains("<DecentSampler"));
+        assert!(ds_content.contains("Simul_C4_60_vel064.wav"));
+        assert!(ds_content.contains("Simul_E4_64_vel127.wav"));
+
+        let sfz_content = std::fs::read_to_string(sfz_file.unwrap()).unwrap();
+        assert!(sfz_content.contains("Generated by Batcherbird"));
+        assert!(sfz_content.contains("<region>"));
+        assert!(sfz_content.contains("Simul_C4_60_vel064.wav"));
+        assert!(sfz_content.contains("Simul_E4_64_vel127.wav"));
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_batch_exporter_shared_and_subdirectories() {
+        let sample = Sample {
+            note: 60,
+            velocity: 100,
+            audio_data: vec![0.1, -0.2, 0.3, 0.0],
+            sample_rate: 44100,
+            channels: 1,
+            recorded_at: std::time::SystemTime::now(),
+            midi_timing: std::time::Duration::from_millis(50),
+            audio_timing: std::time::Duration::from_millis(500),
+        };
+
+        // 1. Test shared mode
+        let shared_dir = std::env::temp_dir().join("batcherbird_test_batch_shared");
+        std::fs::create_dir_all(&shared_dir).unwrap();
+
+        let batch_config_shared = BatchExportConfig {
+            output_directory: shared_dir.clone(),
+            naming_pattern: "Shared_{note_name}_{note}_{velocity}.wav".to_string(),
+            formats: vec![AudioFormat::DecentSampler, AudioFormat::SFZ],
+            organize_subdirectories: false,
+            ..Default::default()
+        };
+
+        let batch_exp = BatchExporter::new(batch_config_shared).unwrap();
+        let result = batch_exp
+            .export_samples(std::slice::from_ref(&sample))
+            .unwrap();
+
+        // In shared mode with DS + SFZ, 1 WAV + 1 dspreset + 1 sfz = 3 files
+        assert_eq!(result.all_files.len(), 3);
+        assert!(shared_dir.join("Shared.dspreset").exists());
+        assert!(shared_dir.join("Shared.sfz").exists());
+        std::fs::remove_dir_all(&shared_dir).ok();
+
+        // 2. Test organized subdirectories mode
+        let sub_dir = std::env::temp_dir().join("batcherbird_test_batch_subdirs");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+
+        let batch_config_subdirs = BatchExportConfig {
+            output_directory: sub_dir.clone(),
+            naming_pattern: "Sub_{note_name}_{note}_{velocity}.wav".to_string(),
+            formats: vec![AudioFormat::Wav24Bit, AudioFormat::DecentSampler, AudioFormat::SFZ],
+            organize_subdirectories: true,
+            ..Default::default()
+        };
+
+        let batch_exp_sub = BatchExporter::new(batch_config_subdirs).unwrap();
+        let result_sub = batch_exp_sub.export_samples(&[sample]).unwrap();
+
+        assert_eq!(result_sub.files_by_format.len(), 3);
+        assert!(sub_dir.join("WAV_24Bit").exists());
+        assert!(sub_dir.join("DecentSampler").exists());
+        assert!(sub_dir.join("SFZ").exists());
+
+        std::fs::remove_dir_all(&sub_dir).ok();
     }
 }

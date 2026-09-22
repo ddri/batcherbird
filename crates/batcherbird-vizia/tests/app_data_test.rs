@@ -1,5 +1,6 @@
 #![allow(clippy::field_reassign_with_default)]
 
+use batcherbird_core::export::AudioFormat;
 use batcherbird_vizia::app_data::{samples_to_peaks, AppData, AppState};
 use batcherbird_vizia::app_event::InstrumentPreset;
 use batcherbird_vizia::views::hit_test_note;
@@ -352,6 +353,49 @@ fn test_input_gain_controls() {
     data.set_input_gain_db(4.5);
     let config = data.build_sampling_config();
     assert_eq!(config.input_gain_db, 4.5);
+}
+
+#[test]
+fn test_export_format_cycling_and_display() {
+    let data = AppData::default();
+    assert_eq!(data.format_options.len(), 7);
+    assert_eq!(data.format_options[5], "DecentSampler + SFZ");
+    assert_eq!(data.format_options[6], "All Formats");
+
+    assert_eq!(AppData::format_display(&AudioFormat::DecentSamplerAndSfz), "DecentSampler + SFZ");
+    assert_eq!(AppData::format_display(&AudioFormat::All), "All Formats");
+
+    // Test cycling forward through all 7
+    let mut current = AudioFormat::Wav16Bit;
+    let expected_order = [
+        AudioFormat::Wav24Bit,
+        AudioFormat::Wav32BitFloat,
+        AudioFormat::DecentSampler,
+        AudioFormat::SFZ,
+        AudioFormat::DecentSamplerAndSfz,
+        AudioFormat::All,
+        AudioFormat::Wav16Bit,
+    ];
+    for expected in expected_order {
+        current = AppData::next_format(&current);
+        assert_eq!(current, expected);
+    }
+
+    // Test cycling backward through all 7
+    let mut current_back = AudioFormat::Wav16Bit;
+    let expected_back_order = [
+        AudioFormat::All,
+        AudioFormat::DecentSamplerAndSfz,
+        AudioFormat::SFZ,
+        AudioFormat::DecentSampler,
+        AudioFormat::Wav32BitFloat,
+        AudioFormat::Wav24Bit,
+        AudioFormat::Wav16Bit,
+    ];
+    for expected in expected_back_order {
+        current_back = AppData::prev_format(&current_back);
+        assert_eq!(current_back, expected);
+    }
 }
 
 

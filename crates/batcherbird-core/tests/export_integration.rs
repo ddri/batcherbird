@@ -1,5 +1,7 @@
 use batcherbird_core::detection::DetectionConfig;
-use batcherbird_core::export::{read_wav_metadata, AudioFormat, ExportConfig, SampleExporter};
+use batcherbird_core::export::{
+    read_wav_metadata, AudioFormat, BatchExportConfig, BatchExporter, ExportConfig, SampleExporter,
+};
 use batcherbird_core::sampler::Sample;
 use std::time::{Duration, SystemTime};
 
@@ -272,4 +274,98 @@ fn test_riff_metadata_embedding_roundtrip() {
     // Cleanup
     std::fs::remove_dir_all(&temp_dir).ok();
 }
+
+#[test]
+fn test_simultaneous_ds_and_sfz_integration() {
+    let sine_wave: Vec<f32> = (0..22050)
+        .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 44100.0).sin() * 0.5)
+        .collect();
+
+    let sample = Sample {
+        note: 60,
+        velocity: 100,
+        audio_data: sine_wave,
+        sample_rate: 44100,
+        channels: 1,
+        recorded_at: SystemTime::now(),
+        midi_timing: Duration::from_millis(50),
+        audio_timing: Duration::from_millis(500),
+    };
+
+    let temp_dir = std::env::temp_dir().join("batcherbird_test_simul_integration");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let config = ExportConfig {
+        output_directory: temp_dir.clone(),
+        naming_pattern: "Patch_{note_name}_{note}_{velocity}.wav".to_string(),
+        sample_format: AudioFormat::DecentSamplerAndSfz,
+        normalize: false,
+        fade_in_ms: 0.0,
+        fade_out_ms: 0.0,
+        apply_detection: false,
+        detection_config: DetectionConfig::default(),
+        creator_name: Some("Sound Designer".to_string()),
+        instrument_description: Some("Hybrid Pad".to_string()),
+        embed_metadata: true,
+    };
+
+    let exporter = SampleExporter::new(config).unwrap();
+    let exported = exporter.export_samples(&[sample]).unwrap();
+
+    // 1 WAV file + 1 .dspreset + 1 .sfz = 3 files
+    assert_eq!(exported.len(), 3);
+
+    let dspreset_path = temp_dir.join("Patch.dspreset");
+    let sfz_path = temp_dir.join("Patch.sfz");
+    let wav_path = temp_dir.join("Patch_C4_60_vel100.wav");
+
+    assert!(dspreset_path.exists());
+    assert!(sfz_path.exists());
+    assert!(wav_path.exists());
+
+    // Both presets should reference the exact same relative WAV filename
+    let ds_xml = std::fs::read_to_string(&dspreset_path).unwrap();
+    let sfz_txt = std::fs::read_to_string(&sfz_path).unwrap();
+
+    assert!(ds_xml.contains("Patch_C4_60_vel100.wav"));
+    assert!(sfz_txt.contains("Patch_C4_60_vel100.wav"));
+
+    std::fs::remove_dir_all(&temp_dir).ok();
+}
+
+#[test]
+fn test_batch_exporter_pipeline_integration() {
+    let sample = Sample {
+        note: 72,
+        velocity: 120,
+        audio_data: vec![0.1; 1000],
+        sample_rate: 44100,
+        channels: 1,
+        recorded_at: SystemTime::now(),
+        midi_timing: Duration::from_millis(50),
+        audio_timing: Duration::from_millis(500),
+    };
+
+    let temp_dir = std::env::temp_dir().join("batcherbird_test_batch_pipeline");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let batch_cfg = BatchExportConfig {
+        output_directory: temp_dir.clone(),
+        naming_pattern: "Test_{note_name}_{note}_{velocity}.wav".to_string(),
+        formats: vec![AudioFormat::DecentSampler, AudioFormat::SFZ, AudioFormat::Wav16Bit],
+        organize_subdirectories: true,
+        ..Default::default()
+    };
+
+    let batch_exp = BatchExporter::new(batch_cfg).unwrap();
+    let res = batch_exp.export_samples(&[sample]).unwrap();
+
+    assert_eq!(res.files_by_format.len(), 3);
+    assert!(temp_dir.join("DecentSampler/Test.dspreset").exists());
+    assert!(temp_dir.join("SFZ/Test.sfz").exists());
+    assert!(temp_dir.join("WAV_16Bit/Test_C5_72_vel120.wav").exists());
+
+    std::fs::remove_dir_all(&temp_dir).ok();
+}
+
 
