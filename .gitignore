@@ -51,6 +51,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 dist/
+dist_debug/
 build/
 
 # Temporary files that might contain sensitive data

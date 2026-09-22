@@ -167,13 +167,14 @@ impl View for KeyboardView {
             note >= start_note && note <= end_note && (note - start_note).is_multiple_of(note_step)
         };
 
-        // Draw background
+        // Draw keybed backing
         let bg_path = vg::Path::rect(
             vg::Rect::from_xywh(bounds.x, bounds.y, bounds.w, bounds.h),
             None,
         );
         let mut bg_paint = vg::Paint::default();
-        bg_paint.set_color(vg::Color::from_rgb(0x0c, 0x0c, 0x12));
+        bg_paint.set_anti_alias(true);
+        bg_paint.set_color(vg::Color::from_rgb(0x0a, 0x0b, 0x10));
         canvas.draw_path(&bg_path, &bg_paint);
 
         // Display range: 4 octaves anchored at start_note's octave
@@ -194,69 +195,161 @@ impl View for KeyboardView {
         let black_w = white_w * 0.6;
         let black_h = white_h * 0.6;
 
-        // Draw white keys
+        // -------------------------------------------------------------
+        // Pass 1: Draw White Keys
+        // -------------------------------------------------------------
         let mut white_x = bounds.x;
         for note in display_start..=display_end {
             if is_black_key(note) {
                 continue;
             }
 
-            let color = if Some(note) == audition_note {
-                vg::Color::from_rgb(0x00, 0xe5, 0xff) // bright audition cyan
-            } else if note == current_note {
-                vg::Color::from_rgb(0x4a, 0x9e, 0xff) // bright active blue
-            } else if is_stepped_target(note) {
-                vg::Color::from_rgb(0x6a, 0x9a, 0xcc) // target stepped note
-            } else if note >= start_note && note <= end_note {
-                vg::Color::from_rgb(0x75, 0x7c, 0x88) // span between steps
+            let is_audition = Some(note) == audition_note;
+            let is_current = note == current_note;
+            let is_target = is_stepped_target(note);
+            let in_range = note >= start_note && note <= end_note;
+
+            // Base key color
+            let key_color = if is_audition {
+                vg::Color::from_rgb(0x00, 0xe5, 0xff) // Luminous cyan
+            } else if is_current {
+                vg::Color::from_rgb(0x3b, 0x82, 0xf6) // Active blue
+            } else if in_range {
+                vg::Color::from_rgb(0xeb, 0xf0, 0xfa) // Subtle studio ivory
             } else {
-                vg::Color::from_rgb(0x88, 0x88, 0x88) // muted gray
+                vg::Color::from_rgb(0xd1, 0xd5, 0xdb) // Realistic off-white
             };
 
-            let key_path = vg::Path::rect(
-                vg::Rect::from_xywh(white_x + 0.5, bounds.y + 0.5, white_w - 1.0, white_h - 1.0),
-                None,
+            let key_rect = vg::Rect::from_xywh(
+                white_x + 0.5,
+                bounds.y + 0.5,
+                white_w - 1.0,
+                white_h - 1.0,
             );
+            let key_path = vg::Path::rect(key_rect, None);
             let mut key_paint = vg::Paint::default();
-            key_paint.set_color(color);
+            key_paint.set_anti_alias(true);
+            key_paint.set_color(key_color);
             canvas.draw_path(&key_path, &key_paint);
 
-            let border_path = vg::Path::rect(
-                vg::Rect::from_xywh(white_x + 0.5, bounds.y + 0.5, white_w - 1.0, white_h - 1.0),
-                None,
-            );
+            // Subtle bottom bevel lip
+            if !is_audition && !is_current {
+                let lip_rect = vg::Rect::from_xywh(
+                    white_x + 0.5,
+                    bounds.y + white_h - 4.0,
+                    white_w - 1.0,
+                    3.5,
+                );
+                let lip_path = vg::Path::rect(lip_rect, None);
+                let mut lip_paint = vg::Paint::default();
+                lip_paint.set_anti_alias(true);
+                lip_paint.set_color(vg::Color::from_rgb(0xb0, 0xb7, 0xc3));
+                canvas.draw_path(&lip_path, &lip_paint);
+            }
+
+            // Key separator stroke
+            let border_path = vg::Path::rect(key_rect, None);
             let mut border_paint = vg::Paint::default();
-            border_paint.set_color(vg::Color::from_rgb(0x33, 0x33, 0x44));
+            border_paint.set_anti_alias(true);
+            border_paint.set_color(vg::Color::from_rgb(0x18, 0x1b, 0x26));
             border_paint.set_style(vg::PaintStyle::Stroke);
-            border_paint.set_stroke_width(0.5);
+            border_paint.set_stroke_width(1.0);
             canvas.draw_path(&border_path, &border_paint);
+
+            // Stepped Target Note: draw glowing LED jewel pip at bottom
+            if is_target && !is_audition && !is_current {
+                let pip_w = (white_w * 0.38).clamp(4.0, 10.0);
+                let pip_h = 4.0;
+                let pip_x = white_x + (white_w - pip_w) * 0.5;
+                let pip_y = bounds.y + white_h - 9.0;
+
+                let pip_rect = vg::Rect::from_xywh(pip_x, pip_y, pip_w, pip_h);
+                let pip_path = vg::Path::rect(pip_rect, None);
+                let mut pip_paint = vg::Paint::default();
+                pip_paint.set_anti_alias(true);
+                pip_paint.set_color(vg::Color::from_rgb(0x02, 0x84, 0xc7)); // Studio cyan LED
+                canvas.draw_path(&pip_path, &pip_paint);
+            }
 
             white_x += white_w;
         }
 
-        // Draw black keys on top
+        // -------------------------------------------------------------
+        // Pass 2: Draw Black Keys
+        // -------------------------------------------------------------
         let mut white_x = bounds.x;
         for note in display_start..=display_end {
             if is_black_key(note) {
                 let bx = white_x - black_w * 0.5;
 
-                let color = if Some(note) == audition_note {
-                    vg::Color::from_rgb(0x00, 0xb0, 0xff) // bright audition cyan/blue
-                } else if note == current_note {
-                    vg::Color::from_rgb(0x4a, 0x9e, 0xff)
-                } else if is_stepped_target(note) {
-                    vg::Color::from_rgb(0x2a, 0x4a, 0x77) // target stepped note
-                } else if note >= start_note && note <= end_note {
-                    vg::Color::from_rgb(0x22, 0x28, 0x38)
+                let is_audition = Some(note) == audition_note;
+                let is_current = note == current_note;
+                let is_target = is_stepped_target(note);
+                let in_range = note >= start_note && note <= end_note;
+
+                // 1. Soft Drop Shadow onto white keys
+                let shadow_rect = vg::Rect::from_xywh(
+                    bx - 1.0,
+                    bounds.y,
+                    black_w + 2.0,
+                    black_h + 3.0,
+                );
+                let shadow_path = vg::Path::rect(shadow_rect, None);
+                let mut shadow_paint = vg::Paint::default();
+                shadow_paint.set_anti_alias(true);
+                shadow_paint.set_color(vg::Color::from_argb(80, 0, 0, 0));
+                canvas.draw_path(&shadow_path, &shadow_paint);
+
+                // 2. Black Key Body
+                let key_color = if is_audition {
+                    vg::Color::from_rgb(0x00, 0xb4, 0xd8)
+                } else if is_current {
+                    vg::Color::from_rgb(0x25, 0x63, 0xeb)
+                } else if is_target {
+                    vg::Color::from_rgb(0x18, 0x1c, 0x28)
+                } else if in_range {
+                    vg::Color::from_rgb(0x16, 0x19, 0x24)
                 } else {
-                    vg::Color::from_rgb(0x22, 0x22, 0x2a)
+                    vg::Color::from_rgb(0x10, 0x12, 0x1a)
                 };
 
-                let key_path =
-                    vg::Path::rect(vg::Rect::from_xywh(bx, bounds.y, black_w, black_h), None);
+                let key_rect = vg::Rect::from_xywh(bx, bounds.y, black_w, black_h);
+                let key_path = vg::Path::rect(key_rect, None);
                 let mut key_paint = vg::Paint::default();
-                key_paint.set_color(color);
+                key_paint.set_anti_alias(true);
+                key_paint.set_color(key_color);
                 canvas.draw_path(&key_path, &key_paint);
+
+                // 3. Top Sheen / Bevel
+                if !is_audition && !is_current {
+                    let sheen_w = (black_w - 2.0).max(1.0);
+                    let sheen_h = (black_h - 4.0).max(1.0);
+                    let sheen_rect = vg::Rect::from_xywh(bx + 1.0, bounds.y + 1.0, sheen_w, sheen_h);
+                    let sheen_path = vg::Path::rect(sheen_rect, None);
+                    let mut sheen_paint = vg::Paint::default();
+                    sheen_paint.set_anti_alias(true);
+                    sheen_paint.set_color(if is_target {
+                        vg::Color::from_rgb(0x2d, 0x4f, 0x7c)
+                    } else {
+                        vg::Color::from_rgb(0x22, 0x26, 0x36)
+                    });
+                    canvas.draw_path(&sheen_path, &sheen_paint);
+                }
+
+                // Stepped Target Note on Black Key: bright cyan pip at bottom
+                if is_target && !is_audition && !is_current {
+                    let pip_w = (black_w * 0.45).clamp(3.0, 7.0);
+                    let pip_h = 3.0;
+                    let pip_x = bx + (black_w - pip_w) * 0.5;
+                    let pip_y = bounds.y + black_h - 5.0;
+
+                    let pip_rect = vg::Rect::from_xywh(pip_x, pip_y, pip_w, pip_h);
+                    let pip_path = vg::Path::rect(pip_rect, None);
+                    let mut pip_paint = vg::Paint::default();
+                    pip_paint.set_anti_alias(true);
+                    pip_paint.set_color(vg::Color::from_rgb(0x38, 0xbd, 0xf8));
+                    canvas.draw_path(&pip_path, &pip_paint);
+                }
             } else {
                 white_x += white_w;
             }
@@ -267,18 +360,18 @@ impl View for KeyboardView {
 pub fn keyboard(cx: &mut Context) {
     VStack::new(cx, |cx| {
         KeyboardView::new(cx)
-            .height(Pixels(48.0))
+            .height(Pixels(64.0))
             .width(Stretch(1.0))
-            .corner_radius(Pixels(3.0))
+            .corner_radius(Pixels(6.0))
             .cursor(CursorIcon::Hand);
 
         HStack::new(cx, |cx| {
             Label::new(
                 cx,
-                "Left-click: Audition · Right-click: Set Start · Shift-click: Set End",
+                "Audition: Left-click  ·  Set Start: Right-click  ·  Set End: Shift-click",
             )
             .font_size(10.0)
-            .color(Color::from("#555566"))
+            .color(Color::from("#64748b"))
             .width(Stretch(1.0))
             .alignment(Alignment::Center);
         })
@@ -287,5 +380,5 @@ pub fn keyboard(cx: &mut Context) {
     })
     .height(Auto)
     .width(Stretch(1.0))
-    .vertical_gap(Pixels(3.0));
+    .vertical_gap(Pixels(4.0));
 }

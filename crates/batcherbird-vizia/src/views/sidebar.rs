@@ -2,15 +2,41 @@ use crate::app_data::AppData;
 use crate::app_event::{AppEvent, InstrumentPreset};
 use vizia::prelude::*;
 
-fn section_label(cx: &mut Context, text: &str) {
-    Label::new(cx, text)
-        .font_size(10.0)
-        .color(Color::from("#555555"));
+fn card_header(cx: &mut Context, title: &str) {
+    HStack::new(cx, move |cx| {
+        Element::new(cx).class("card-indicator");
+        Label::new(cx, title).class("card-title");
+    })
+    .class("card-header");
 }
 
+fn compact_stepper(
+    cx: &mut Context,
+    label: &str,
+    value: impl FnOnce(&mut Context),
+    dec: AppEvent,
+    inc: AppEvent,
+) {
+    VStack::new(cx, |cx| {
+        Label::new(cx, label).class("field-label");
+        HStack::new(cx, |cx| {
+            Label::new(cx, "-")
+                .class("stepper-btn")
+                .on_press(move |cx| cx.emit(dec.clone()));
+            value(cx);
+            Label::new(cx, "+")
+                .class("stepper-btn")
+                .on_press(move |cx| cx.emit(inc.clone()));
+        })
+        .height(Auto)
+        .horizontal_gap(Pixels(4.0))
+        .alignment(Alignment::Center);
+    })
+    .class("field-box");
+}
 
 #[allow(clippy::too_many_arguments)]
-fn field_pair(
+fn stepper_pair(
     cx: &mut Context,
     label_a: &str,
     value_a: impl FnOnce(&mut Context),
@@ -22,460 +48,308 @@ fn field_pair(
     inc_b: AppEvent,
 ) {
     HStack::new(cx, |cx| {
-        compact_field(cx, label_a, value_a, dec_a, inc_a);
-        compact_field(cx, label_b, value_b, dec_b, inc_b);
+        compact_stepper(cx, label_a, value_a, dec_a, inc_a);
+        compact_stepper(cx, label_b, value_b, dec_b, inc_b);
     })
     .width(Stretch(1.0))
     .height(Auto)
     .horizontal_gap(Pixels(6.0));
 }
 
-fn compact_field(
-    cx: &mut Context,
-    label: &str,
-    value: impl FnOnce(&mut Context),
-    dec: AppEvent,
-    inc: AppEvent,
-) {
-    VStack::new(cx, |cx| {
-        Label::new(cx, label)
-            .font_size(9.0)
-            .color(Color::from("#555555"));
-        HStack::new(cx, |cx| {
-            // Minus button
-            Label::new(cx, "-")
-                .font_size(12.0)
-                .color(Color::from("#666666"))
-                .width(Pixels(18.0))
-                .height(Pixels(18.0))
-                .alignment(Alignment::Center)
-                .background_color(Color::from("#1a1a25"))
-                .corner_radius(Pixels(2.0))
-                .cursor(CursorIcon::Hand)
-                .on_press(move |cx| cx.emit(dec.clone()));
-            // Value
-            value(cx);
-            // Plus button
-            Label::new(cx, "+")
-                .font_size(12.0)
-                .color(Color::from("#666666"))
-                .width(Pixels(18.0))
-                .height(Pixels(18.0))
-                .alignment(Alignment::Center)
-                .background_color(Color::from("#1a1a25"))
-                .corner_radius(Pixels(2.0))
-                .cursor(CursorIcon::Hand)
-                .on_press(move |cx| cx.emit(inc.clone()));
-        })
-        .height(Auto)
-        .horizontal_gap(Pixels(3.0))
-        .alignment(Alignment::Center);
-    })
-    .width(Stretch(1.0))
-    .height(Auto)
-    .background_color(Color::from("#131318"))
-    .border_width(Pixels(1.0))
-    .border_color(Color::from("#1e1e28"))
-    .corner_radius(Pixels(3.0))
-    .padding_left(Pixels(6.0))
-    .padding_right(Pixels(6.0))
-    .padding_top(Pixels(5.0))
-    .padding_bottom(Pixels(5.0))
-    .vertical_gap(Pixels(2.0));
-}
-
-fn divider(cx: &mut Context) {
-    Element::new(cx)
-        .width(Stretch(1.0))
-        .height(Pixels(1.0))
-        .background_color(Color::from("#1a1a25"));
-}
-
 pub fn sidebar(cx: &mut Context) {
     VStack::new(cx, |cx| {
-        // ---- DEVICES ----
-        VStack::new(cx, |cx| {
-            section_label(cx, "DEVICES");
-
-            // MIDI Out
+            // ==========================================
+            // CARD 1: I/O & ROUTING
+            // ==========================================
             VStack::new(cx, |cx| {
-                Label::new(cx, "MIDI Out")
-                    .font_size(9.0)
-                    .color(Color::from("#555555"));
-                PickList::new(cx, AppData::midi_devices, AppData::selected_midi_device, true)
-                    .on_select(|cx, idx| cx.emit(AppEvent::SelectMidiDevice(idx)))
-                    .width(Stretch(1.0));
-            })
-            .height(Auto)
-            .vertical_gap(Pixels(2.0));
+                card_header(cx, "I/O & ROUTING");
 
-            // Audio In
-            VStack::new(cx, |cx| {
-                Label::new(cx, "Audio In")
-                    .font_size(9.0)
-                    .color(Color::from("#555555"));
-                PickList::new(cx, AppData::audio_input_devices, AppData::selected_audio_input, true)
-                    .on_select(|cx, idx| cx.emit(AppEvent::SelectAudioInput(idx)))
-                    .width(Stretch(1.0));
-            })
-            .height(Auto)
-            .vertical_gap(Pixels(2.0));
-
-            // Channel Routing
-            VStack::new(cx, |cx| {
-                Label::new(cx, "Channels")
-                    .font_size(9.0)
-                    .color(Color::from("#555555"));
-                PickList::new(cx, AppData::channel_routing_options, AppData::selected_channel_routing, true)
-                    .on_select(|cx, idx| cx.emit(AppEvent::SelectChannelRouting(idx)))
-                    .width(Stretch(1.0));
-            })
-            .height(Auto)
-            .vertical_gap(Pixels(2.0));
-
-            // Playthrough toggle
-            HStack::new(cx, |cx| {
-                Label::new(cx, "PLAYTHROUGH")
-                    .font_size(10.0)
-                    .color(Color::from("#555555"))
-                    .width(Stretch(1.0));
-
-                Binding::new(cx, AppData::playthrough_enabled, |cx, enabled| {
-                    let is_on = enabled.get(cx);
-                    HStack::new(cx, move |cx| {
-                        Label::new(cx, if is_on { "ON" } else { "OFF" })
-                            .font_size(10.0)
-                            .color(if is_on {
-                                Color::from("#00e676")
-                            } else {
-                                Color::from("#666666")
-                            });
-                    })
-                    .padding_left(Pixels(6.0))
-                    .padding_right(Pixels(6.0))
-                    .padding_top(Pixels(2.0))
-                    .padding_bottom(Pixels(2.0))
-                    .background_color(if is_on {
-                        Color::from("#12251a")
-                    } else {
-                        Color::from("#1a1a25")
-                    })
-                    .border_width(Pixels(1.0))
-                    .border_color(if is_on {
-                        Color::from("#00e67644")
-                    } else {
-                        Color::from("#252535")
-                    })
-                    .corner_radius(Pixels(2.0))
-                    .cursor(CursorIcon::Hand)
-                    .on_press(|cx| cx.emit(AppEvent::TogglePlaythrough));
-                });
-            })
-            .height(Auto)
-            .alignment(Alignment::Center);
-
-            // Input Gain Trim
-            VStack::new(cx, |cx| {
-                HStack::new(cx, |cx| {
-                    Label::new(cx, "INPUT GAIN")
-                        .font_size(9.0)
-                        .color(Color::from("#555555"))
+                // MIDI Output
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "MIDI DESTINATION").class("field-label");
+                    PickList::new(cx, AppData::midi_devices, AppData::selected_midi_device, true)
+                        .on_select(|cx, idx| cx.emit(AppEvent::SelectMidiDevice(idx)))
                         .width(Stretch(1.0));
+                })
+                .height(Auto)
+                .vertical_gap(Pixels(3.0));
 
-                    Binding::new(cx, AppData::input_gain_display, |cx, display| {
-                        let text = display.get(cx);
-                        Label::new(cx, &text)
-                            .font_size(10.0)
-                            .color(Color::from("#e0e0e0"))
-                            .cursor(CursorIcon::Hand)
-                            .on_press(|cx| cx.emit(AppEvent::ResetInputGain));
+                // Audio Input
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "AUDIO SOURCE").class("field-label");
+                    PickList::new(cx, AppData::audio_input_devices, AppData::selected_audio_input, true)
+                        .on_select(|cx, idx| cx.emit(AppEvent::SelectAudioInput(idx)))
+                        .width(Stretch(1.0));
+                })
+                .height(Auto)
+                .vertical_gap(Pixels(3.0));
+
+                // Channel Routing
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "CHANNEL TOPOLOGY").class("field-label");
+                    PickList::new(cx, AppData::channel_routing_options, AppData::selected_channel_routing, true)
+                        .on_select(|cx, idx| cx.emit(AppEvent::SelectChannelRouting(idx)))
+                        .width(Stretch(1.0));
+                })
+                .height(Auto)
+                .vertical_gap(Pixels(3.0));
+
+                // Playthrough Monitor Toggle
+                HStack::new(cx, |cx| {
+                    Label::new(cx, "MONITOR PLAYTHROUGH").class("field-label").width(Stretch(1.0));
+
+                    Binding::new(cx, AppData::playthrough_enabled, |cx, enabled| {
+                        let is_on = enabled.get(cx);
+                        HStack::new(cx, move |cx| {
+                            Label::new(cx, if is_on { "ACTIVE" } else { "MUTED" })
+                                .font_size(9.0)
+                                .font_weight(FontWeightKeyword::Bold)
+                                .color(if is_on {
+                                    Color::from("#10b981")
+                                } else {
+                                    Color::from("#64748b")
+                                });
+                        })
+                        .padding_left(Pixels(8.0))
+                        .padding_right(Pixels(8.0))
+                        .padding_top(Pixels(3.0))
+                        .padding_bottom(Pixels(3.0))
+                        .background_color(if is_on {
+                            Color::from("#062817")
+                        } else {
+                            Color::from("#161a27")
+                        })
+                        .border_width(Pixels(1.0))
+                        .border_color(if is_on {
+                            Color::from("#10b98166")
+                        } else {
+                            Color::from("#242c3f")
+                        })
+                        .corner_radius(Pixels(4.0))
+                        .cursor(CursorIcon::Hand)
+                        .on_press(|cx| cx.emit(AppEvent::TogglePlaythrough));
                     });
                 })
                 .height(Auto)
                 .alignment(Alignment::Center);
 
-                HStack::new(cx, |cx| {
-                    // [-1 dB]
+                // Input Gain Trim
+                VStack::new(cx, |cx| {
+                    HStack::new(cx, |cx| {
+                        Label::new(cx, "PREAMP GAIN TRIM").class("field-label").width(Stretch(1.0));
+
+                        Binding::new(cx, AppData::input_gain_display, |cx, display| {
+                            let text = display.get(cx);
+                            Label::new(cx, &text)
+                                .font_size(10.0)
+                                .font_weight(FontWeightKeyword::Bold)
+                                .color(Color::from("#f59e0b"))
+                                .cursor(CursorIcon::Hand)
+                                .on_press(|cx| cx.emit(AppEvent::ResetInputGain));
+                        });
+                    })
+                    .height(Auto)
+                    .alignment(Alignment::Center);
+
                     HStack::new(cx, |cx| {
                         Label::new(cx, "-1 dB")
-                            .font_size(9.0)
-                            .color(Color::from("#aaaaaa"));
-                    })
-                    .padding_left(Pixels(6.0))
-                    .padding_right(Pixels(6.0))
-                    .padding_top(Pixels(2.0))
-                    .padding_bottom(Pixels(2.0))
-                    .background_color(Color::from("#1a1a25"))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::from("#252535"))
-                    .corner_radius(Pixels(2.0))
-                    .cursor(CursorIcon::Hand)
-                    .on_press(|cx| cx.emit(AppEvent::AdjustInputGain(-1.0)));
+                            .class("chip-btn")
+                            .width(Stretch(1.0))
+                            .on_press(|cx| cx.emit(AppEvent::AdjustInputGain(-1.0)));
 
-                    // [RESET]
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, "RESET")
-                            .font_size(9.0)
-                            .color(Color::from("#777777"));
-                    })
-                    .padding_left(Pixels(6.0))
-                    .padding_right(Pixels(6.0))
-                    .padding_top(Pixels(2.0))
-                    .padding_bottom(Pixels(2.0))
-                    .background_color(Color::from("#1a1a25"))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::from("#252535"))
-                    .corner_radius(Pixels(2.0))
-                    .cursor(CursorIcon::Hand)
-                    .on_press(|cx| cx.emit(AppEvent::ResetInputGain));
+                        Label::new(cx, "0 dB")
+                            .class("chip-btn")
+                            .width(Stretch(1.0))
+                            .on_press(|cx| cx.emit(AppEvent::ResetInputGain));
 
-                    // [+1 dB]
-                    HStack::new(cx, |cx| {
                         Label::new(cx, "+1 dB")
-                            .font_size(9.0)
-                            .color(Color::from("#aaaaaa"));
+                            .class("chip-btn")
+                            .width(Stretch(1.0))
+                            .on_press(|cx| cx.emit(AppEvent::AdjustInputGain(1.0)));
                     })
-                    .padding_left(Pixels(6.0))
-                    .padding_right(Pixels(6.0))
-                    .padding_top(Pixels(2.0))
-                    .padding_bottom(Pixels(2.0))
-                    .background_color(Color::from("#1a1a25"))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::from("#252535"))
-                    .corner_radius(Pixels(2.0))
-                    .cursor(CursorIcon::Hand)
-                    .on_press(|cx| cx.emit(AppEvent::AdjustInputGain(1.0)));
+                    .class("chip-group");
                 })
                 .height(Auto)
-                .horizontal_gap(Pixels(4.0))
+                .vertical_gap(Pixels(4.0));
+            })
+            .class("card");
+
+            // ==========================================
+            // CARD 2: SAMPLER ENGINE
+            // ==========================================
+            VStack::new(cx, |cx| {
+                card_header(cx, "SAMPLER ENGINE");
+
+                // Octave Range Presets
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "OCTAVE SPAN").class("field-label");
+                    HStack::new(cx, |cx| {
+                        for (label, octaves) in [("1 OCT", 1), ("2 OCT", 2), ("4 OCT", 4)] {
+                            Label::new(cx, label)
+                                .class("chip-btn")
+                                .width(Stretch(1.0))
+                                .on_press(move |cx| cx.emit(AppEvent::SetOctavePreset(octaves)));
+                        }
+                    })
+                    .class("chip-group");
+                })
+                .height(Auto)
+                .vertical_gap(Pixels(3.0));
+
+                // Instrument Style Presets
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "INSTRUMENT PROFILE").class("field-label");
+                    HStack::new(cx, |cx| {
+                        for (label, preset) in [
+                            ("LEAD", InstrumentPreset::Lead),
+                            ("PAD", InstrumentPreset::Pad),
+                            ("BASS", InstrumentPreset::Bass),
+                            ("PLUCK", InstrumentPreset::Pluck),
+                        ] {
+                            Label::new(cx, label)
+                                .class("chip-btn")
+                                .width(Stretch(1.0))
+                                .on_press(move |cx| cx.emit(AppEvent::ApplyInstrumentPreset(preset)));
+                        }
+                    })
+                    .class("chip-group");
+                })
+                .height(Auto)
+                .vertical_gap(Pixels(3.0));
+
+                // Note Range Steppers
+                stepper_pair(
+                    cx,
+                    "START NOTE",
+                    |cx| {
+                        Label::new(cx, AppData::start_note.map(|n: &u8| AppData::note_name(*n)))
+                            .class("field-value")
+                            .width(Stretch(1.0))
+                            .alignment(Alignment::Center);
+                    },
+                    AppEvent::DecrementStartNote,
+                    AppEvent::IncrementStartNote,
+                    "END NOTE",
+                    |cx| {
+                        Label::new(cx, AppData::end_note.map(|n: &u8| AppData::note_name(*n)))
+                            .class("field-value")
+                            .width(Stretch(1.0))
+                            .alignment(Alignment::Center);
+                    },
+                    AppEvent::DecrementEndNote,
+                    AppEvent::IncrementEndNote,
+                );
+
+                // Step Interval Picklist
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "STEPPING INTERVAL").class("field-label");
+                    PickList::new(
+                        cx,
+                        AppData::note_step_options,
+                        AppData::selected_step_index,
+                        true,
+                    )
+                    .on_select(|cx, idx| cx.emit(AppEvent::SelectNoteStepByIndex(idx)))
+                    .width(Stretch(1.0));
+                })
+                .height(Auto)
+                .vertical_gap(Pixels(3.0));
+
+                // Layers & Duration Steppers
+                stepper_pair(
+                    cx,
+                    "VEL LAYERS",
+                    |cx| {
+                        Label::new(cx, AppData::velocity_layers.map(|n: &u8| n.to_string()))
+                            .class("field-value")
+                            .width(Stretch(1.0))
+                            .alignment(Alignment::Center);
+                    },
+                    AppEvent::DecrementVelocityLayers,
+                    AppEvent::IncrementVelocityLayers,
+                    "DURATION",
+                    |cx| {
+                        Label::new(
+                            cx,
+                            AppData::note_duration_ms
+                                .map(|ms: &u32| format!("{:.1}s", *ms as f32 / 1000.0)),
+                        )
+                        .class("field-value")
+                        .width(Stretch(1.0))
+                        .alignment(Alignment::Center);
+                    },
+                    AppEvent::DecrementDuration,
+                    AppEvent::IncrementDuration,
+                );
+
+                // Live session telemetry badge
+                HStack::new(cx, |cx| {
+                    Label::new(cx, AppData::session_summary_display)
+                        .font_size(10.0)
+                        .font_weight(FontWeightKeyword::Bold)
+                        .color(Color::from("#38bdf8"))
+                        .alignment(Alignment::Center);
+                })
+                .width(Stretch(1.0))
+                .height(Pixels(26.0))
+                .background_color(Color::from("#0c2033"))
+                .corner_radius(Pixels(4.0))
+                .border_width(Pixels(1.0))
+                .border_color(Color::from("#0284c755"))
                 .alignment(Alignment::Center);
             })
-            .height(Auto)
-            .vertical_gap(Pixels(4.0));
-        })
-        .width(Stretch(1.0))
-        .height(Auto)
-        .padding(Pixels(12.0))
-        .vertical_gap(Pixels(8.0));
+            .class("card");
 
-        divider(cx);
+            // ==========================================
+            // CARD 3: EXPORT PIPELINE
+            // ==========================================
+            VStack::new(cx, |cx| {
+                card_header(cx, "EXPORT PIPELINE");
 
-        // ---- SAMPLING ----
-        VStack::new(cx, |cx| {
-            HStack::new(cx, |cx| {
-                section_label(cx, "SAMPLING");
-                HStack::new(cx, |cx| {
-                    for (label, octaves) in [("1 Oct", 1), ("2 Oct", 2), ("4 Oct", 4)] {
-                        Label::new(cx, label)
-                            .font_size(9.0)
-                            .color(Color::from("#888899"))
-                            .padding_left(Pixels(4.0))
-                            .padding_right(Pixels(4.0))
-                            .padding_top(Pixels(2.0))
-                            .padding_bottom(Pixels(2.0))
-                            .background_color(Color::from("#1a1a25"))
-                            .corner_radius(Pixels(2.0))
-                            .cursor(CursorIcon::Hand)
-                            .on_press(move |cx| cx.emit(AppEvent::SetOctavePreset(octaves)));
-                    }
+                // Target Format
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "EXPORT FORMAT").class("field-label");
+                    PickList::new(cx, AppData::format_options, AppData::selected_format_index, true)
+                        .on_select(|cx, idx| cx.emit(AppEvent::SelectFormatByIndex(idx)))
+                        .width(Stretch(1.0));
                 })
-                .horizontal_gap(Pixels(4.0))
-                .alignment(Alignment::Right);
-            })
-            .width(Stretch(1.0))
-            .alignment(Alignment::Center);
+                .height(Auto)
+                .vertical_gap(Pixels(3.0));
 
-            // Quick Instrument Presets
-            HStack::new(cx, |cx| {
-                for (label, preset) in [
-                    ("Lead", InstrumentPreset::Lead),
-                    ("Pad", InstrumentPreset::Pad),
-                    ("Bass", InstrumentPreset::Bass),
-                    ("Pluck", InstrumentPreset::Pluck),
-                ] {
-                    Label::new(cx, label)
-                        .font_size(9.0)
-                        .color(Color::from("#99aacc"))
-                        .padding_left(Pixels(5.0))
-                        .padding_right(Pixels(5.0))
-                        .padding_top(Pixels(2.0))
-                        .padding_bottom(Pixels(2.0))
-                        .background_color(Color::from("#151b28"))
-                        .corner_radius(Pixels(2.0))
-                        .border_width(Pixels(1.0))
-                        .border_color(Color::from("#222d42"))
-                        .cursor(CursorIcon::Hand)
-                        .on_press(move |cx| cx.emit(AppEvent::ApplyInstrumentPreset(preset)));
-                }
-            })
-            .width(Stretch(1.0))
-            .horizontal_gap(Pixels(4.0))
-            .alignment(Alignment::Center);
+                // Destination Folder
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "DESTINATION DIRECTORY").class("field-label");
+                    HStack::new(cx, |cx| {
+                        Label::new(
+                            cx,
+                            AppData::output_directory.map(|p: &std::path::PathBuf| {
+                                p.file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| p.to_string_lossy().to_string())
+                            }),
+                        )
+                        .font_size(11.0)
+                        .color(Color::from("#cbd5e1"))
+                        .width(Stretch(1.0));
 
-            field_pair(
-                cx,
-                "START",
-                |cx| {
-                    Label::new(cx, AppData::start_note.map(|n: &u8| AppData::note_name(*n)))
-                        .font_size(14.0)
-                        .color(Color::from("#dddddd"))
-                        .width(Stretch(1.0))
-                        .alignment(Alignment::Center);
-                },
-                AppEvent::DecrementStartNote,
-                AppEvent::IncrementStartNote,
-                "END",
-                |cx| {
-                    Label::new(cx, AppData::end_note.map(|n: &u8| AppData::note_name(*n)))
-                        .font_size(14.0)
-                        .color(Color::from("#dddddd"))
-                        .width(Stretch(1.0))
-                        .alignment(Alignment::Center);
-                },
-                AppEvent::DecrementEndNote,
-                AppEvent::IncrementEndNote,
-            );
-
-            // Step interval
-            VStack::new(cx, |cx| {
-                Label::new(cx, "STEP INTERVAL")
-                    .font_size(9.0)
-                    .color(Color::from("#555555"));
-                PickList::new(
-                    cx,
-                    AppData::note_step_options,
-                    AppData::selected_step_index,
-                    true,
-                )
-                .on_select(|cx, idx| cx.emit(AppEvent::SelectNoteStepByIndex(idx)))
-                .width(Stretch(1.0));
-            })
-            .height(Auto)
-            .vertical_gap(Pixels(2.0));
-
-            field_pair(
-                cx,
-                "LAYERS",
-                |cx| {
-                    Label::new(cx, AppData::velocity_layers.map(|n: &u8| n.to_string()))
-                        .font_size(14.0)
-                        .color(Color::from("#dddddd"))
-                        .width(Stretch(1.0))
-                        .alignment(Alignment::Center);
-                },
-                AppEvent::DecrementVelocityLayers,
-                AppEvent::IncrementVelocityLayers,
-                "DURATION",
-                |cx| {
-                    Label::new(
-                        cx,
-                        AppData::note_duration_ms
-                            .map(|ms: &u32| format!("{:.1}s", *ms as f32 / 1000.0)),
-                    )
-                    .font_size(14.0)
-                    .color(Color::from("#dddddd"))
-                    .width(Stretch(1.0))
+                        Label::new(cx, "Browse")
+                            .font_size(10.0)
+                            .color(Color::from("#60a5fa"));
+                    })
+                    .height(Auto)
                     .alignment(Alignment::Center);
-                },
-                AppEvent::DecrementDuration,
-                AppEvent::IncrementDuration,
-            );
-
-            // Live session summary badge
-            HStack::new(cx, |cx| {
-                Label::new(cx, AppData::session_summary_display)
-                    .font_size(10.0)
-                    .color(Color::from("#4a9eff"))
-                    .alignment(Alignment::Center);
-            })
-            .width(Stretch(1.0))
-            .height(Pixels(22.0))
-            .background_color(Color::from("#121826"))
-            .corner_radius(Pixels(3.0))
-            .border_width(Pixels(1.0))
-            .border_color(Color::from("#1e293b"))
-            .alignment(Alignment::Center);
-        })
-        .width(Stretch(1.0))
-        .height(Auto)
-        .padding(Pixels(12.0))
-        .vertical_gap(Pixels(8.0));
-
-        divider(cx);
-
-        // ---- EXPORT ----
-        VStack::new(cx, |cx| {
-            section_label(cx, "EXPORT");
-
-            VStack::new(cx, |cx| {
-                Label::new(cx, "FORMAT")
-                    .font_size(9.0)
-                    .color(Color::from("#555555"));
-                PickList::new(cx, AppData::format_options, AppData::selected_format_index, true)
-                    .on_select(|cx, idx| cx.emit(AppEvent::SelectFormatByIndex(idx)))
-                    .width(Stretch(1.0));
-            })
-            .height(Auto)
-            .vertical_gap(Pixels(2.0));
-
-            VStack::new(cx, |cx| {
-                Label::new(cx, "OUTPUT")
-                    .font_size(9.0)
-                    .color(Color::from("#555555"));
-                Label::new(
-                    cx,
-                    AppData::output_directory.map(|p: &std::path::PathBuf| {
-                        p.file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| p.to_string_lossy().to_string())
-                    }),
-                )
-                .font_size(12.0)
-                .color(Color::from("#cccccc"))
+                })
+                .class("field-box")
                 .cursor(CursorIcon::Hand)
                 .on_press(|cx| cx.emit(AppEvent::SelectOutputDirectory));
+
+                // Export All Button
+                Label::new(cx, "EXPORT ALL FORMATS")
+                    .class("btn-secondary")
+                    .width(Stretch(1.0))
+                    .on_press(|cx| cx.emit(AppEvent::ExportAll));
             })
-            .width(Stretch(1.0))
-            .height(Auto)
-            .background_color(Color::from("#131318"))
-            .border_width(Pixels(1.0))
-            .border_color(Color::from("#1e1e28"))
-            .corner_radius(Pixels(3.0))
-            .padding(Pixels(8.0))
-            .vertical_gap(Pixels(2.0))
-            .cursor(CursorIcon::Hand)
-            .on_press(|cx| cx.emit(AppEvent::SelectOutputDirectory));
-        })
-        .width(Stretch(1.0))
-        .height(Auto)
-        .padding(Pixels(12.0))
-        .vertical_gap(Pixels(8.0));
-
-        // Push export button to bottom
-        Element::new(cx).height(Stretch(1.0));
-
-        // Export button
-        VStack::new(cx, |cx| {
-            Label::new(cx, "Export All")
-                .font_size(12.0)
-                .color(Color::from("#666666"))
-                .width(Stretch(1.0))
-                .alignment(Alignment::Center)
-                .cursor(CursorIcon::Hand)
-                .on_press(|cx| cx.emit(AppEvent::ExportAll));
-        })
-        .width(Stretch(1.0))
-        .height(Pixels(32.0))
-        .background_color(Color::from("#131318"))
-        .border_width(Pixels(1.0))
-        .border_color(Color::from("#1e1e28"))
-        .corner_radius(Pixels(4.0))
-        .alignment(Alignment::Center)
-        .left(Pixels(12.0))
-        .right(Pixels(12.0))
-        .bottom(Pixels(12.0));
+            .class("card");
     })
-    .width(Pixels(210.0))
-    .height(Stretch(1.0))
-    .background_color(Color::from("#0c0c12"));
+    .class("sidebar");
 }

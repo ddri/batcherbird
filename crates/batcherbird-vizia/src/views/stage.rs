@@ -5,123 +5,100 @@ use vizia::prelude::*;
 
 pub fn stage(cx: &mut Context) {
     VStack::new(cx, |cx| {
-        // --- Error banner ---
+        // --- Error Banner ---
         Binding::new(cx, AppData::error_message, |cx, msg| {
             let msg = msg.get(cx);
             if let Some(text) = msg {
                 HStack::new(cx, |cx| {
                     Label::new(cx, &text)
-                        .color(Color::from("#e53935"))
+                        .color(Color::from("#ef4444"))
                         .font_size(12.0)
+                        .font_weight(FontWeightKeyword::Bold)
                         .width(Stretch(1.0));
                     Label::new(cx, "×")
-                        .color(Color::from("#888888"))
-                        .font_size(14.0)
-                        .width(Pixels(20.0))
+                        .color(Color::from("#94a3b8"))
+                        .font_size(16.0)
+                        .width(Pixels(24.0))
                         .alignment(Alignment::Center)
                         .cursor(CursorIcon::Hand)
                         .on_press(|cx| cx.emit(AppEvent::DismissError));
                 })
-                .width(Stretch(1.0))
-                .height(Auto)
-                .background_color(Color::from("#1a0a0a"))
-                .border_width(Pixels(1.0))
-                .border_color(Color::from("#3a1520"))
-                .corner_radius(Pixels(4.0))
-                .padding(Pixels(8.0))
-                .horizontal_gap(Pixels(8.0));
+                .class("banner-error");
             }
         });
 
-        // --- Info / success banner ---
+        // --- Info / Success Banner ---
         Binding::new(cx, AppData::info_message, |cx, msg| {
             let msg = msg.get(cx);
             if let Some(text) = msg {
                 HStack::new(cx, |cx| {
                     Label::new(cx, &text)
-                        .color(Color::from("#28c840"))
+                        .color(Color::from("#10b981"))
                         .font_size(12.0)
+                        .font_weight(FontWeightKeyword::Bold)
                         .width(Stretch(1.0));
                     Label::new(cx, "×")
-                        .color(Color::from("#888888"))
-                        .font_size(14.0)
-                        .width(Pixels(20.0))
+                        .color(Color::from("#94a3b8"))
+                        .font_size(16.0)
+                        .width(Pixels(24.0))
                         .alignment(Alignment::Center)
                         .cursor(CursorIcon::Hand)
                         .on_press(|cx| cx.emit(AppEvent::DismissError));
                 })
-                .width(Stretch(1.0))
-                .height(Auto)
-                .background_color(Color::from("#0a1a0a"))
-                .border_width(Pixels(1.0))
-                .border_color(Color::from("#15301a"))
-                .corner_radius(Pixels(4.0))
-                .padding(Pixels(8.0))
-                .horizontal_gap(Pixels(8.0));
+                .class("banner-info");
             }
         });
 
-        // --- Meters ---
+        // --- Hardware Meters Deck ---
         meters(cx);
 
-        // --- REC indicator (Recording only) ---
+        // --- Recording State Indicator Bar ---
         HStack::new(cx, |cx| {
             Element::new(cx)
-                .width(Pixels(8.0))
-                .height(Pixels(8.0))
+                .width(Pixels(10.0))
+                .height(Pixels(10.0))
                 .corner_radius(Percentage(50.0))
-                .background_color(Color::from("#e53935"));
-            Label::new(cx, "REC")
-                .color(Color::from("#e53935"))
-                .font_size(11.0);
+                .background_color(Color::from("#ef4444"));
+            Label::new(cx, "RECORDING IN PROGRESS")
+                .color(Color::from("#ef4444"))
+                .font_size(11.0)
+                .font_weight(FontWeightKeyword::Bold);
         })
         .height(Auto)
-        .horizontal_gap(Pixels(6.0))
+        .horizontal_gap(Pixels(8.0))
+        .alignment(Alignment::Center)
         .display(AppData::app_state.map(|s| {
             if *s == AppState::Recording { Display::Flex } else { Display::None }
         }));
 
-        // --- Note display (Recording only) ---
+        // --- Note Display (Recording only) ---
         note_display(cx);
 
-        // --- Keyboard ---
+        // --- Virtual Keyboard ---
         keyboard(cx);
 
-        // --- Waveform ---
+        // --- Waveform Oscilloscope Display ---
         WaveformView::new(cx)
             .width(Stretch(1.0))
             .height(Stretch(1.0))
-            .min_height(Pixels(100.0))
-            .corner_radius(Pixels(3.0));
+            .min_height(Pixels(120.0))
+            .corner_radius(Pixels(6.0));
 
-        // --- Progress bar (Recording only) ---
+        // --- Progress Bar (Recording only) ---
         progress_bar(cx);
 
-        // --- Cancel (Recording only) ---
-        Label::new(cx, "Cancel")
-            .font_size(12.0)
-            .color(Color::from("#888888"))
+        // --- Cancel Action (Recording only) ---
+        Label::new(cx, "ABORT RECORDING")
+            .class("btn-secondary")
             .width(Stretch(1.0))
-            .height(Pixels(28.0))
-            .alignment(Alignment::Center)
-            .background_color(Color::from("#131318"))
-            .border_width(Pixels(1.0))
-            .border_color(Color::from("#1e1e28"))
-            .corner_radius(Pixels(4.0))
-            .cursor(CursorIcon::Hand)
+            .height(Pixels(32.0))
             .on_press(|cx| cx.emit(AppEvent::CancelRecording))
             .display(AppData::app_state.map(|s| {
                 if *s == AppState::Recording { Display::Flex } else { Display::None }
             }));
 
-        // --- Idle content ---
+        // --- Idle State Controls ---
         VStack::new(cx, |cx| {
-            Label::new(cx, "Ready to record")
-                .color(Color::from("#555555"))
-                .font_size(13.0)
-                .width(Stretch(1.0))
-                .alignment(Alignment::Center);
-
             Binding::new(cx, AppData::start_note, |cx, _| {
                 Binding::new(cx, AppData::end_note, |cx, _| {
                     Binding::new(cx, AppData::velocity_layers, |cx, _| {
@@ -130,47 +107,40 @@ pub fn stage(cx: &mut Context) {
                         let layers = AppData::velocity_layers.get(cx);
                         let num_notes = (end as u32).saturating_sub(start as u32) + 1;
                         let total = num_notes * layers as u32;
-                        Label::new(cx, &format!("{} notes · {} layers · {} total", num_notes, layers, total))
-                            .color(Color::from("#333333"))
+                        Label::new(cx, &format!("READY  ·  {} NOTES  ·  {} VELOCITY LAYERS  ·  {} TOTAL SAMPLES", num_notes, layers, total))
+                            .color(Color::from("#64748b"))
                             .font_size(11.0)
+                            .font_weight(FontWeightKeyword::Bold)
                             .width(Stretch(1.0))
                             .alignment(Alignment::Center);
                     });
                 });
             });
 
-            // ARM button — dark bg, subtle red border
-            Label::new(cx, "ARM")
-                .font_size(16.0)
-                .color(Color::from("#e53935"))
-                .width(Stretch(1.0))
-                .height(Pixels(42.0))
-                .alignment(Alignment::Center)
-                .background_color(Color::from("#141418"))
-                .border_width(Pixels(2.0))
-                .border_color(Color::from("#e5393544"))
-                .corner_radius(Pixels(6.0))
-                .cursor(CursorIcon::Hand)
+            // Prominent Tactile ARM Button
+            Label::new(cx, "ARM AUTO-SAMPLER")
+                .class("btn-primary-arm")
                 .on_press(|cx| cx.emit(AppEvent::Arm));
         })
         .width(Stretch(1.0))
         .height(Auto)
-        .vertical_gap(Pixels(6.0))
+        .vertical_gap(Pixels(8.0))
         .display(AppData::app_state.map(|s| {
             if *s == AppState::Idle { Display::Flex } else { Display::None }
         }));
 
-        // --- Armed content ---
+        // --- Armed State Deck ---
         VStack::new(cx, |cx| {
-            Label::new(cx, "Monitoring — press Record or Test Note")
-                .color(Color::from("#888888"))
-                .font_size(13.0)
+            Label::new(cx, "ARMED  ·  PRE-FLIGHT SIGNAL MONITORING ACTIVE")
+                .color(Color::from("#94a3b8"))
+                .font_size(11.0)
+                .font_weight(FontWeightKeyword::Bold)
                 .width(Stretch(1.0))
                 .alignment(Alignment::Center);
 
             // Quick toggles in Armed view: Playthrough & Channel Routing
             HStack::new(cx, |cx| {
-                // Playthrough toggle
+                // Playthrough toggle pill
                 Binding::new(cx, AppData::playthrough_enabled, |cx, enabled| {
                     let is_on = enabled.get(cx);
                     HStack::new(cx, move |cx| {
@@ -182,30 +152,15 @@ pub fn stage(cx: &mut Context) {
                                 "🔈 Playthrough: OFF"
                             },
                         )
-                        .font_size(12.0)
+                        .font_size(11.0)
+                        .font_weight(FontWeightKeyword::Bold)
                         .color(if is_on {
-                            Color::from("#00e676")
+                            Color::from("#10b981")
                         } else {
-                            Color::from("#888899")
+                            Color::from("#64748b")
                         });
                     })
-                    .alignment(Alignment::Center)
-                    .height(Pixels(26.0))
-                    .padding_left(Pixels(12.0))
-                    .padding_right(Pixels(12.0))
-                    .background_color(if is_on {
-                        Color::from("#12251a")
-                    } else {
-                        Color::from("#14141d")
-                    })
-                    .border_width(Pixels(1.0))
-                    .border_color(if is_on {
-                        Color::from("#00e67655")
-                    } else {
-                        Color::from("#252535")
-                    })
-                    .corner_radius(Pixels(13.0))
-                    .cursor(CursorIcon::Hand)
+                    .class("btn-pill")
                     .on_press(|cx| cx.emit(AppEvent::TogglePlaythrough));
                 });
 
@@ -214,18 +169,11 @@ pub fn stage(cx: &mut Context) {
                     let text = display.get(cx);
                     HStack::new(cx, move |cx| {
                         Label::new(cx, &format!("🎛 Routing: {}", text))
-                            .font_size(12.0)
-                            .color(Color::from("#00b0ff"));
+                            .font_size(11.0)
+                            .font_weight(FontWeightKeyword::Bold)
+                            .color(Color::from("#38bdf8"));
                     })
-                    .alignment(Alignment::Center)
-                    .height(Pixels(26.0))
-                    .padding_left(Pixels(12.0))
-                    .padding_right(Pixels(12.0))
-                    .background_color(Color::from("#101a26"))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::from("#00b0ff44"))
-                    .corner_radius(Pixels(13.0))
-                    .cursor(CursorIcon::Hand)
+                    .class("btn-pill")
                     .on_press(|cx| cx.emit(AppEvent::CycleChannelRouting));
                 });
 
@@ -233,24 +181,17 @@ pub fn stage(cx: &mut Context) {
                 Binding::new(cx, AppData::input_gain_display, |cx, display| {
                     let text = display.get(cx);
                     HStack::new(cx, move |cx| {
-                        Label::new(cx, &format!("🎚 Gain: {}", text))
-                            .font_size(12.0)
-                            .color(Color::from("#ffb300"));
+                        Label::new(cx, &format!("🎚 Preamp: {}", text))
+                            .font_size(11.0)
+                            .font_weight(FontWeightKeyword::Bold)
+                            .color(Color::from("#f59e0b"));
                     })
-                    .alignment(Alignment::Center)
-                    .height(Pixels(26.0))
-                    .padding_left(Pixels(12.0))
-                    .padding_right(Pixels(12.0))
-                    .background_color(Color::from("#261e10"))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::from("#ffb30044"))
-                    .corner_radius(Pixels(13.0))
-                    .cursor(CursorIcon::Hand)
+                    .class("btn-pill")
                     .on_press(|cx| cx.emit(AppEvent::ResetInputGain));
                 });
             })
             .alignment(Alignment::Center)
-            .horizontal_gap(Pixels(10.0))
+            .horizontal_gap(Pixels(8.0))
             .height(Auto);
 
             // Optional gain staging feedback banner
@@ -262,16 +203,17 @@ pub fn stage(cx: &mut Context) {
                         Label::new(cx, &text)
                             .color(Color::from(text_color.as_str()))
                             .font_size(12.0)
+                            .font_weight(FontWeightKeyword::Bold)
                             .width(Stretch(1.0))
                             .alignment(Alignment::Center);
                     })
                     .width(Stretch(1.0))
                     .height(Auto)
-                    .background_color(Color::from("#121820"))
+                    .background_color(Color::from("#101524"))
                     .border_width(Pixels(1.0))
                     .border_color(Color::from(color_hex.as_str()))
-                    .corner_radius(Pixels(4.0))
-                    .padding(Pixels(6.0));
+                    .corner_radius(Pixels(6.0))
+                    .padding(Pixels(8.0));
                 }
             });
 
@@ -280,20 +222,21 @@ pub fn stage(cx: &mut Context) {
                 Binding::new(cx, AppData::is_testing_note, |cx, testing| {
                     let is_testing = testing.get(cx);
                     let label = if is_testing {
-                        "TESTING..."
+                        "TESTING NOTE..."
                     } else {
                         "TEST NOTE (VEL 127)"
                     };
                     Label::new(cx, label)
-                        .font_size(14.0)
-                        .color(if is_testing { Color::from("#888888") } else { Color::from("#4a9eff") })
+                        .font_size(13.0)
+                        .font_weight(FontWeightKeyword::Bold)
+                        .color(if is_testing { Color::from("#64748b") } else { Color::from("#38bdf8") })
                         .width(Stretch(1.0))
-                        .height(Pixels(42.0))
+                        .height(Pixels(46.0))
                         .alignment(Alignment::Center)
-                        .background_color(Color::from("#141824"))
+                        .background_color(Color::from("#121927"))
                         .border_width(Pixels(1.5))
-                        .border_color(if is_testing { Color::from("#2e3b52") } else { Color::from("#4a9eff88") })
-                        .corner_radius(Pixels(6.0))
+                        .border_color(if is_testing { Color::from("#1e293b") } else { Color::from("#0284c7") })
+                        .corner_radius(Pixels(8.0))
                         .cursor(if is_testing { CursorIcon::Default } else { CursorIcon::Hand })
                         .on_press(move |cx| {
                             if !is_testing {
@@ -302,33 +245,19 @@ pub fn stage(cx: &mut Context) {
                         });
                 });
 
-                // RECORD button — red bg
-                Label::new(cx, "RECORD")
-                    .font_size(16.0)
-                    .color(Color::white())
-                    .width(Stretch(1.0))
-                    .height(Pixels(42.0))
-                    .alignment(Alignment::Center)
-                    .background_color(Color::from("#e53935"))
-                    .corner_radius(Pixels(6.0))
-                    .cursor(CursorIcon::Hand)
+                // Prominent RECORD button
+                Label::new(cx, "START RECORDING")
+                    .class("btn-primary-record")
                     .on_press(|cx| cx.emit(AppEvent::StartRecording));
             })
             .width(Stretch(1.0))
             .height(Auto)
-            .horizontal_gap(Pixels(8.0));
+            .horizontal_gap(Pixels(10.0));
 
-            Label::new(cx, "Cancel")
-                .font_size(12.0)
-                .color(Color::from("#666666"))
+            Label::new(cx, "DISARM")
+                .class("btn-secondary")
                 .width(Stretch(1.0))
-                .height(Pixels(28.0))
-                .alignment(Alignment::Center)
-                .background_color(Color::from("#131318"))
-                .border_width(Pixels(1.0))
-                .border_color(Color::from("#1e1e28"))
-                .corner_radius(Pixels(4.0))
-                .cursor(CursorIcon::Hand)
+                .height(Pixels(30.0))
                 .on_press(|cx| cx.emit(AppEvent::Disarm));
         })
         .width(Stretch(1.0))
@@ -338,76 +267,74 @@ pub fn stage(cx: &mut Context) {
             if *s == AppState::Armed { Display::Flex } else { Display::None }
         }));
 
-        // --- Review content ---
+        // --- Review State Deck ---
         VStack::new(cx, |cx| {
-            Label::new(cx, "Recording Complete")
+            Label::new(cx, "SESSION RECORDING COMPLETE")
                 .color(Color::white())
-                .font_size(18.0);
+                .font_size(16.0)
+                .font_weight(FontWeightKeyword::Bold);
 
             Binding::new(cx, AppData::recorded_count, |cx, count| {
                 let count = count.get(cx);
-                Label::new(cx, &format!("{} samples recorded", count))
-                    .color(Color::from("#888888"))
+                Label::new(cx, &format!("{} multisamples captured & verified", count))
+                    .color(Color::from("#94a3b8"))
                     .font_size(12.0);
             });
 
             HStack::new(cx, |cx| {
                 Binding::new(cx, AppData::is_playing, |cx, playing| {
-                    let label = if playing.get(cx) { "Pause" } else { "Play" };
+                    let label = if playing.get(cx) { "PAUSE PREVIEW" } else { "PLAY PREVIEW" };
                     let event = if playing.get(cx) { AppEvent::PausePreview } else { AppEvent::PlayPreview };
                     Label::new(cx, label)
                         .font_size(12.0)
+                        .font_weight(FontWeightKeyword::Bold)
                         .color(Color::white())
-                        .width(Pixels(60.0))
-                        .height(Pixels(28.0))
+                        .width(Pixels(130.0))
+                        .height(Pixels(34.0))
                         .alignment(Alignment::Center)
-                        .background_color(Color::from("#28c840"))
-                        .corner_radius(Pixels(4.0))
+                        .background_color(Color::from("#10b981"))
+                        .corner_radius(Pixels(6.0))
                         .cursor(CursorIcon::Hand)
                         .on_press(move |cx| cx.emit(event.clone()));
                 });
-                Label::new(cx, "Stop")
+                Label::new(cx, "STOP")
                     .font_size(12.0)
-                    .color(Color::from("#cccccc"))
-                    .width(Pixels(60.0))
-                    .height(Pixels(28.0))
+                    .font_weight(FontWeightKeyword::Bold)
+                    .color(Color::from("#cbd5e1"))
+                    .width(Pixels(80.0))
+                    .height(Pixels(34.0))
                     .alignment(Alignment::Center)
-                    .background_color(Color::from("#2a2a2a"))
-                    .corner_radius(Pixels(4.0))
+                    .background_color(Color::from("#242c3f"))
+                    .corner_radius(Pixels(6.0))
                     .cursor(CursorIcon::Hand)
                     .on_press(|cx| cx.emit(AppEvent::StopPreview));
             })
             .height(Auto)
-            .horizontal_gap(Pixels(6.0));
+            .horizontal_gap(Pixels(8.0));
 
             HStack::new(cx, |cx| {
-                Label::new(cx, "Export All")
-                    .font_size(12.0)
-                    .color(Color::from("#4a9eff"))
+                Label::new(cx, "EXPORT ALL FORMATS")
+                    .font_size(13.0)
+                    .font_weight(FontWeightKeyword::Bold)
+                    .color(Color::from("#38bdf8"))
                     .width(Stretch(1.0))
-                    .height(Pixels(30.0))
+                    .height(Pixels(36.0))
                     .alignment(Alignment::Center)
-                    .background_color(Color::from("#131318"))
+                    .background_color(Color::from("#0c2033"))
                     .border_width(Pixels(1.0))
-                    .border_color(Color::from("#4a9eff"))
-                    .corner_radius(Pixels(4.0))
+                    .border_color(Color::from("#0284c7"))
+                    .corner_radius(Pixels(6.0))
                     .cursor(CursorIcon::Hand)
                     .on_press(|cx| cx.emit(AppEvent::ExportAll));
-                Label::new(cx, "New Session")
-                    .font_size(12.0)
-                    .color(Color::from("#888888"))
+
+                Label::new(cx, "NEW SESSION")
+                    .class("btn-secondary")
                     .width(Stretch(1.0))
-                    .height(Pixels(30.0))
-                    .alignment(Alignment::Center)
-                    .background_color(Color::from("#131318"))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::from("#1e1e28"))
-                    .corner_radius(Pixels(4.0))
-                    .cursor(CursorIcon::Hand)
+                    .height(Pixels(36.0))
                     .on_press(|cx| cx.emit(AppEvent::Disarm));
             })
             .height(Auto)
-            .horizontal_gap(Pixels(6.0));
+            .horizontal_gap(Pixels(8.0));
         })
         .width(Stretch(1.0))
         .height(Auto)
@@ -416,9 +343,5 @@ pub fn stage(cx: &mut Context) {
             if *s == AppState::Review { Display::Flex } else { Display::None }
         }));
     })
-    .width(Stretch(1.0))
-    .height(Stretch(1.0))
-    .background_color(Color::from("#111118"))
-    .padding(Pixels(20.0))
-    .vertical_gap(Pixels(10.0));
+    .class("stage");
 }

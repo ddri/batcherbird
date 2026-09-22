@@ -31,7 +31,8 @@ fn main() -> Result<(), ApplicationError> {
         .width(Stretch(1.0))
         .height(Stretch(1.0));
     })
-    .title("BatcherBird")
-    .inner_size((900, 550))
+    .title("BatcherBird — Hardware Auto-Sampler")
+    .inner_size((1120, 720))
+    .min_inner_size(Some((960, 600)))
     .run()
 }
