@@ -13,8 +13,8 @@
     background-color: #0a0b10;
     border-right-width: 1px;
     border-right-color: #181c28;
-    padding: 10px;
-    vertical-gap: 8px;
+    padding: 8px;
+    vertical-gap: 6px;
 }
 
 /* Hardware Cards */
@@ -25,8 +25,11 @@
     border-width: 1px;
     border-color: #1e2436;
     corner-radius: 8px;
-    padding: 8px;
-    vertical-gap: 6px;
+    padding-left: 8px;
+    padding-right: 8px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    vertical-gap: 5px;
 }
 
 .card-header {
@@ -85,7 +88,7 @@
 }
 
 .chip-btn {
-    height: 24px;
+    height: 22px;
     background-color: #161a27;
     border-width: 1px;
     border-color: #242c3f;
@@ -116,14 +119,14 @@
 
 /* Stepper buttons */
 .stepper-btn {
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
     background-color: #161a27;
     border-width: 1px;
     border-color: #242c3f;
     corner-radius: 4px;
     color: #94a3b8;
-    font-size: 13;
+    font-size: 12;
     alignment: center;
     cursor: hand;
 }
