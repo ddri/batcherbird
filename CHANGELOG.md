@@ -2,6 +2,33 @@
 
 All notable changes to BatcherBird are documented here.
 
+## Unreleased — October 4, 2026
+
+Release candidate work; hardware, target-sampler, and installer validation remain pending.
+
+### Added
+
+- A redesigned native workspace with a connections/capture/export inspector, sample browser, selected waveform, and clear setup, recording, stopping, and review states.
+- Generated review samples with `cargo run -p batcherbird-vizia -- --demo`.
+- Portable `.batcherbird` sessions with lossless original WAV sidecars, saved preferences, and post-batch recovery snapshots.
+- Selected-sample audition and re-recording, configurable release-tail duration, and instrument naming.
+
+### Fixed
+
+- Capture metadata now follows the actual audio stream configuration; selected input channels and gain apply to recorded audio.
+- Cancellation interrupts note waits, releases MIDI notes, and preserves completed samples; buffer overflow and stream failures are surfaced.
+- Sparse-note key zones fill the captured range; midpoint velocity zones cover 1–127 without duplicate boundaries.
+- WAVs and presets use the same trimmed/faded export audio timeline, with frame-aware stereo trimming and fades.
+- SFZ paths resolve to adjacent WAVs; alternate WAV depths no longer overwrite shared preset WAVs; duplicate filename patterns fail before writing audio.
+- Automatic loop suggestions check correlation across channels; DecentSampler crossfade lengths use frames, while SFZ uses seconds.
+
+### Changed
+
+- Automatic looping is explicitly experimental and off by default, independently of silence trimming.
+- Documentation reflects the Vizia application and separates automated checks from hardware and release claims.
+
+Historical entries below describe earlier development. Their feature and performance claims are not a validation record for the current application.
+
 ## April 5, 2026
 
 ### Added
@@ -22,7 +49,7 @@ All notable changes to BatcherBird are documented here.
 
 ### Improved
 
-- Recording no longer risks audio dropouts during batch range sampling
+- Recording uses ring buffers during batch range sampling; dropout behavior requires hardware testing
 - File path handling is more secure against directory traversal
 - MIDI and audio input values are validated before recording starts
 - App binary is smaller thanks to symbol stripping
@@ -44,8 +71,8 @@ All notable changes to BatcherBird are documented here.
 
 - Record samples from hardware synthesizers with real-time waveform visualization
 - Single note, note range, and velocity layer recording modes
-- 32-bit float WAV export with sub-millisecond MIDI timing
-- Automatic loop detection using FFT analysis
+- 32-bit float WAV export and MIDI timing diagnostics
+- Automatic loop suggestions using zero crossings and waveform correlation
 - Export to DecentSampler and SFZ formats
 - Professional metering with peak, RMS, and clipping detection
 - Dark theme interface with device auto-detection

@@ -1,160 +1,45 @@
-# Contributing to BatcherBird
+# Contributing to Batcherbird
 
-Thank you for your interest in contributing to BatcherBird! This document provides guidelines for contributing to the project.
+The current application is Rust with a native Vizia interface. The Tauri/React application has been removed; Node.js, npm, and the Tauri CLI are not required.
 
-## Getting Started
+## Development
 
-### Prerequisites
-
-- **macOS 10.15+** (Catalina or later)
-- **Rust 1.77+** - Install via [rustup](https://rustup.rs/)
-- **Node.js 20+** - Install via [Homebrew](https://brew.sh/) or [nvm](https://github.com/nvm-sh/nvm)
-- **Tauri CLI** - `cargo install tauri-cli --version "^2.0"`
-
-For testing:
-- A MIDI device (synthesizer, keyboard, etc.)
-- An audio interface
-
-### Development Setup
+Use a current stable Rust toolchain. macOS is the desktop release target. Hardware testing requires a MIDI-connected synth and an audio input/interface; interface work can use generated demo samples.
 
 ```bash
-# Clone the repository
 git clone https://github.com/ddri/batcherbird.git
 cd batcherbird
-
-# Install frontend dependencies
-cd crates/batcherbird-gui
-npm install
-
-# Start development server
-npm run dev
+cargo run -p batcherbird-vizia -- --demo
+cargo test --workspace
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets
 ```
 
-This starts both the Tauri backend and Vite frontend with hot reload.
+Use `--offline` for Cargo checks when dependencies are already cached. The minimum supported Rust version has not been established. Linux builds in CI are experimental and require the platform audio/display development libraries.
 
-### Project Structure
+## Structure
 
-```
-batcherbird/
-├── crates/
-│   ├── batcherbird-core/     # Rust audio processing library
-│   ├── batcherbird-cli/      # Command-line interface (minimal)
-│   └── batcherbird-gui/      # Tauri desktop application
-│       ├── src/              # React TypeScript frontend
-│       └── src-tauri/        # Tauri Rust backend
-├── docs/                     # Documentation and plans
-└── .github/workflows/        # CI/CD configuration
-```
+- `batcherbird-core`: MIDI, recording, channel routing, meters, preview playback, trimming, loop suggestions, and exports.
+- `batcherbird-vizia`: UI, model/event handling, portable session files, preferences, and recovery.
+- `batcherbird-cli`: hardware diagnostics and command-line sampling.
+- `docs/RELEASE_CHECKLIST.md`: release gates; `docs/archive/`: historical designs, not current requirements.
 
-## How to Contribute
+## Changes and validation
 
-### Reporting Bugs
+Create a focused branch, describe the user-visible problem and result in the PR, and include the checks you ran. Conventional commit prefixes (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`) are welcome.
 
-Before opening a bug report:
-1. Check [existing issues](https://github.com/ddri/batcherbird/issues) first
-2. Try the latest version
+Add regression tests for consequential audio, mapping, persistence, or cancellation changes. Test observable results: exported file contents, frame alignment, key and velocity coverage, and restored audio. Do not treat a passing unit suite as proof of hardware behavior.
 
-When reporting, include:
-- macOS version
-- Audio interface model
-- MIDI device model
-- Steps to reproduce
-- Expected vs actual behavior
-- Any error messages or console output
+Audio callbacks must remain bounded and avoid allocations, blocking locks, filesystem work, and logging. Keep interleaved values and audio frames distinct: WAV loop markers are frame coordinates, and every stereo buffer operation must preserve channel pairing.
 
-### Suggesting Features
+For UI changes, inspect setup, armed, recording, stopping, review, and error states. Check resizing, readable labels, dropdown contrast, keyboard navigation, selected sample playback, and controls disabled while workers are busy. Demo mode is useful for visual review; microphone permissions and recording still require the real application and hardware.
 
-Open an issue with:
-- Clear description of the feature
-- Use case and why it would be valuable
-- Any implementation ideas (optional)
+Session changes must preserve originals and avoid replacing a valid manifest after a failed save. Keep session manifests and their sidecar WAV directories together. Export processing must operate on a copy of the recording.
 
-### Pull Requests
+## Reports and release work
 
-1. **Fork** the repository
-2. **Create a branch** from `main`:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-3. **Make your changes**
-4. **Test** your changes:
-   ```bash
-   # Rust tests
-   cargo test --workspace
+A useful bug report includes the app revision, macOS version and architecture, interface/synth models, input sample rate and channel setup, steps, expected behavior, and displayed errors. Attach a small reproducible session only when you are comfortable sharing its audio.
 
-   # TypeScript check
-   cd crates/batcherbird-gui && npx tsc --noEmit
+Before packaging or tagging, complete the [release checklist](docs/RELEASE_CHECKLIST.md). The packaging script stages and replaces only its app/DMG outputs, preserving unrelated files; the tag-triggered workflow uploads a public DMG. Signing, notarization, fresh-install permissions, hardware timing, and listening checks must be recorded separately from automated test results.
 
-   # Build check
-   npm run build
-   ```
-5. **Commit** with clear messages:
-   ```bash
-   git commit -m "feat: add new feature description"
-   ```
-6. **Push** and open a Pull Request
-
-### Commit Message Format
-
-We use [Conventional Commits](https://www.conventionalcommits.org/):
-
-- `feat:` - New feature
-- `fix:` - Bug fix
-- `docs:` - Documentation only
-- `refactor:` - Code change that neither fixes a bug nor adds a feature
-- `test:` - Adding or updating tests
-- `chore:` - Maintenance tasks
-
-Examples:
-```
-feat: add velocity curve presets for common synthesizers
-fix: resolve MIDI note-off timing issue with DW6000
-docs: update README with troubleshooting section
-```
-
-## Code Style
-
-### Rust
-
-- Follow standard Rust conventions
-- Run `cargo clippy` before committing
-- Keep audio callback code minimal (no allocations)
-- Use `eprintln!` only for error logging in audio callbacks
-
-### TypeScript
-
-- Use TypeScript strict mode (no `any` types)
-- Prefer functional components with hooks
-- Keep components focused and small
-- Use the existing UI components from `src/components/ui/`
-
-## Areas We Need Help
-
-### High Priority
-
-- **Hardware Testing** - Test with different synthesizers and report compatibility
-- **Bug Reports** - Detailed reports with reproduction steps
-
-### Medium Priority
-
-- **Linux Support** - ALSA/JACK audio backend implementation
-- **Windows Support** - WASAPI audio backend implementation
-- **Documentation** - Tutorials, examples, setup guides
-
-### Lower Priority
-
-- **UI/UX Improvements** - Design enhancements
-- **Localization** - Translations for other languages
-
-## Questions?
-
-- Open a [Discussion](https://github.com/ddri/batcherbird/discussions) for questions
-- Open an [Issue](https://github.com/ddri/batcherbird/issues) for bugs or feature requests
-
-## License
-
-By contributing to BatcherBird, you agree that your contributions will be licensed under the [AGPL-3.0 License](LICENSE).
-
----
-
-Thank you for helping make hardware sampling accessible to everyone!
+Contributions are licensed under [AGPL-3.0-or-later](LICENSE).
