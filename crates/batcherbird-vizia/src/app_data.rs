@@ -33,6 +33,12 @@ fn safe_instrument_name(name: &str) -> String {
     }
 }
 
+pub struct PendingSession {
+    path: PathBuf,
+    settings: SessionSettings,
+    samples: Vec<Sample>,
+}
+
 pub struct AuditionConnection {
     connection: midir::MidiOutputConnection,
     note: Option<u8>,
@@ -118,6 +124,9 @@ pub struct AppData {
     pub selected_sample_label: String,
     pub export_in_progress: bool,
     pub session_busy: bool,
+    pub pending_session_name: Option<String>,
+    #[lens(ignore)]
+    pub pending_session: Option<PendingSession>,
     pub controls_busy: bool,
     pub session_status: String,
     pub has_unsaved_changes: bool,
@@ -271,6 +280,8 @@ impl Default for AppData {
             selected_sample_label: "No sample selected".into(),
             export_in_progress: false,
             session_busy: false,
+            pending_session_name: None,
+            pending_session: None,
             controls_busy: false,
             session_status: "New session".into(),
             has_unsaved_changes: false,
@@ -401,9 +412,9 @@ impl AppData {
                         data.set_recorded_samples(samples);
                         data.app_state = AppState::Review;
                         data.has_unsaved_changes = true;
-                        data.session_status = "Recovered session".into();
+                        data.session_status = "Recovered capture checkpoint".into();
                         data.info_message = Some(
-                            "Your last recordings were recovered. Save the session to keep them."
+                            "Last captured batch recovered with its capture settings. Save this session to keep it, or open another saved session to continue your work."
                                 .into(),
                         );
                     }
@@ -647,6 +658,77 @@ impl AppData {
         } else {
             AppState::Review
         };
+    }
+
+    /// Hold a validated candidate without touching the edited session until the user chooses.
+    fn receive_loaded_session(
+        &mut self,
+        path: PathBuf,
+        settings: SessionSettings,
+        samples: Vec<Sample>,
+    ) {
+        let candidate = PendingSession {
+            path,
+            settings,
+            samples,
+        };
+        if self.has_unsaved_changes {
+            self.pending_session_name = Some(
+                candidate
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into(),
+            );
+            self.pending_session = Some(candidate);
+            self.session_busy = true;
+        } else {
+            self.apply_loaded_session(candidate);
+        }
+    }
+
+    fn resolve_session_replacement(&mut self, replace: bool) {
+        let Some(candidate) = self.pending_session.take() else {
+            return;
+        };
+        self.pending_session_name = None;
+        if replace {
+            self.apply_loaded_session(candidate);
+        } else {
+            self.session_busy = false;
+        }
+    }
+
+    fn apply_loaded_session(&mut self, candidate: PendingSession) {
+        let PendingSession {
+            path,
+            settings,
+            samples,
+        } = candidate;
+        self.session_busy = false;
+        self.monitoring_stream = None;
+        self.playthrough_stream = None;
+        self.sampling_engine = None;
+        self.silence_audition();
+        self.apply_session_settings(settings);
+        self.restore_device_selections();
+        self.set_recorded_samples(samples);
+        self.app_state = if self.recorded_samples.is_empty() {
+            AppState::Idle
+        } else {
+            AppState::Review
+        };
+        self.settings_revision += 1;
+        self.has_unsaved_changes = false;
+        self.preferences_dirty = true;
+        self.session_status = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into();
+        self.info_message = Some(format!("Session opened from {}", path.display()));
+        self.error_message = None;
     }
 
     fn mark_changed(&mut self) {
@@ -1423,22 +1505,11 @@ impl Model for AppData {
                 if self.is_busy() { return; }
                 self.stop_preview();
                 self.session_busy = true;
-                let unsaved = self.has_unsaved_changes;
                 let mut proxy = cx.get_proxy();
                 std::thread::spawn(move || {
                     if let Some(path) = rfd::FileDialog::new().add_filter("Batcherbird session", &["batcherbird"]).pick_file() {
                         match session::load_session(&path) {
                             Ok((settings, samples)) => {
-                                if unsaved && rfd::MessageDialog::new()
-                                    .set_title("Open another session?")
-                                    .set_description("Your current session has unsaved changes. Opening this session will replace them. Cancel to keep working and save first.")
-                                    .set_level(rfd::MessageLevel::Warning)
-                                    .set_buttons(rfd::MessageButtons::OkCancel)
-                                    .show() != rfd::MessageDialogResult::Ok
-                                {
-                                    let _ = proxy.emit(AppEvent::SessionDialogCancelled);
-                                    return;
-                                }
                                 let _ = proxy.emit(AppEvent::SessionLoaded { path, settings, samples });
                             }
                             Err(error) => { let _ = proxy.emit(AppEvent::SessionError(error)); }
@@ -1453,22 +1524,10 @@ impl Model for AppData {
                 self.info_message = Some(format!("Session saved to {}", path.display()));
             }
             AppEvent::SessionLoaded { path, settings, samples } => {
-                self.session_busy = false;
-                self.monitoring_stream = None;
-                self.playthrough_stream = None;
-                self.sampling_engine = None;
-                self.silence_audition();
-                self.apply_session_settings(settings.clone());
-                self.restore_device_selections();
-                self.set_recorded_samples(samples.clone());
-                self.app_state = if self.recorded_samples.is_empty() { AppState::Idle } else { AppState::Review };
-                self.settings_revision += 1;
-                self.has_unsaved_changes = false;
-                self.preferences_dirty = true;
-                self.session_status = path.file_name().unwrap_or_default().to_string_lossy().into();
-                self.info_message = Some(format!("Session opened from {}", path.display()));
-                self.error_message = None;
+                self.receive_loaded_session(path.clone(), settings.clone(), samples.clone());
             }
+            AppEvent::ConfirmSessionReplacement => { self.resolve_session_replacement(true); }
+            AppEvent::KeepCurrentSession => { self.resolve_session_replacement(false); }
             AppEvent::SessionError(error) => { self.session_busy = false; self.error_message = Some(format!("Session: {error}")); }
             AppEvent::SessionDialogCancelled => { self.session_busy = false; }
             AppEvent::RecoveryComplete(error) => {
@@ -1964,5 +2023,102 @@ mod tests {
     fn instrument_filename_cannot_escape_export_folder() {
         assert_eq!(safe_instrument_name("../../"), "Untitled instrument");
         assert_eq!(safe_instrument_name(" DW6000 / Pad "), "DW6000 _ Pad");
+    }
+
+    fn confirmation_sample(note: u8, value: f32) -> Sample {
+        Sample {
+            note,
+            velocity: 96,
+            audio_data: vec![value, -value],
+            sample_rate: 48000,
+            channels: 1,
+            recorded_at: std::time::SystemTime::UNIX_EPOCH,
+            midi_timing: std::time::Duration::ZERO,
+            audio_timing: std::time::Duration::ZERO,
+        }
+    }
+
+    fn edited_confirmation_session() -> AppData {
+        let mut data = AppData {
+            instrument_name: "Edited current instrument".into(),
+            release_duration_ms: 1700,
+            session_status: "current.batcherbird".into(),
+            app_state: AppState::Review,
+            ..AppData::default()
+        };
+        data.set_recorded_samples(vec![confirmation_sample(60, 0.25)]);
+        data.mark_changed();
+        data
+    }
+
+    #[test]
+    fn cancel_open_replacement_retains_edited_settings_and_original_audio() {
+        let mut data = edited_confirmation_session();
+        let settings = serde_json::to_value(data.session_settings()).unwrap();
+        let revision = data.settings_revision;
+        data.receive_loaded_session(
+            PathBuf::from("candidate.batcherbird"),
+            SessionSettings::default(),
+            vec![confirmation_sample(72, 0.75)],
+        );
+        assert!(data.is_busy());
+        assert_eq!(
+            data.pending_session_name.as_deref(),
+            Some("candidate.batcherbird")
+        );
+        assert_eq!(data.recorded_samples[0].audio_data, vec![0.25, -0.25]);
+        data.resolve_session_replacement(false);
+        assert!(!data.is_busy());
+        assert!(data.pending_session_name.is_none());
+        assert!(data.pending_session.is_none());
+        assert_eq!(
+            serde_json::to_value(data.session_settings()).unwrap(),
+            settings
+        );
+        assert_eq!(data.settings_revision, revision);
+        assert_eq!(data.recorded_samples[0].note, 60);
+        assert_eq!(data.recorded_samples[0].audio_data, vec![0.25, -0.25]);
+        assert_eq!(data.session_status, "current.batcherbird");
+        assert!(data.has_unsaved_changes);
+    }
+
+    #[test]
+    fn confirm_open_replacement_applies_only_the_validated_candidate() {
+        let mut data = edited_confirmation_session();
+        let settings = SessionSettings {
+            instrument_name: "New candidate".into(),
+            release_duration_ms: 3000,
+            ..SessionSettings::default()
+        };
+        data.receive_loaded_session(
+            PathBuf::from("candidate.batcherbird"),
+            settings,
+            vec![confirmation_sample(72, 0.75)],
+        );
+        assert_eq!(data.instrument_name, "Edited current instrument");
+        data.resolve_session_replacement(true);
+        assert!(!data.is_busy());
+        assert!(data.pending_session_name.is_none());
+        assert!(data.pending_session.is_none());
+        assert_eq!(data.instrument_name, "New candidate");
+        assert_eq!(data.release_duration_ms, 3000);
+        assert_eq!(data.recorded_samples.len(), 1);
+        assert_eq!(data.recorded_samples[0].note, 72);
+        assert_eq!(data.recorded_samples[0].audio_data, vec![0.75, -0.75]);
+        assert_eq!(data.session_status, "candidate.batcherbird");
+        assert_eq!(data.app_state, AppState::Review);
+        assert!(!data.has_unsaved_changes);
+    }
+
+    #[test]
+    fn replacement_response_without_a_candidate_does_not_interrupt_another_operation() {
+        let mut data = AppData {
+            session_busy: true,
+            ..AppData::default()
+        };
+        data.resolve_session_replacement(false);
+        assert!(data.session_busy);
+        data.resolve_session_replacement(true);
+        assert!(data.session_busy);
     }
 }

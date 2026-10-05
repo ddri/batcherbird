@@ -17,6 +17,9 @@ Release candidate work; hardware, target-sampler, and installer validation remai
 
 - Capture metadata now follows the actual audio stream configuration; selected input channels and gain apply to recorded audio.
 - Cancellation interrupts note waits, releases MIDI notes, and preserves completed samples; buffer overflow and stream failures are surfaced.
+- Preview completion waits for the final buffer's estimated playback deadline with a conservative drain allowance; explicit Stop still acts immediately.
+- Long session filenames stay within the toolbar, preserving space for session actions.
+- Unsaved-session replacement uses an in-app confirmation instead of a separate system alert.
 - Sparse-note key zones fill the captured range; midpoint velocity zones cover 1–127 without duplicate boundaries.
 - WAVs and presets use the same trimmed/faded export audio timeline, with frame-aware stereo trimming and fades.
 - SFZ paths resolve to adjacent WAVs; alternate WAV depths no longer overwrite shared preset WAVs; duplicate filename patterns fail before writing audio.

@@ -12,8 +12,9 @@ use crate::audio::AudioManager;
 use crate::{BatcherbirdError, Result};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::SampleFormat;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// Map a single source frame to a single destination frame, handling channel
 /// count mismatches without allocation.
@@ -71,6 +72,11 @@ struct Shared {
     cursor: AtomicUsize,
     /// Whether playback is active. The callback outputs silence when false.
     playing: AtomicBool,
+    /// Explicit stop / output error bypasses the natural drain deadline.
+    stopped: AtomicBool,
+    /// Monotonic wall-clock origin and estimated audible completion deadline.
+    origin: Instant,
+    finish_deadline_ns: AtomicU64,
 }
 
 /// A one-shot, in-memory preview player. Holds the live cpal stream; dropping
@@ -131,6 +137,9 @@ impl PreviewPlayer {
             src_frames,
             cursor: AtomicUsize::new(0),
             playing: AtomicBool::new(true),
+            stopped: AtomicBool::new(false),
+            origin: Instant::now(),
+            finish_deadline_ns: AtomicU64::new(u64::MAX),
         });
 
         let stream = match sample_format {
@@ -179,7 +188,7 @@ impl PreviewPlayer {
 
     /// Stop playback. The callback then outputs silence on subsequent calls.
     pub fn stop(&self) {
-        self.shared.playing.store(false, Ordering::Relaxed);
+        self.shared.stop();
     }
 
     /// Fraction of the take submitted to the audio device, clamped to 0..=1.
@@ -192,11 +201,49 @@ impl PreviewPlayer {
             .clamp(0.0, 1.0)
     }
 
-    /// `true` once playback has reached the end of the buffer or been stopped.
+    /// `true` after the final submitted buffer has drained, or after an explicit stop/error.
     pub fn is_finished(&self) -> bool {
-        !self.shared.playing.load(Ordering::Relaxed)
-            || self.shared.cursor.load(Ordering::Relaxed) >= self.shared.src_frames
+        self.shared.is_finished_at(elapsed_ns(self.shared.origin))
     }
+}
+
+impl Shared {
+    fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
+        self.playing.store(false, Ordering::Relaxed);
+    }
+
+    fn is_finished_at(&self, now_ns: u64) -> bool {
+        self.stopped.load(Ordering::Acquire)
+            || self.src_frames == 0
+            || (!self.playing.load(Ordering::Relaxed)
+                && now_ns >= self.finish_deadline_ns.load(Ordering::Acquire))
+    }
+}
+
+fn elapsed_ns(origin: Instant) -> u64 {
+    origin.elapsed().as_nanos().min(u64::MAX as u128) as u64
+}
+
+/// Include device queue latency plus the valid final frames, rather than
+/// treating "submitted" as "played". Backend timestamps may omit device latency,
+/// so always allow at least 100ms or two full output buffers before the final
+/// valid frames, while honoring larger reported queue delays. Audio never blocks.
+fn drain_deadline_ns(
+    now_ns: u64,
+    queue_delay: Option<Duration>,
+    valid_frames: usize,
+    buffer_frames: usize,
+    sample_rate: u32,
+) -> u64 {
+    let frame_duration =
+        |frames: usize| Duration::from_secs_f64(frames as f64 / sample_rate as f64);
+    let delay = queue_delay
+        .unwrap_or_default()
+        .max(Duration::from_millis(100))
+        .max(frame_duration(buffer_frames).saturating_mul(2));
+    let remaining = delay.saturating_add(frame_duration(valid_frames));
+    now_ns.saturating_add(remaining.as_nanos().min(u64::MAX as u128) as u64)
 }
 
 /// Prepare channels and rate off the audio callback. Linear interpolation is
@@ -244,13 +291,13 @@ fn prepare_preview_audio(
 }
 
 /// Output callback reads immutable prepared audio with no allocation or locks.
-fn render_output<T>(output: &mut [T], dst_channels: usize, shared: &Shared)
+fn render_output<T>(output: &mut [T], dst_channels: usize, shared: &Shared) -> Option<usize>
 where
     T: cpal::Sample + cpal::FromSample<f32>,
 {
     output.fill(T::EQUILIBRIUM);
     if !shared.playing.load(Ordering::Relaxed) {
-        return;
+        return None;
     }
     let out_frames = output.len() / dst_channels;
     let start = shared.cursor.load(Ordering::Relaxed);
@@ -266,7 +313,9 @@ where
     shared.cursor.store(end, Ordering::Relaxed);
     if end == shared.src_frames {
         shared.playing.store(false, Ordering::Relaxed);
+        return Some(end - start);
     }
+    None
 }
 
 fn build_stream<T>(
@@ -279,14 +328,29 @@ where
     T: cpal::SizedSample + cpal::FromSample<f32>,
 {
     let error_state = Arc::clone(&shared);
+    let sample_rate = config.sample_rate.0;
     device
         .build_output_stream(
             config,
-            move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
-                render_output(output, dst_channels, &shared)
+            move |output: &mut [T], info: &cpal::OutputCallbackInfo| {
+                let callback_now = elapsed_ns(shared.origin);
+                if let Some(valid_frames) = render_output(output, dst_channels, &shared) {
+                    let timestamp = info.timestamp();
+                    let queue_delay = timestamp.playback.duration_since(&timestamp.callback);
+                    shared.finish_deadline_ns.store(
+                        drain_deadline_ns(
+                            callback_now,
+                            queue_delay,
+                            valid_frames,
+                            output.len() / dst_channels,
+                            sample_rate,
+                        ),
+                        Ordering::Release,
+                    );
+                }
             },
             move |err| {
-                error_state.playing.store(false, Ordering::Relaxed);
+                error_state.stop();
                 tracing::error!("Preview output stream error: {err}");
             },
             None,
@@ -297,6 +361,83 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn submitted_final_buffer_waits_for_playback_deadline() {
+        let shared = Shared {
+            audio: Arc::from([0.25, -0.25, 0.75, -0.75]),
+            src_channels: 2,
+            src_frames: 2,
+            cursor: AtomicUsize::new(0),
+            playing: AtomicBool::new(true),
+            stopped: AtomicBool::new(false),
+            origin: Instant::now(),
+            finish_deadline_ns: AtomicU64::new(u64::MAX),
+        };
+        let mut output = [0.0f32; 8];
+        let final_frames = render_output(&mut output, 2, &shared).unwrap();
+        assert_eq!(final_frames, 2);
+        assert_eq!(&output[..4], &[0.25, -0.25, 0.75, -0.75]);
+        assert!(
+            !shared.is_finished_at(1_000_000_000),
+            "submission alone must not destroy the stream"
+        );
+        let deadline = drain_deadline_ns(
+            1_000_000_000,
+            Some(Duration::from_millis(40)),
+            final_frames,
+            4,
+            1000,
+        );
+        assert_eq!(
+            deadline, 1_102_000_000,
+            "conservative minimum plus two valid frames"
+        );
+        shared.finish_deadline_ns.store(deadline, Ordering::Release);
+        assert!(!shared.is_finished_at(deadline - 1));
+        assert!(shared.is_finished_at(deadline));
+        let mut subsequent = [9.0f32; 8];
+        assert!(render_output(&mut subsequent, 2, &shared).is_none());
+        assert_eq!(subsequent, [0.0; 8]);
+        assert_eq!(
+            shared.finish_deadline_ns.load(Ordering::Acquire),
+            deadline,
+            "silent callbacks must not postpone completion"
+        );
+    }
+
+    #[test]
+    fn timestamp_budget_has_conservative_floor_honors_large_delays_and_stop_is_immediate() {
+        assert_eq!(drain_deadline_ns(0, None, 480, 480, 48_000), 110_000_000);
+        assert_eq!(drain_deadline_ns(0, None, 9600, 9600, 48_000), 600_000_000);
+        assert_eq!(
+            drain_deadline_ns(0, Some(Duration::ZERO), 480, 480, 48_000),
+            110_000_000
+        );
+        assert_eq!(
+            drain_deadline_ns(0, Some(Duration::from_millis(20)), 9600, 9600, 48_000),
+            600_000_000
+        );
+        assert_eq!(
+            drain_deadline_ns(0, Some(Duration::from_millis(250)), 480, 480, 48_000),
+            260_000_000
+        );
+        let shared = Shared {
+            audio: Arc::from([0.5]),
+            src_channels: 1,
+            src_frames: 1,
+            cursor: AtomicUsize::new(0),
+            playing: AtomicBool::new(true),
+            stopped: AtomicBool::new(false),
+            origin: Instant::now(),
+            finish_deadline_ns: AtomicU64::new(u64::MAX),
+        };
+        shared.stop();
+        assert!(shared.is_finished_at(0));
+        let mut output = [3.0f32; 2];
+        assert!(render_output(&mut output, 1, &shared).is_none());
+        assert_eq!(output, [0.0; 2]);
+    }
 
     #[test]
     fn resampling_preserves_duration_pitch_and_stereo_alignment() {
@@ -348,14 +489,17 @@ mod tests {
             src_frames: 2,
             cursor: AtomicUsize::new(0),
             playing: AtomicBool::new(true),
+            stopped: AtomicBool::new(false),
+            origin: Instant::now(),
+            finish_deadline_ns: AtomicU64::new(u64::MAX),
         };
         let mut output = [9.0f32; 6];
-        render_output(&mut output, 2, &shared);
+        let _ = render_output(&mut output, 2, &shared);
         assert_eq!(output, [0.5, -0.5, 0.25, -0.25, 0.0, 0.0]);
         assert_eq!(shared.cursor.load(Ordering::Relaxed), 2);
         assert!(!shared.playing.load(Ordering::Relaxed));
         let mut unsigned = [0u16; 4];
-        render_output(&mut unsigned, 2, &shared);
+        let _ = render_output(&mut unsigned, 2, &shared);
         assert_eq!(unsigned, [32768; 4], "unsigned PCM silence is midpoint");
     }
 
@@ -367,9 +511,12 @@ mod tests {
             src_frames: 4,
             cursor: AtomicUsize::new(0),
             playing: AtomicBool::new(true),
+            stopped: AtomicBool::new(false),
+            origin: Instant::now(),
+            finish_deadline_ns: AtomicU64::new(u64::MAX),
         };
         let mut output = [0i16; 4];
-        render_output(&mut output, 1, &shared);
+        let _ = render_output(&mut output, 1, &shared);
         assert_eq!(output[0], 16384);
         assert_eq!(output[1], -16384);
         assert_eq!(output[2], i16::MAX);

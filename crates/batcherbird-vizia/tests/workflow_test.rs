@@ -6,7 +6,7 @@ use batcherbird_vizia::session;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,12 +17,14 @@ use fixtures::{instrument, take};
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "batcherbird-workflow-{}-{stamp}",
+            "batcherbird-workflow-{}-{stamp}-{sequence}",
             std::process::id()
         ));
         fs::create_dir(&path).unwrap();

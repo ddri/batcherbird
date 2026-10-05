@@ -34,6 +34,8 @@ pub enum AppEvent {
     RecordSelectedSample,
     SaveSession,
     OpenSession,
+    ConfirmSessionReplacement,
+    KeepCurrentSession,
     SessionSaved {
         path: PathBuf,
         revision: u64,

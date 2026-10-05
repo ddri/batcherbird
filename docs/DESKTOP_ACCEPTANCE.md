@@ -89,3 +89,20 @@ Playback/listening, minimum-size resizing, edited-session replacement warnings,
 invalid-file and dialog cancellation recovery, and the other static layouts
 still need hands-on checks. Automated session and export regressions supplement
 these observations without satisfying the remaining native gates.
+
+In a follow-up on the same isolated demo, an instrument-name edit reached the
+model and displayed **Modified**. Opening a valid saved session then reached a
+pending native confirmation, but the automation did not expose its buttons;
+the app later returned to usable controls with the edited name and six samples
+intact. This was inconclusive for the system alert's appearance and button behavior.
+The follow-up replaces that alert with an in-app banner offering **Keep current
+session** and **Open replacement**, and retains a validated candidate without
+changing current settings or audio until the user chooses. Model regressions
+verify both choices and harmless stale responses. Native automation disconnected
+while retesting the rebuilt app, so the new banner's visual and keyboard check
+remains pending. A code audit also found preview
+completion could drop the stream before its final queued buffer played. The fix
+waits for a CPAL timestamp-based playback deadline with a minimum allowance of
+100ms or two output buffers, whichever is longer, because backend timestamps may
+omit device latency. Regression tests check drain timing and immediate Stop.
+This does not replace a listening check on the Mac.

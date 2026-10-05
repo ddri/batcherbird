@@ -22,7 +22,10 @@ pub fn toolbar(cx: &mut Context) {
             Label::new(cx, AppData::session_status)
                 .name("Session status")
                 .text_value(AppData::session_status)
-                .class("muted");
+                .class("muted")
+                .width(Stretch(1.0))
+                .text_wrap(false)
+                .text_overflow(TextOverflow::Ellipsis);
         })
         .width(Stretch(1.0))
         .height(Auto);
@@ -41,6 +44,19 @@ pub fn toolbar(cx: &mut Context) {
 
 pub fn stage(cx: &mut Context) {
     VStack::new(cx, |cx| {
+        Binding::new(cx, AppData::pending_session_name, |cx, pending| {
+            if let Some(name) = pending.get(cx) {
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "Open another session?").text_value("Open another session?").font_weight(FontWeightKeyword::Bold);
+                    let explanation = format!("Your current session has unsaved changes. Opening {} will replace them. Keep the current session to save your work first.", name);
+                    Label::new(cx, &explanation).text_value(explanation.clone()).width(Stretch(1.0));
+                    HStack::new(cx, |cx| {
+                        action(cx, "Keep current session", AppEvent::KeepCurrentSession).class("primary");
+                        action(cx, "Open replacement", AppEvent::ConfirmSessionReplacement);
+                    }).class("control-row");
+                }).class("banner-error").vertical_gap(Pixels(8.0));
+            }
+        });
         Binding::new(cx, AppData::error_message, |cx, msg| {
             if let Some(text) = msg.get(cx) {
                 HStack::new(cx, |cx| {

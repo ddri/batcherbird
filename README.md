@@ -61,7 +61,7 @@ for when your synth is available.
 
 A `.batcherbird` file is a JSON manifest accompanied by a sibling `<name>.audio-<timestamp>/` directory containing unprocessed 32-bit float WAV files. Keep the manifest and its referenced audio directory together when moving or sharing a session. Saving creates a new audio directory before replacing the manifest, then removes the superseded directory only when its name, referenced WAVs, and actual files establish that this session owns it. Foreign files or symlinks prevent automatic cleanup; older directories may then remain. Keep separate copies of both manifest and audio for backups. Do not remove an audio directory referenced by a session you intend to keep.
 
-Preferences and the automatic recovery snapshot live in the platform configuration directory under `batcherbird/` (`~/Library/Application Support/batcherbird/` on macOS). Recovery is written after a recording batch finishes or stops; it is not continuous protection for an in-progress take. Save sessions explicitly for recordings you want to keep.
+Preferences and the automatic recovery snapshot live in the platform configuration directory under `batcherbird/` (`~/Library/Application Support/batcherbird/` on macOS). Recovery is written after a recording batch finishes or stops and restores that captured batch together with its capture settings. Opening or editing another saved session does not update this checkpoint. On startup, a recovered batch's settings take precedence over remembered preferences; reopen your saved session to continue other work. Recovery is not continuous protection for an in-progress take. Save sessions explicitly for recordings you want to keep.
 
 ## Packaging and validation
 
