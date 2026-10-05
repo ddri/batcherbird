@@ -311,10 +311,14 @@ mod tests {
         let converted = prepare_preview_audio(&audio, 2, source_rate, 2, output_rate).unwrap();
         assert_eq!(converted.len(), 48_000 * 2, "one second stays one second");
         assert!(converted
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .all(|frame| (frame[0] + frame[1]).abs() < 1e-6));
         let upward_crossings = converted
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|f| f[0])
             .collect::<Vec<_>>()
             .windows(2)

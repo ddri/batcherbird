@@ -323,7 +323,9 @@ fn complete_saved_instrument_exports_playable_zones_and_preserves_quiet_attack_l
             "trim removes silence while retaining the long signal: {frames} frames"
         );
         let quiet_attack = audio
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .take(4000)
             .map(|f| f[0].abs())
             .fold(0.0, f32::max);
@@ -332,14 +334,18 @@ fn complete_saved_instrument_exports_playable_zones_and_preserves_quiet_attack_l
             "quiet attack survives trimming: {quiet_attack}"
         );
         let late_release = audio
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .skip(40_000)
             .map(|f| f[0].abs())
             .fold(0.0, f32::max);
         assert!(late_release > 0.003, "late release remains audible");
         assert!(
             audio
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .all(|f| (f[1] + 0.35 * f[0]).abs() < 0.000001),
             "channels retain their distinct polarity and level"
         );

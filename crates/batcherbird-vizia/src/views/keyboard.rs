@@ -147,11 +147,9 @@ impl View for KeyboardView {
                     cx.emit(AppEvent::AuditionNoteOff);
                 }
             }
-            WindowEvent::MouseLeave => {
-                if self.held_note.is_some() {
-                    self.held_note = None;
-                    cx.emit(AppEvent::AuditionNoteOff);
-                }
+            WindowEvent::MouseLeave if self.held_note.is_some() => {
+                self.held_note = None;
+                cx.emit(AppEvent::AuditionNoteOff);
             }
             _ => {}
         });

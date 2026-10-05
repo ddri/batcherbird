@@ -1388,34 +1388,32 @@ pub fn read_wav_metadata<P: AsRef<Path>>(path: P) -> Result<WavMetadata> {
                     metadata.bext_origination_time = parse_null_terminated_str(&data[330..338]);
                 }
             }
-            b"LIST" => {
-                if data.len() >= 4 && &data[0..4] == b"INFO" {
-                    let mut pos = 4usize;
-                    while pos + 8 <= data.len() {
-                        let sub_id = &data[pos..pos + 4];
-                        let sub_len =
-                            u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap()) as usize;
-                        let val_start = pos + 8;
-                        let val_end = val_start + sub_len;
-                        if val_end > data.len() {
-                            break;
-                        }
-
-                        let text_opt = parse_null_terminated_str(&data[val_start..val_end]);
-                        if let Some(text) = text_opt {
-                            match sub_id {
-                                b"INAM" => metadata.info_title = Some(text),
-                                b"IART" => metadata.info_artist = Some(text),
-                                b"ICRD" => metadata.info_date = Some(text),
-                                b"ISFT" => metadata.info_software = Some(text),
-                                b"ICMT" => metadata.info_comment = Some(text),
-                                _ => {}
-                            }
-                        }
-
-                        let pad = if !sub_len.is_multiple_of(2) { 1 } else { 0 };
-                        pos = val_end + pad;
+            b"LIST" if data.len() >= 4 && &data[0..4] == b"INFO" => {
+                let mut pos = 4usize;
+                while pos + 8 <= data.len() {
+                    let sub_id = &data[pos..pos + 4];
+                    let sub_len =
+                        u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap()) as usize;
+                    let val_start = pos + 8;
+                    let val_end = val_start + sub_len;
+                    if val_end > data.len() {
+                        break;
                     }
+
+                    let text_opt = parse_null_terminated_str(&data[val_start..val_end]);
+                    if let Some(text) = text_opt {
+                        match sub_id {
+                            b"INAM" => metadata.info_title = Some(text),
+                            b"IART" => metadata.info_artist = Some(text),
+                            b"ICRD" => metadata.info_date = Some(text),
+                            b"ISFT" => metadata.info_software = Some(text),
+                            b"ICMT" => metadata.info_comment = Some(text),
+                            _ => {}
+                        }
+                    }
+
+                    let pad = if !sub_len.is_multiple_of(2) { 1 } else { 0 };
+                    pos = val_end + pad;
                 }
             }
             _ => {}

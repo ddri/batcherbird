@@ -397,7 +397,11 @@ mod tests {
         assert_eq!(stereo_result.end_sample, mono_result.end_sample * 2);
         assert!(stereo_result.success);
         let trimmed = detector.trim_audio(&stereo, &stereo_result);
-        assert!(trimmed.chunks_exact(2).all(|frame| frame[0] == 0.0));
+        assert!(trimmed
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .all(|frame| frame[0] == 0.0));
     }
 
     #[test]

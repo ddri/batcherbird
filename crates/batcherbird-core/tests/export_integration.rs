@@ -565,7 +565,7 @@ fn stereo_fades_keep_channels_paired_and_use_frame_duration() {
         .samples::<f32>()
         .map(Result::unwrap)
         .collect();
-    for pair in audio.chunks_exact(2) {
+    for pair in audio.as_chunks::<2>().0.iter() {
         assert_eq!(pair[0], -pair[1]);
     }
     assert_eq!(audio[0], 0.0);
