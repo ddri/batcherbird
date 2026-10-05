@@ -89,10 +89,7 @@ impl AudioManager {
                 BatcherbirdError::Audio(format!("Failed to enumerate input devices: {}", e))
             })?
             .collect();
-        let available: Vec<String> = devices
-            .iter()
-            .filter_map(|d| d.name().ok())
-            .collect();
+        let available: Vec<String> = devices.iter().filter_map(|d| d.name().ok()).collect();
 
         match match_device_name(&available, Some(name)) {
             DeviceMatch::Default => self.get_default_input_device(),
@@ -111,9 +108,9 @@ impl AudioManager {
                         ))
                     })
             }
-            DeviceMatch::NotFound { available } => Err(BatcherbirdError::Audio(
-                not_found_message("input", name, &available),
-            )),
+            DeviceMatch::NotFound { available } => Err(BatcherbirdError::Audio(not_found_message(
+                "input", name, &available,
+            ))),
         }
     }
 
@@ -131,10 +128,7 @@ impl AudioManager {
                 BatcherbirdError::Audio(format!("Failed to enumerate output devices: {}", e))
             })?
             .collect();
-        let available: Vec<String> = devices
-            .iter()
-            .filter_map(|d| d.name().ok())
-            .collect();
+        let available: Vec<String> = devices.iter().filter_map(|d| d.name().ok()).collect();
 
         match match_device_name(&available, Some(name)) {
             DeviceMatch::Default => self.get_default_output_device(),
@@ -150,9 +144,9 @@ impl AudioManager {
                         ))
                     })
             }
-            DeviceMatch::NotFound { available } => Err(BatcherbirdError::Audio(
-                not_found_message("output", name, &available),
-            )),
+            DeviceMatch::NotFound { available } => Err(BatcherbirdError::Audio(not_found_message(
+                "output", name, &available,
+            ))),
         }
     }
 

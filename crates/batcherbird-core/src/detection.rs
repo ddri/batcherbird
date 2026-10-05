@@ -197,8 +197,39 @@ impl SampleDetector {
         })
     }
 
+    /// Detect interleaved audio using the loudest channel in each frame.
+    /// Returned indices address interleaved values and always fall on frame boundaries.
+    pub fn detect_boundaries_channels(
+        &self,
+        audio_data: &[f32],
+        sample_rate: u32,
+        channels: u16,
+    ) -> Result<DetectionResult> {
+        let channels = channels as usize;
+        if channels == 0 || !audio_data.len().is_multiple_of(channels) {
+            return Err(BatcherbirdError::Audio(
+                "Invalid interleaved audio frames".into(),
+            ));
+        }
+        let envelope: Vec<f32> = audio_data
+            .chunks_exact(channels)
+            .map(|frame| frame.iter().map(|value| value.abs()).fold(0.0, f32::max))
+            .collect();
+        let mut result = self.detect_boundaries(&envelope, sample_rate)?;
+        result.start_sample *= channels;
+        result.end_sample *= channels;
+        result.detected_start *= channels;
+        result.detected_end *= channels;
+        Ok(result)
+    }
+
     /// Calculate RMS energy for each window (windows advance by `stride` samples)
-    fn calculate_rms_windows(&self, audio_data: &[f32], window_size: usize, stride: usize) -> Vec<f32> {
+    fn calculate_rms_windows(
+        &self,
+        audio_data: &[f32],
+        window_size: usize,
+        stride: usize,
+    ) -> Vec<f32> {
         if window_size > audio_data.len() {
             // If window is larger than audio, return single RMS value
             let sum_squares: f32 = audio_data.iter().map(|&x| x * x).sum();
@@ -237,7 +268,9 @@ impl SampleDetector {
         for i in 0..rms_values.len() {
             // Check if we have enough consecutive windows above threshold
             let mut consecutive_count = 0;
-            for &rms in rms_values[i..rms_values.len().min(i + self.config.confirmation_windows)].iter() {
+            for &rms in
+                rms_values[i..rms_values.len().min(i + self.config.confirmation_windows)].iter()
+            {
                 if rms > threshold {
                     consecutive_count += 1;
                 } else {
@@ -272,7 +305,9 @@ impl SampleDetector {
         for i in (start_window..rms_values.len()).rev() {
             // Check if we have enough consecutive windows above threshold working backwards
             let mut consecutive_count = 0;
-            for j in (i.saturating_sub(self.config.confirmation_windows.saturating_sub(1))..=i).rev() {
+            for j in
+                (i.saturating_sub(self.config.confirmation_windows.saturating_sub(1))..=i).rev()
+            {
                 if rms_values[j] > threshold {
                     consecutive_count += 1;
                 } else {
@@ -336,6 +371,36 @@ mod tests {
     }
 
     #[test]
+    fn stereo_detection_tracks_frame_time_and_the_audible_channel() {
+        let detector = SampleDetector::new(DetectionConfig {
+            pre_trigger_ms: 0.0,
+            post_trigger_ms: 0.0,
+            confirmation_windows: 1,
+            min_sample_length_ms: 0.0,
+            ..Default::default()
+        });
+        let mono: Vec<f32> = (0..1000)
+            .map(|frame| {
+                if (200..800).contains(&frame) {
+                    0.5
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let stereo: Vec<f32> = mono.iter().flat_map(|&value| [0.0, value]).collect();
+        let mono_result = detector.detect_boundaries(&mono, 1000).unwrap();
+        let stereo_result = detector
+            .detect_boundaries_channels(&stereo, 1000, 2)
+            .unwrap();
+        assert_eq!(stereo_result.start_sample, mono_result.start_sample * 2);
+        assert_eq!(stereo_result.end_sample, mono_result.end_sample * 2);
+        assert!(stereo_result.success);
+        let trimmed = detector.trim_audio(&stereo, &stereo_result);
+        assert!(trimmed.chunks_exact(2).all(|frame| frame[0] == 0.0));
+    }
+
+    #[test]
     fn test_detected_boundaries_align_with_signal() {
         // 0.5s silence + 1s sine + 0.5s silence at 44.1kHz
         let lead = 22050;
@@ -347,13 +412,16 @@ mod tests {
             post_trigger_ms: 0.0,
             ..DetectionConfig::default()
         };
-        let window_size_samples =
-            ((config.window_size_ms / 1000.0) * SAMPLE_RATE as f32) as usize;
+        let window_size_samples = ((config.window_size_ms / 1000.0) * SAMPLE_RATE as f32) as usize;
 
         let detector = SampleDetector::new(config);
         let result = detector.detect_boundaries(&audio, SAMPLE_RATE).unwrap();
 
-        assert!(result.success, "detection failed: {:?}", result.failure_reason);
+        assert!(
+            result.success,
+            "detection failed: {:?}",
+            result.failure_reason
+        );
 
         // Detected start should be within one window of the actual signal start
         let start_error = (result.detected_start as i64 - lead as i64).unsigned_abs() as usize;

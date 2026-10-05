@@ -27,6 +27,8 @@ pub struct ExportConfig {
     pub fade_in_ms: f32,
     pub fade_out_ms: f32,
     pub apply_detection: bool,
+    /// Opt in to experimental automatic sustain-loop detection (independent of trimming).
+    pub auto_loop: bool,
     pub detection_config: DetectionConfig,
     // Decent Sampler metadata
     pub creator_name: Option<String>,
@@ -40,10 +42,10 @@ pub enum AudioFormat {
     Wav16Bit,
     Wav24Bit,
     Wav32BitFloat,
-    DecentSampler,        // Generates .dspreset XML file with WAV samples
-    SFZ,                  // Generates .sfz file with WAV samples
-    DecentSamplerAndSfz,  // Generates both .dspreset and .sfz files sharing WAV samples
-    All,                  // Complete package: DecentSampler, SFZ, and 24-bit WAV samples
+    DecentSampler,       // Generates .dspreset XML file with WAV samples
+    SFZ,                 // Generates .sfz file with WAV samples
+    DecentSamplerAndSfz, // Generates both .dspreset and .sfz files sharing WAV samples
+    All,                 // Complete package: DecentSampler, SFZ, and 24-bit WAV samples
 }
 
 impl AudioFormat {
@@ -70,7 +72,8 @@ impl Default for ExportConfig {
             normalize: false,
             fade_in_ms: 0.0,
             fade_out_ms: 10.0,
-            apply_detection: true, // Enable detection by default
+            apply_detection: true, // Enable trimming by default
+            auto_loop: false,
             detection_config: DetectionConfig::default(),
             creator_name: None,
             instrument_description: None,
@@ -126,6 +129,38 @@ fn single_line(s: &str) -> String {
     s.replace(['\r', '\n'], " ")
 }
 
+/// Midpoints partition velocity 1..=127 with no shared boundaries.
+fn velocity_zone(velocities: &[&u8], index: usize) -> (u8, u8) {
+    let current = *velocities[index] as u16;
+    let low = if index == 0 {
+        1
+    } else {
+        ((*velocities[index - 1] as u16 + current) / 2 + 1) as u8
+    };
+    let high = if index + 1 == velocities.len() {
+        127
+    } else {
+        ((current + *velocities[index + 1] as u16) / 2) as u8
+    };
+    (low, high)
+}
+
+/// Cover every key between the captured endpoints, assigning ties to the lower root.
+fn note_zone(notes: &[u8], index: usize, range: (u8, u8)) -> (u8, u8) {
+    let current = notes[index] as u16;
+    let low = if index == 0 {
+        range.0
+    } else {
+        ((notes[index - 1] as u16 + current) / 2 + 1) as u8
+    };
+    let high = if index + 1 == notes.len() {
+        range.1
+    } else {
+        ((current + notes[index + 1] as u16) / 2) as u8
+    };
+    (low, high)
+}
+
 impl SampleExporter {
     pub fn new(config: ExportConfig) -> Result<Self> {
         // Create output directory if it doesn't exist
@@ -136,88 +171,114 @@ impl SampleExporter {
         Ok(Self { config })
     }
 
-    pub fn export_sample(&self, sample: &Sample) -> Result<PathBuf> {
-        let filename = self.generate_filename(sample);
-        let filepath = self.config.output_directory.join(&filename);
-
-        // Clone sample for processing (detection may modify audio data)
-        let mut sample_copy = sample.clone();
-
-        // Apply sample detection if enabled
+    /// Prepare audio once so WAV data, fades, and loop coordinates share one timeline.
+    fn prepare_sample(&self, sample: &Sample) -> Result<Sample> {
+        if sample.note > 127
+            || sample.velocity == 0
+            || sample.velocity > 127
+            || sample.channels == 0
+            || sample.sample_rate == 0
+            || !sample
+                .audio_data
+                .len()
+                .is_multiple_of(sample.channels as usize)
+            || sample.audio_data.iter().any(|value| !value.is_finite())
+        {
+            return Err(BatcherbirdError::Audio(
+                "Invalid sample rate, channels, or audio frames".into(),
+            ));
+        }
+        let mut processed = sample.clone();
         if self.config.apply_detection {
-            // Attempt detection, but continue with export regardless of result
-            if let Err(e) = sample_copy.apply_detection(self.config.detection_config.clone()) {
-                tracing::warn!(
-                    "Sample detection failed for note {} — exporting untrimmed audio: {}",
-                    sample.note,
-                    e
-                );
+            if let Err(e) = processed.apply_detection(self.config.detection_config.clone()) {
+                tracing::warn!("Trimming failed for note {}: {}", sample.note, e);
             }
         }
-
-        // Process audio data
-        let mut audio_data = sample_copy.audio_data.clone();
-
-        // Apply fades if configured
-        if self.config.fade_in_ms > 0.0 || self.config.fade_out_ms > 0.0 {
-            self.apply_fades(&mut audio_data, sample.sample_rate)?;
-        }
-
-        // Normalize if configured
+        self.apply_fades(
+            &mut processed.audio_data,
+            processed.sample_rate,
+            processed.channels,
+        )?;
         if self.config.normalize {
-            self.normalize_audio(&mut audio_data)?;
+            self.normalize_audio(&mut processed.audio_data)?;
         }
+        Ok(processed)
+    }
 
-        // Handle different export formats
-        match self.config.sample_format {
+    fn loop_points(&self, sample: &Sample) -> Option<(u32, u32)> {
+        if !self.config.auto_loop {
+            return None;
+        }
+        let detector = crate::loop_detection::LoopDetector::new(Default::default());
+        detector
+            .detect_loop_points_channels(&sample.audio_data, sample.sample_rate, sample.channels)
+            .best_candidate
+            .map(|candidate| {
+                (
+                    candidate.start_sample as u32,
+                    candidate.end_sample.saturating_sub(1) as u32,
+                )
+            })
+    }
+
+    pub fn export_sample(&self, sample: &Sample) -> Result<PathBuf> {
+        self.export_processed_sample(&self.prepare_sample(sample)?)
+    }
+
+    fn export_processed_sample(&self, sample: &Sample) -> Result<PathBuf> {
+        let filepath = self
+            .config
+            .output_directory
+            .join(self.generate_filename(sample));
+        let mut wav_config = self.config.clone();
+        if matches!(
+            wav_config.sample_format,
             AudioFormat::DecentSampler
-            | AudioFormat::SFZ
-            | AudioFormat::DecentSamplerAndSfz
-            | AudioFormat::All => {
-                // For sampler presets, we write 24-bit WAV files here.
-                // Preset files (.dspreset and/or .sfz) will be generated via export_samples()
-                let wav_config = ExportConfig {
-                    sample_format: AudioFormat::Wav24Bit, // 24-bit standard for sampler compatibility
-                    ..self.config.clone()
-                };
-                let temp_exporter = SampleExporter { config: wav_config };
-                temp_exporter.write_wav_file(&filepath, &audio_data, sample)?;
-            }
-            _ => {
-                // Standard WAV export
-                self.write_wav_file(&filepath, &audio_data, sample)?;
-            }
+                | AudioFormat::SFZ
+                | AudioFormat::DecentSamplerAndSfz
+                | AudioFormat::All
+        ) {
+            wav_config.sample_format = AudioFormat::Wav24Bit;
         }
-
+        SampleExporter { config: wav_config }.write_wav_file(
+            &filepath,
+            &sample.audio_data,
+            sample,
+        )?;
         Ok(filepath)
     }
 
     pub fn export_samples(&self, samples: &[Sample]) -> Result<Vec<PathBuf>> {
-        let mut exported_files = Vec::new();
-
-        for sample in samples.iter() {
-            let filepath = self.export_sample(sample)?;
-            exported_files.push(filepath);
+        let mut filenames = std::collections::HashSet::new();
+        for sample in samples {
+            if !filenames.insert(self.generate_filename(sample)) {
+                return Err(BatcherbirdError::Audio(
+                    "Naming pattern creates duplicate WAV filenames; include note and velocity"
+                        .into(),
+                ));
+            }
         }
-
-        // Generate .dspreset XML file for DecentSampler format (or combined formats)
+        let processed: Vec<Sample> = samples
+            .iter()
+            .map(|sample| self.prepare_sample(sample))
+            .collect::<Result<_>>()?;
+        let mut exported_files = processed
+            .iter()
+            .map(|sample| self.export_processed_sample(sample))
+            .collect::<Result<Vec<_>>>()?;
         if matches!(
             self.config.sample_format,
             AudioFormat::DecentSampler | AudioFormat::DecentSamplerAndSfz | AudioFormat::All
         ) {
-            let dspreset_path = self.generate_dspreset_file(samples, &exported_files)?;
-            exported_files.push(dspreset_path);
+            exported_files
+                .push(self.generate_processed_dspreset_file(&processed, &exported_files)?);
         }
-
-        // Generate .sfz file for SFZ format (or combined formats)
         if matches!(
             self.config.sample_format,
             AudioFormat::SFZ | AudioFormat::DecentSamplerAndSfz | AudioFormat::All
         ) {
-            let sfz_path = self.generate_sfz_file(samples, &exported_files)?;
-            exported_files.push(sfz_path);
+            exported_files.push(self.generate_processed_sfz_file(&processed, &exported_files)?);
         }
-
         Ok(exported_files)
     }
 
@@ -235,29 +296,25 @@ impl SampleExporter {
             .replace("{sample_rate}", &sample.sample_rate.to_string())
     }
 
-    fn apply_fades(&self, audio_data: &mut [f32], sample_rate: u32) -> Result<()> {
-        let fade_in_samples = ((self.config.fade_in_ms / 1000.0) * sample_rate as f32) as usize;
-        let fade_out_samples = ((self.config.fade_out_ms / 1000.0) * sample_rate as f32) as usize;
-
-        let len = audio_data.len();
-
-        // Apply fade in
-        if fade_in_samples > 0 && fade_in_samples < len {
-            for (i, sample) in audio_data.iter_mut().enumerate().take(fade_in_samples.min(len)) {
-                let fade_factor = i as f32 / fade_in_samples as f32;
-                *sample *= fade_factor;
+    fn apply_fades(&self, audio_data: &mut [f32], sample_rate: u32, channels: u16) -> Result<()> {
+        let channels = channels as usize;
+        let frames = audio_data.len() / channels;
+        let fade_in =
+            (((self.config.fade_in_ms / 1000.0) * sample_rate as f32) as usize).min(frames);
+        let fade_out =
+            (((self.config.fade_out_ms / 1000.0) * sample_rate as f32) as usize).min(frames);
+        for (frame, values) in audio_data.chunks_exact_mut(channels).enumerate() {
+            let mut gain = 1.0;
+            if frame < fade_in {
+                gain *= frame as f32 / fade_in.saturating_sub(1).max(1) as f32;
+            }
+            if fade_out > 0 && frame >= frames - fade_out {
+                gain *= (frames - 1 - frame) as f32 / fade_out.saturating_sub(1).max(1) as f32;
+            }
+            for value in values {
+                *value *= gain;
             }
         }
-
-        // Apply fade out
-        if fade_out_samples > 0 && fade_out_samples < len {
-            let fade_start = len.saturating_sub(fade_out_samples);
-            for (i, sample) in audio_data.iter_mut().enumerate().skip(fade_start).take(len - fade_start) {
-                let fade_factor = (len - i) as f32 / fade_out_samples as f32;
-                *sample *= fade_factor;
-            }
-        }
-
         Ok(())
     }
 
@@ -372,14 +429,7 @@ impl SampleExporter {
             let mut chunks = Vec::new();
 
             // 1. Loop detection for smpl chunk (if detection is active)
-            let loop_points = if self.config.apply_detection {
-                let detector_cfg = crate::loop_detection::LoopDetectionConfig::default();
-                let detector = crate::loop_detection::LoopDetector::new(detector_cfg);
-                let res = detector.detect_loop_points(audio_data, sample.sample_rate);
-                res.best_candidate.map(|c| (c.start_sample as u32, c.end_sample as u32))
-            } else {
-                None
-            };
+            let loop_points = self.loop_points(sample);
 
             // 2. smpl chunk (MIDI root note & loop points)
             chunks.push(Self::build_smpl_chunk(
@@ -436,8 +486,29 @@ impl SampleExporter {
         format!("{}{}", note_name, octave)
     }
 
-    /// Generate a Decent Sampler .dspreset XML file
+    /// Generate a preset for WAVs exported with this configuration.
     pub fn generate_dspreset_file(
+        &self,
+        samples: &[Sample],
+        wav_files: &[PathBuf],
+    ) -> Result<PathBuf> {
+        let processed = samples
+            .iter()
+            .map(|sample| self.prepare_sample(sample))
+            .collect::<Result<Vec<_>>>()?;
+        self.generate_processed_dspreset_file(&processed, wav_files)
+    }
+
+    pub fn generate_sfz_file(&self, samples: &[Sample], wav_files: &[PathBuf]) -> Result<PathBuf> {
+        let processed = samples
+            .iter()
+            .map(|sample| self.prepare_sample(sample))
+            .collect::<Result<Vec<_>>>()?;
+        self.generate_processed_sfz_file(&processed, wav_files)
+    }
+
+    /// Generate a Decent Sampler .dspreset XML file
+    fn generate_processed_dspreset_file(
         &self,
         samples: &[Sample],
         wav_files: &[PathBuf],
@@ -533,26 +604,34 @@ impl SampleExporter {
         // Groups Section following official DecentSampler specification
         xml.push_str("  <groups>\n");
 
+        let range = velocity_groups
+            .values()
+            .flatten()
+            .map(|(sample, _)| sample.note)
+            .fold(None, |range: Option<(u8, u8)>, note| {
+                Some(match range {
+                    Some((low, high)) => (low.min(note), high.max(note)),
+                    None => (note, note),
+                })
+            })
+            .unwrap_or((0, 127));
         let mut sorted_velocities: Vec<_> = velocity_groups.keys().collect();
         sorted_velocities.sort();
 
         for (group_index, &velocity) in sorted_velocities.iter().enumerate() {
             if let Some(samples) = velocity_groups.get(velocity) {
-                let (lo_vel, hi_vel) = if sorted_velocities.len() == 1 {
-                    (1, 127)
-                } else {
-                    let vel_range = 127.0 / sorted_velocities.len() as f32;
-                    let lo = ((group_index as f32 * vel_range) as u8).max(1);
-                    let hi = (((group_index + 1) as f32 * vel_range) as u8).min(127);
-                    (lo, hi)
-                };
+                let (lo_vel, hi_vel) = velocity_zone(&sorted_velocities, group_index);
 
                 xml.push_str(&format!(
                     "    <group loVel=\"{}\" hiVel=\"{}\">\n",
                     lo_vel, hi_vel
                 ));
 
-                for (sample, wav_file) in samples {
+                let mut ordered = samples.clone();
+                ordered.sort_by_key(|(sample, _)| sample.note);
+                let notes: Vec<u8> = ordered.iter().map(|(sample, _)| sample.note).collect();
+                for (index, (sample, wav_file)) in ordered.iter().enumerate() {
+                    let (lo_note, hi_note) = note_zone(&notes, index, range);
                     let filename = wav_file
                         .file_name()
                         .and_then(|name| name.to_str())
@@ -561,24 +640,17 @@ impl SampleExporter {
                     let mut sample_tag = format!(
                         "      <sample path=\"{}\" loNote=\"{}\" hiNote=\"{}\" rootNote=\"{}\"",
                         escape_xml(filename),
-                        sample.note,
-                        sample.note,
+                        lo_note,
+                        hi_note,
                         sample.note
                     );
 
-                    if self.config.apply_detection {
-                        let detector_cfg = crate::loop_detection::LoopDetectionConfig::default();
-                        let crossfade_sec = detector_cfg.crossfade_ms / 1000.0;
-                        let detector = crate::loop_detection::LoopDetector::new(detector_cfg);
-                        let res = detector.detect_loop_points(&sample.audio_data, sample.sample_rate);
-                        if let Some(cand) = res.best_candidate {
-                            sample_tag.push_str(&format!(
-                                " loopEnabled=\"true\" loopStart=\"{}\" loopEnd=\"{}\" loopCrossfade=\"{:.3}\"",
-                                cand.start_sample, cand.end_sample, crossfade_sec
-                            ));
-                        }
+                    if let Some((start, end)) = self.loop_points(sample) {
+                        sample_tag.push_str(&format!(
+                            " loopEnabled=\"true\" loopStart=\"{}\" loopEnd=\"{}\" loopCrossfade=\"{}\"",
+                            start, end, (sample.sample_rate as f32 * 0.010).round() as u32
+                        ));
                     }
-
                     sample_tag.push_str(" />\n");
                     xml.push_str(&sample_tag);
                 }
@@ -596,7 +668,11 @@ impl SampleExporter {
     }
 
     /// Generate an SFZ .sfz file
-    pub fn generate_sfz_file(&self, samples: &[Sample], wav_files: &[PathBuf]) -> Result<PathBuf> {
+    fn generate_processed_sfz_file(
+        &self,
+        samples: &[Sample],
+        wav_files: &[PathBuf],
+    ) -> Result<PathBuf> {
         use std::io::Write;
 
         // Create the .sfz filename (use the sample name from config or default)
@@ -670,7 +746,7 @@ impl SampleExporter {
 
         // Control section - path settings
         sfz.push_str("<control>\n");
-        sfz.push_str("default_path=samples/\n");
+        sfz.push_str("default_path=./\n");
         sfz.push('\n');
 
         // Global section - overall settings
@@ -679,6 +755,17 @@ impl SampleExporter {
         sfz.push('\n');
 
         // Sort velocity groups for consistent output
+        let range = velocity_groups
+            .values()
+            .flatten()
+            .map(|(sample, _)| sample.note)
+            .fold(None, |range: Option<(u8, u8)>, note| {
+                Some(match range {
+                    Some((low, high)) => (low.min(note), high.max(note)),
+                    None => (note, note),
+                })
+            })
+            .unwrap_or((0, 127));
         let mut sorted_velocities: Vec<_> = velocity_groups.keys().collect();
         sorted_velocities.sort();
 
@@ -690,15 +777,7 @@ impl SampleExporter {
                     sfz.push_str("<group>\n");
 
                     // Calculate velocity range for this layer
-                    let (lo_vel, hi_vel) = if sorted_velocities.len() == 1 {
-                        (1, 127) // Single velocity covers full range
-                    } else {
-                        // Distribute velocity ranges among layers
-                        let vel_range = 127.0 / sorted_velocities.len() as f32;
-                        let lo = ((group_index as f32 * vel_range) as u8).max(1);
-                        let hi = (((group_index + 1) as f32 * vel_range) as u8).min(127);
-                        (lo, hi)
-                    };
+                    let (lo_vel, hi_vel) = velocity_zone(&sorted_velocities, group_index);
 
                     sfz.push_str(&format!("lovel={}\n", lo_vel));
                     sfz.push_str(&format!("hivel={}\n", hi_vel));
@@ -706,7 +785,11 @@ impl SampleExporter {
                 }
 
                 // Add regions (samples) for this velocity group
-                for (sample, wav_file) in samples {
+                let mut ordered = samples.clone();
+                ordered.sort_by_key(|(sample, _)| sample.note);
+                let notes: Vec<u8> = ordered.iter().map(|(sample, _)| sample.note).collect();
+                for (index, (sample, wav_file)) in ordered.iter().enumerate() {
+                    let (lo_note, hi_note) = note_zone(&notes, index, range);
                     let filename = wav_file
                         .file_name()
                         .and_then(|name| name.to_str())
@@ -714,7 +797,10 @@ impl SampleExporter {
 
                     sfz.push_str("<region>\n");
                     sfz.push_str(&format!("sample={}\n", filename));
-                    sfz.push_str(&format!("key={}\n", sample.note));
+                    sfz.push_str(&format!(
+                        "lokey={}\nhikey={}\npitch_keycenter={}\n",
+                        lo_note, hi_note, sample.note
+                    ));
 
                     // Add velocity range for single-layer instruments
                     if sorted_velocities.len() == 1 {
@@ -722,17 +808,8 @@ impl SampleExporter {
                         sfz.push_str("hivel=127\n");
                     }
 
-                    if self.config.apply_detection {
-                        let detector_cfg = crate::loop_detection::LoopDetectionConfig::default();
-                        let crossfade_sec = detector_cfg.crossfade_ms / 1000.0;
-                        let detector = crate::loop_detection::LoopDetector::new(detector_cfg);
-                        let res = detector.detect_loop_points(&sample.audio_data, sample.sample_rate);
-                        if let Some(cand) = res.best_candidate {
-                            sfz.push_str("loop_mode=loop_continuous\n");
-                            sfz.push_str(&format!("loop_start={}\n", cand.start_sample));
-                            sfz.push_str(&format!("loop_end={}\n", cand.end_sample));
-                            sfz.push_str(&format!("loop_crossfade={:.3}\n", crossfade_sec));
-                        }
+                    if let Some((start, end)) = self.loop_points(sample) {
+                        sfz.push_str(&format!("loop_mode=loop_continuous\nloop_start={}\nloop_end={}\nloop_crossfade=0.010\n", start, end));
                     }
 
                     sfz.push('\n');
@@ -944,13 +1021,11 @@ impl SampleExporter {
 
         // Ensure 2-byte chunk alignment before writing new chunks
         if !original_len.is_multiple_of(2) {
-            file.write_all(&[0u8])
-                .map_err(BatcherbirdError::Export)?;
+            file.write_all(&[0u8]).map_err(BatcherbirdError::Export)?;
         }
 
         for chunk in chunks {
-            file.write_all(chunk)
-                .map_err(BatcherbirdError::Export)?;
+            file.write_all(chunk).map_err(BatcherbirdError::Export)?;
         }
 
         // Get final length and update RIFF size at offset 4
@@ -1002,6 +1077,8 @@ pub struct BatchExportConfig {
     pub fade_in_ms: f32,
     pub fade_out_ms: f32,
     pub apply_detection: bool,
+    /// Opt in to experimental automatic sustain-loop detection (independent of trimming).
+    pub auto_loop: bool,
     pub detection_config: DetectionConfig,
     pub creator_name: Option<String>,
     pub instrument_description: Option<String>,
@@ -1023,6 +1100,7 @@ impl Default for BatchExportConfig {
             fade_in_ms: 0.0,
             fade_out_ms: 10.0,
             apply_detection: true,
+            auto_loop: false,
             detection_config: DetectionConfig::default(),
             creator_name: None,
             instrument_description: None,
@@ -1076,6 +1154,7 @@ impl BatchExporter {
                     fade_in_ms: self.config.fade_in_ms,
                     fade_out_ms: self.config.fade_out_ms,
                     apply_detection: self.config.apply_detection,
+                    auto_loop: self.config.auto_loop,
                     detection_config: self.config.detection_config.clone(),
                     creator_name: self.config.creator_name.clone(),
                     instrument_description: self.config.instrument_description.clone(),
@@ -1093,10 +1172,16 @@ impl BatchExporter {
             }
         } else {
             let has_ds = self.config.formats.contains(&AudioFormat::DecentSampler)
-                || self.config.formats.contains(&AudioFormat::DecentSamplerAndSfz)
+                || self
+                    .config
+                    .formats
+                    .contains(&AudioFormat::DecentSamplerAndSfz)
                 || self.config.formats.contains(&AudioFormat::All);
             let has_sfz = self.config.formats.contains(&AudioFormat::SFZ)
-                || self.config.formats.contains(&AudioFormat::DecentSamplerAndSfz)
+                || self
+                    .config
+                    .formats
+                    .contains(&AudioFormat::DecentSamplerAndSfz)
                 || self.config.formats.contains(&AudioFormat::All);
             let has_wav24 = self.config.formats.contains(&AudioFormat::Wav24Bit);
 
@@ -1110,6 +1195,7 @@ impl BatchExporter {
                     fade_in_ms: self.config.fade_in_ms,
                     fade_out_ms: self.config.fade_out_ms,
                     apply_detection: self.config.apply_detection,
+                    auto_loop: self.config.auto_loop,
                     detection_config: self.config.detection_config.clone(),
                     creator_name: self.config.creator_name.clone(),
                     instrument_description: self.config.instrument_description.clone(),
@@ -1136,13 +1222,22 @@ impl BatchExporter {
                     }
 
                     let sub_config = ExportConfig {
-                        output_directory: self.config.output_directory.clone(),
+                        // Keep alternate bit depths from overwriting preset WAVs.
+                        output_directory: if matches!(
+                            format,
+                            AudioFormat::Wav16Bit | AudioFormat::Wav32BitFloat
+                        ) {
+                            self.config.output_directory.join(format.directory_name())
+                        } else {
+                            self.config.output_directory.clone()
+                        },
                         naming_pattern: self.config.naming_pattern.clone(),
                         sample_format: format.clone(),
                         normalize: self.config.normalize,
                         fade_in_ms: self.config.fade_in_ms,
                         fade_out_ms: self.config.fade_out_ms,
                         apply_detection: self.config.apply_detection,
+                        auto_loop: self.config.auto_loop,
                         detection_config: self.config.detection_config.clone(),
                         creator_name: self.config.creator_name.clone(),
                         instrument_description: self.config.instrument_description.clone(),
@@ -1161,13 +1256,22 @@ impl BatchExporter {
             } else {
                 for format in &self.config.formats {
                     let sub_config = ExportConfig {
-                        output_directory: self.config.output_directory.clone(),
+                        // Keep alternate bit depths from overwriting preset WAVs.
+                        output_directory: if matches!(
+                            format,
+                            AudioFormat::Wav16Bit | AudioFormat::Wav32BitFloat
+                        ) {
+                            self.config.output_directory.join(format.directory_name())
+                        } else {
+                            self.config.output_directory.clone()
+                        },
                         naming_pattern: self.config.naming_pattern.clone(),
                         sample_format: format.clone(),
                         normalize: self.config.normalize,
                         fade_in_ms: self.config.fade_in_ms,
                         fade_out_ms: self.config.fade_out_ms,
                         apply_detection: self.config.apply_detection,
+                        auto_loop: self.config.auto_loop,
                         detection_config: self.config.detection_config.clone(),
                         creator_name: self.config.creator_name.clone(),
                         instrument_description: self.config.instrument_description.clone(),
@@ -1196,7 +1300,9 @@ impl BatchExporter {
 /// Helper to extract a null-terminated string from a byte slice.
 fn parse_null_terminated_str(bytes: &[u8]) -> Option<String> {
     let nul_pos = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    let s = String::from_utf8_lossy(&bytes[..nul_pos]).trim().to_string();
+    let s = String::from_utf8_lossy(&bytes[..nul_pos])
+        .trim()
+        .to_string();
     if s.is_empty() {
         None
     } else {
@@ -1287,8 +1393,8 @@ pub fn read_wav_metadata<P: AsRef<Path>>(path: P) -> Result<WavMetadata> {
                     let mut pos = 4usize;
                     while pos + 8 <= data.len() {
                         let sub_id = &data[pos..pos + 4];
-                        let sub_len = u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap())
-                            as usize;
+                        let sub_len =
+                            u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap()) as usize;
                         let val_start = pos + 8;
                         let val_end = val_start + sub_len;
                         if val_end > data.len() {
@@ -1370,18 +1476,24 @@ mod tests {
         let groups = std::collections::HashMap::new();
         let xml = exporter.generate_dspreset_xml("Test", &groups).unwrap();
 
-        assert!(!xml.contains("<evil/>"), "raw markup leaked into XML:\n{}", xml);
-        assert!(xml.contains("&lt;evil/&gt;"), "metadata not escaped:\n{}", xml);
+        assert!(
+            !xml.contains("<evil/>"),
+            "raw markup leaked into XML:\n{}",
+            xml
+        );
+        assert!(
+            xml.contains("&lt;evil/&gt;"),
+            "metadata not escaped:\n{}",
+            xml
+        );
     }
 
     #[test]
     fn test_dspreset_xml_no_double_dash_in_comments() {
         // "--" is illegal inside XML comments; inputs that produce it after
         // escape_xml must be further sanitised.
-        let exporter = exporter_with_metadata(
-            "Dave -- Synth Pack",
-            "Version 2 -- updated --> see notes",
-        );
+        let exporter =
+            exporter_with_metadata("Dave -- Synth Pack", "Version 2 -- updated --> see notes");
         let groups = std::collections::HashMap::new();
         let xml = exporter
             .generate_dspreset_xml("Preset -- Name", &groups)
@@ -1403,8 +1515,7 @@ mod tests {
 
     #[test]
     fn test_sfz_comment_stays_on_one_line() {
-        let exporter =
-            exporter_with_metadata("Creator", "line one\n<region> sample=evil.wav");
+        let exporter = exporter_with_metadata("Creator", "line one\n<region> sample=evil.wav");
         let groups = std::collections::HashMap::new();
         let sfz = exporter.generate_sfz_content("Test", &groups).unwrap();
 
@@ -1465,11 +1576,7 @@ mod tests {
         let ts = chrono::DateTime::parse_from_rfc3339("2026-09-21T15:30:45Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
-        let chunk = SampleExporter::build_bext_chunk(
-            Some("My Originator"),
-            Some("Bass Lead"),
-            &ts,
-        );
+        let chunk = SampleExporter::build_bext_chunk(Some("My Originator"), Some("Bass Lead"), &ts);
 
         assert_eq!(&chunk[0..4], b"bext");
         let size = u32::from_le_bytes(chunk[4..8].try_into().unwrap());
@@ -1573,7 +1680,10 @@ mod tests {
 
         // Verify audio data is identical between both
         let mut reader_no_meta = hound::WavReader::open(&path_without).unwrap();
-        let samples_no_meta: Vec<i16> = reader_no_meta.samples::<i16>().map(|s| s.unwrap()).collect();
+        let samples_no_meta: Vec<i16> = reader_no_meta
+            .samples::<i16>()
+            .map(|s| s.unwrap())
+            .collect();
         assert_eq!(samples, samples_no_meta);
 
         // Cleanup
@@ -1584,10 +1694,16 @@ mod tests {
     fn test_audio_format_directory_name() {
         assert_eq!(AudioFormat::Wav16Bit.directory_name(), "WAV_16Bit");
         assert_eq!(AudioFormat::Wav24Bit.directory_name(), "WAV_24Bit");
-        assert_eq!(AudioFormat::Wav32BitFloat.directory_name(), "WAV_32BitFloat");
+        assert_eq!(
+            AudioFormat::Wav32BitFloat.directory_name(),
+            "WAV_32BitFloat"
+        );
         assert_eq!(AudioFormat::DecentSampler.directory_name(), "DecentSampler");
         assert_eq!(AudioFormat::SFZ.directory_name(), "SFZ");
-        assert_eq!(AudioFormat::DecentSamplerAndSfz.directory_name(), "DecentSampler_SFZ");
+        assert_eq!(
+            AudioFormat::DecentSamplerAndSfz.directory_name(),
+            "DecentSampler_SFZ"
+        );
         assert_eq!(AudioFormat::All.directory_name(), "All_Formats");
     }
 
@@ -1634,9 +1750,16 @@ mod tests {
         // Should produce 2 WAV files + 1 .dspreset + 1 .sfz = 4 files
         assert_eq!(files.len(), 4);
 
-        let dspreset_file = files.iter().find(|p| p.extension().is_some_and(|e| e == "dspreset"));
-        let sfz_file = files.iter().find(|p| p.extension().is_some_and(|e| e == "sfz"));
-        let wav_files: Vec<_> = files.iter().filter(|p| p.extension().is_some_and(|e| e == "wav")).collect();
+        let dspreset_file = files
+            .iter()
+            .find(|p| p.extension().is_some_and(|e| e == "dspreset"));
+        let sfz_file = files
+            .iter()
+            .find(|p| p.extension().is_some_and(|e| e == "sfz"));
+        let wav_files: Vec<_> = files
+            .iter()
+            .filter(|p| p.extension().is_some_and(|e| e == "wav"))
+            .collect();
 
         assert!(dspreset_file.is_some());
         assert!(sfz_file.is_some());
@@ -1700,7 +1823,11 @@ mod tests {
         let batch_config_subdirs = BatchExportConfig {
             output_directory: sub_dir.clone(),
             naming_pattern: "Sub_{note_name}_{note}_{velocity}.wav".to_string(),
-            formats: vec![AudioFormat::Wav24Bit, AudioFormat::DecentSampler, AudioFormat::SFZ],
+            formats: vec![
+                AudioFormat::Wav24Bit,
+                AudioFormat::DecentSampler,
+                AudioFormat::SFZ,
+            ],
             organize_subdirectories: true,
             ..Default::default()
         };
