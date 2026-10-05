@@ -42,7 +42,7 @@ fn draw_segmented_meter(level: f32, bounds: &BoundingBox, canvas: &Canvas) {
         } else if clamped >= 0.65 {
             vg::Color::from_rgb(0xf5, 0x9e, 0x0b) // Amber Caution
         } else {
-            vg::Color::from_rgb(0x10, 0xb9, 0x81) // Studio Green
+            vg::Color::from_rgb(0x87, 0xcf, 0xdb) // Studio Green
         };
         fill_paint.set_color(fill_color);
         canvas.draw_path(&fill_path, &fill_paint);
@@ -122,22 +122,13 @@ fn meter_channel_row(
 
 pub fn meters(cx: &mut Context) {
     VStack::new(cx, |cx| {
-        // Calibrated scale header
         HStack::new(cx, |cx| {
-            Label::new(cx, "VU").class("field-label").width(Pixels(18.0));
-            HStack::new(cx, |cx| {
-                Label::new(cx, "-48").font_size(9.0).color(Color::from("#475569")).width(Stretch(1.0));
-                Label::new(cx, "-24").font_size(9.0).color(Color::from("#475569")).width(Stretch(1.0));
-                Label::new(cx, "-12").font_size(9.0).color(Color::from("#475569")).width(Stretch(1.0));
-                Label::new(cx, "-6").font_size(9.0).color(Color::from("#64748b")).width(Stretch(1.0));
-                Label::new(cx, "0").font_size(9.0).color(Color::from("#f59e0b")).width(Stretch(1.0));
-                Label::new(cx, "CLIP").font_size(9.0).color(Color::from("#ef4444")).width(Stretch(1.0));
-            })
-            .width(Stretch(1.0));
-            Element::new(cx).width(Pixels(44.0));
+            Label::new(cx, "Input level")
+                .class("field-label")
+                .width(Stretch(1.0));
+            Label::new(cx, "Peak dBFS").class("muted");
         })
         .height(Auto)
-        .horizontal_gap(Pixels(8.0))
         .alignment(Alignment::Center);
 
         // L channel
@@ -147,7 +138,7 @@ pub fn meters(cx: &mut Context) {
             |cx| {
                 MeterBarLeft::new(cx)
                     .width(Stretch(1.0))
-                    .height(Pixels(7.0));
+                    .height(Pixels(9.0));
             },
             AppData::meter_left_db,
         );
@@ -159,7 +150,7 @@ pub fn meters(cx: &mut Context) {
             |cx| {
                 MeterBarRight::new(cx)
                     .width(Stretch(1.0))
-                    .height(Pixels(7.0));
+                    .height(Pixels(9.0));
             },
             AppData::meter_right_db,
         );

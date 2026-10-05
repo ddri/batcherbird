@@ -1,328 +1,85 @@
-/* BatcherBird Studio Dark Theme — Hardware Sampler Aesthetic (Google Stitch style) */
+/* Batcherbird studio: readable controls, quiet surfaces, one cyan accent. */
+:root { background-color: #171a1e; color: #ecf0f2; font-size: 13; }
+label { height: auto; }
+.toolbar { width: 1s; height: 72px; padding: 16px; horizontal-gap: 12px; alignment: center; background-color: #202429; border-bottom-width: 1px; border-bottom-color: #343a40; }
+.brand { font-size: 22; font-weight: bold; color: #ecf0f2; }
+.brand-caption { font-size: 12; color: #a2b0b8; }
+.session-name { font-size: 15; font-weight: bold; }
+.sidebar { width: 292px; height: 1s; background-color: #202429; border-right-width: 1px; border-right-color: #343a40; }
+.inspector-content { width: 1s; height: auto; padding: 16px; vertical-gap: 12px; }
+.section-title { font-size: 14; font-weight: bold; color: #ecf0f2; height: auto; }
+.settings-group { width: 1s; height: auto; vertical-gap: 10px; padding-bottom: 0px; }
+.field { height: auto; vertical-gap: 8px; }
+.field-label { color: #afbac2; font-size: 12; height: auto; }
+.field-value { color: #ecf0f2; font-size: 13; alignment: center; }
+.muted { font-size: 12; color: #a2b0b8; }
+.control-row { width: 1s; height: auto; horizontal-gap: 8px; alignment: center; }
+.stepper { width: 1s; height: 34px; horizontal-gap: 4px; alignment: center; }
+button { height: 36px; padding-left: 12px; padding-right: 12px; background-color: #2b3138; border-width: 1px; border-color: #424b54; corner-radius: 6px; color: #ecf0f2; font-size: 13; cursor: hand; }
+button label { color: #ecf0f2; font-size: 13; }
+button:hover { background-color: #363f48; border-color: #87cfdb; }
+button:focus-visible { outline-color: #87cfdb; outline-width: 2px; outline-offset: 2px; }
+button:active { background-color: #455560; }
+button:disabled { background-color: #252a30; border-color: #343a40; color: #70808b; cursor: default; }
+button:disabled label { color: #70808b; }
+button.primary { background-color: #87cfdb; border-color: #87cfdb; color: #13252b; font-weight: bold; }
+button.primary label { color: #13252b; font-weight: bold; }
+button.primary:hover { background-color: #aae1e8; }
+button.primary:disabled { background-color: #35474d; border-color: #35474d; }
+button.primary:disabled label { color: #899ba2; }
+button.record { background-color: #d85963; border-color: #d85963; font-weight: bold; }
+button.record:hover { background-color: #ee7380; }
+button.stepper-btn { width: 30px; height: 30px; padding: 0px; }
+picklist { height: 36px; background-color: #2b3138; color: #ecf0f2; corner-radius: 6px; border-width: 1px; border-color: #424b54; font-size: 13; }
+picklist label, picklist dropdown label { color: #ecf0f2; font-size: 13; }
+picklist dropdown { background-color: #2b3138; color: #ecf0f2; corner-radius: 6px; }
+picklist:hover { border-color: #87cfdb; }
+popup { background-color: #2b3138; border-color: #53616b; border-width: 1px; corner-radius: 6px; color: #ecf0f2; }
+popup label { color: #ecf0f2; font-size: 13; }
+popup list-item { background-color: #2b3138; color: #ecf0f2; min-height: 32px; }
+popup list-item:hover, popup list-item:checked { background-color: #40545e; }
+textbox { height: 36px; background-color: #171a1e; color: #ecf0f2; border-width: 1px; border-color: #424b54; corner-radius: 6px; caret-color: #87cfdb; selection-color: #40545e; font-size: 13; }
+textbox label { color: #ecf0f2; }
+textbox:focus-visible { border-color: #87cfdb; }
+.stage { width: 1s; height: 1s; padding: 20px; vertical-gap: 12px; background-color: #171a1e; }
+.workspace-title { font-size: 22; font-weight: bold; height: auto; }
+.status-tag { color: #87cfdb; font-size: 12; font-weight: bold; background-color: #263b43; padding: 8px; corner-radius: 4px; }
+.empty-workspace { width: 1s; height: 1s; padding: 32px; alignment: center; vertical-gap: 22px; background-color: #1c2025; corner-radius: 8px; }
+.empty-title { font-size: 25; font-weight: bold; color: #ecf0f2; }
+.guide-line { width: 1s; height: auto; font-size: 14; color: #b8c4cc; }
+.plan-summary { width: 1s; height: auto; color: #87cfdb; font-size: 13; }
+.sample-browser { width: 190px; height: 1s; vertical-gap: 12px; }
+button.sample-row { width: 1s; height: 40px; border-width: 0px; corner-radius: 4px; background-color: #202429; alignment: left; margin-bottom: 4px; }
+button.sample-row:checked { background-color: #30464f; border-left-width: 3px; border-left-color: #87cfdb; }
+.transport { width: 1s; height: 48px; alignment: center; horizontal-gap: 10px; border-top-width: 1px; border-top-color: #343a40; padding-top: 12px; }
+.meters-deck { width: 1s; height: auto; background-color: #202429; corner-radius: 6px; padding: 12px; vertical-gap: 7px; }
+.meter-row { width: 1s; height: 16px; horizontal-gap: 8px; alignment: center; }
+.meter-channel-tag { color: #a2b0b8; font-size: 12; width: 16px; }
+.meter-db-tag { color: #b8c4cc; font-size: 12; width: 66px; alignment: right; }
+.banner-error, .banner-info { width: 1s; height: auto; padding: 12px; horizontal-gap: 12px; alignment: center; corner-radius: 6px; }
+.banner-error { background-color: #45292e; color: #f5bdc1; }
+.banner-info { background-color: #263b43; color: #b8e2e8; }
+.note-display { width: 1s; height: auto; horizontal-gap: 14px; alignment: center; }
+.note-name { color: #87cfdb; font-size: 34; font-weight: bold; }
+.note-detail { color: #b8c4cc; font-size: 13; }
+.progress-bar-row { width: 1s; height: auto; horizontal-gap: 10px; alignment: center; }
+.progress-count { font-size: 13; color: #b8c4cc; }
+.progress-pct { font-size: 13; color: #87cfdb; }
 
-:root {
-    background-color: #0c0d14;
-    color: #e2e8f0;
-    font-size: 12;
-}
+.sample-browser list { width: 1s; height: 1s; }
+.sample-browser list-item { width: 1s; height: 44px; }
 
-/* Sidebar Shell */
-.sidebar {
-    width: 260px;
-    height: 1s;
-    background-color: #0a0b10;
-    border-right-width: 1px;
-    border-right-color: #181c28;
-    padding: 8px;
-    vertical-gap: 6px;
-}
-
-/* Hardware Cards */
-.card {
-    width: 1s;
-    height: auto;
-    background-color: #121520;
-    border-width: 1px;
-    border-color: #1e2436;
-    corner-radius: 8px;
-    padding-left: 8px;
-    padding-right: 8px;
-    padding-top: 6px;
-    padding-bottom: 6px;
-    vertical-gap: 5px;
-}
-
-.card-header {
-    width: 1s;
-    height: auto;
-    alignment: center;
-    horizontal-gap: 6px;
-}
-
-.card-title {
-    color: #8d99ae;
-    font-size: 10;
-    font-weight: bold;
-}
-
-.card-indicator {
-    width: 6px;
-    height: 6px;
-    corner-radius: 3px;
-    background-color: #00e5ff;
-}
-
-/* Field Containers */
-.field-box {
-    width: 1s;
-    height: auto;
-    background-color: #0d0f17;
-    border-width: 1px;
-    border-color: #1c2130;
-    corner-radius: 6px;
-    padding-left: 8px;
-    padding-right: 8px;
-    padding-top: 4px;
-    padding-bottom: 4px;
-    vertical-gap: 2px;
-}
-
-.field-label {
-    color: #64748b;
-    font-size: 9;
-    font-weight: bold;
-}
-
-.field-value {
-    color: #f1f5f9;
-    font-size: 13;
-    font-weight: bold;
-}
-
-/* Segmented Control Chips */
-.chip-group {
-    width: 1s;
-    height: auto;
-    horizontal-gap: 4px;
-    alignment: center;
-}
-
-.chip-btn {
-    height: 22px;
-    background-color: #161a27;
-    border-width: 1px;
-    border-color: #242c3f;
-    corner-radius: 4px;
-    color: #94a3b8;
-    font-size: 10;
-    alignment: center;
-    cursor: hand;
-}
-
-.chip-btn:hover {
-    background-color: #1e2436;
-    border-color: #3b82f6;
-    color: #ffffff;
-}
-
-.chip-btn-active {
-    background-color: #1e2b48;
-    border-width: 1px;
-    border-color: #3b82f6;
-    corner-radius: 4px;
-    color: #60a5fa;
-    font-size: 10;
-    font-weight: bold;
-    alignment: center;
-    cursor: hand;
-}
-
-/* Stepper buttons */
-.stepper-btn {
-    width: 20px;
-    height: 20px;
-    background-color: #161a27;
-    border-width: 1px;
-    border-color: #242c3f;
-    corner-radius: 4px;
-    color: #94a3b8;
-    font-size: 12;
-    alignment: center;
-    cursor: hand;
-}
-
-.stepper-btn:hover {
-    background-color: #22293c;
-    border-color: #3b82f6;
-    color: #ffffff;
-}
-
-/* Stage Area */
-.stage {
-    width: 1s;
-    height: 1s;
-    background-color: #0c0d14;
-    padding: 16px;
-    vertical-gap: 12px;
-}
-
-/* Professional VU Meters Deck */
-.meters-deck {
-    width: 1s;
-    height: auto;
-    background-color: #10131e;
-    border-width: 1px;
-    border-color: #1a2030;
-    corner-radius: 8px;
-    padding-left: 12px;
-    padding-right: 12px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-    vertical-gap: 6px;
-}
-
-.meter-row {
-    width: 1s;
-    height: 10px;
-    horizontal-gap: 8px;
-    alignment: center;
-}
-
-.meter-channel-tag {
-    color: #64748b;
-    font-size: 10;
-    font-weight: bold;
-    width: 14px;
-}
-
-.meter-db-tag {
-    color: #94a3b8;
-    font-size: 10;
-    width: 44px;
-    alignment: right;
-}
-
-/* Action Buttons */
-.btn-primary-arm {
-    width: 1s;
-    height: 44px;
-    background-color: #141018;
-    border-width: 2px;
-    border-color: #ef444477;
-    corner-radius: 8px;
-    color: #ef4444;
-    font-size: 15;
-    font-weight: bold;
-    alignment: center;
-    cursor: hand;
-}
-
-.btn-primary-arm:hover {
-    background-color: #261118;
-    border-color: #ef4444;
-    color: #ffffff;
-}
-
-.btn-primary-record {
-    width: 1s;
-    height: 44px;
-    background-color: #ef4444;
-    border-width: 1px;
-    border-color: #f87171;
-    corner-radius: 8px;
-    color: #ffffff;
-    font-size: 15;
-    font-weight: bold;
-    alignment: center;
-    cursor: hand;
-}
-
-.btn-primary-record:hover {
-    background-color: #dc2626;
-}
-
-.btn-secondary {
-    height: 30px;
-    background-color: #151824;
-    border-width: 1px;
-    border-color: #242a3e;
-    corner-radius: 6px;
-    color: #94a3b8;
-    font-size: 11;
-    alignment: center;
-    cursor: hand;
-}
-
-.btn-secondary:hover {
-    background-color: #1e2436;
-    border-color: #3b82f6;
-    color: #ffffff;
-}
-
-.btn-pill {
-    height: 28px;
-    padding-left: 12px;
-    padding-right: 12px;
-    background-color: #121520;
-    border-width: 1px;
-    border-color: #242c3f;
-    corner-radius: 14px;
-    font-size: 11;
-    alignment: center;
-    cursor: hand;
-}
-
-.btn-pill:hover {
-    background-color: #1a2030;
-    border-color: #3b82f6;
-}
-
-/* Status Banners */
-.banner-error {
-    width: 1s;
-    height: auto;
-    background-color: #220e12;
-    border-width: 1px;
-    border-color: #ef4444;
-    corner-radius: 6px;
-    padding-left: 12px;
-    padding-right: 12px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-    horizontal-gap: 8px;
-    alignment: center;
-}
-
-.banner-info {
-    width: 1s;
-    height: auto;
-    background-color: #0b2016;
-    border-width: 1px;
-    border-color: #10b981;
-    corner-radius: 6px;
-    padding-left: 12px;
-    padding-right: 12px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-    horizontal-gap: 8px;
-    alignment: center;
-}
-
-/* Note Display in Recording */
-.note-display {
-    width: 1s;
-    height: auto;
-    horizontal-gap: 14px;
-    alignment: center;
-}
-
-.note-name {
-    color: #00e5ff;
-    font-size: 34;
-    font-weight: bold;
-}
-
-.note-detail {
-    color: #94a3b8;
-    font-size: 13;
-}
-
-/* Progress Bar */
-.progress-bar-row {
-    width: 1s;
-    height: auto;
-    horizontal-gap: 10px;
-    alignment: center;
-}
-
-.progress-count {
-    font-size: 12;
-    color: #cbd5e1;
-    font-weight: bold;
-}
-
-.progress-pct {
-    font-size: 12;
-    color: #3b82f6;
-    font-weight: bold;
-}
+/* Disclosure headers are keyboard-focusable buttons with an expanded state. */
+disclosure { width: 1s; height: auto; }
+.disclosure-header { width: 1s; height: 40px; padding-left: 0px; padding-right: 4px; background-color: transparent; border-width: 0px; corner-radius: 4px; }
+.disclosure-header label { font-size: 14; font-weight: bold; }
+.disclosure-header:hover { background-color: #2b3138; }
+.disclosure-content { width: 1s; height: auto; vertical-gap: 10px; padding-top: 10px; padding-bottom: 14px; }
+.advanced-disclosure .disclosure-header { height: 34px; border-top-width: 1px; border-top-color: #343a40; }
+.advanced-disclosure .disclosure-header label { color: #afbac2; font-size: 12; font-weight: normal; }
+.advanced-disclosure .disclosure-content { padding-bottom: 4px; }
+.keyboard-disclosure .disclosure-header { height: 28px; }
+.keyboard-disclosure .disclosure-header label { font-size: 12; font-weight: normal; color: #a2b0b8; }
+.keyboard-disclosure .disclosure-content { padding-top: 6px; padding-bottom: 0px; }
+textbox:focus-visible { outline-color: #87cfdb; outline-width: 2px; outline-offset: 2px; }
+picklist:focus-visible { outline-color: #87cfdb; outline-width: 2px; outline-offset: 2px; }

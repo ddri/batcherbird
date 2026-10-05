@@ -1,4 +1,6 @@
+use crate::session::SessionSettings;
 use batcherbird_core::export::AudioFormat;
+use batcherbird_core::sampler::Sample;
 use batcherbird_core::sampler::VizChunk;
 use std::path::PathBuf;
 
@@ -24,6 +26,26 @@ pub enum AppEvent {
     SetEndNote(u8),
     SetVelocityLayers(u8),
     SetDuration(u32),
+    SetReleaseDuration(u32),
+    SetInstrumentName(String),
+    SetAutoLoop(bool),
+    SetTrimSilence(bool),
+    SelectSample(usize),
+    RecordSelectedSample,
+    SaveSession,
+    OpenSession,
+    SessionSaved {
+        path: PathBuf,
+        revision: u64,
+    },
+    SessionLoaded {
+        path: PathBuf,
+        settings: SessionSettings,
+        samples: Vec<Sample>,
+    },
+    SessionError(String),
+    SessionDialogCancelled,
+    RecoveryComplete(Option<String>),
     SetExportFormat(AudioFormat),
     SetOutputDirectory(PathBuf),
     SelectOutputDirectory,
@@ -56,11 +78,16 @@ pub enum AppEvent {
     StartRecording,
     CancelRecording,
     PlayTestNote,
+    Panic,
     TestNoteResult {
+        generation: u64,
         peak_db: f32,
         peak_linear: f32,
     },
-    TestNoteError(String),
+    TestNoteError {
+        generation: u64,
+        message: String,
+    },
     TogglePlaythrough,
     SetPlaythrough(bool),
     SelectChannelRouting(usize),

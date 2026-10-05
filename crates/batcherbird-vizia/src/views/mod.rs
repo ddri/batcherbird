@@ -1,3 +1,4 @@
+mod disclosure;
 mod keyboard;
 mod meters;
 mod note_display;

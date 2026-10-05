@@ -8,6 +8,11 @@ impl WaveformView {
     pub fn new(cx: &mut Context) -> Handle<'_, Self> {
         Self.build(cx, |cx| {
             let id = cx.current();
+            Binding::new(cx, AppData::playback_position, move |cx, _| {
+                cx.needs_redraw(id)
+            });
+            Binding::new(cx, AppData::is_playing, move |cx, _| cx.needs_redraw(id));
+            Binding::new(cx, AppData::auto_loop, move |cx, _| cx.needs_redraw(id));
             // Redraw whenever the peaks list or loop points change
             Binding::new(cx, AppData::viz_peaks, move |cx, _val| {
                 cx.needs_redraw(id);
@@ -34,13 +39,13 @@ impl View for WaveformView {
         let screen_path = vg::Path::rect(screen_rect, None);
         let mut screen_paint = vg::Paint::default();
         screen_paint.set_anti_alias(true);
-        screen_paint.set_color(vg::Color::from_rgb(0x08, 0x0a, 0x10));
+        screen_paint.set_color(vg::Color::from_rgb(0x1c, 0x20, 0x25));
         canvas.draw_path(&screen_path, &screen_paint);
 
         // Border
         let mut border_paint = vg::Paint::default();
         border_paint.set_anti_alias(true);
-        border_paint.set_color(vg::Color::from_rgb(0x1a, 0x22, 0x33));
+        border_paint.set_color(vg::Color::from_rgb(0x34, 0x3a, 0x40));
         border_paint.set_style(vg::PaintStyle::Stroke);
         border_paint.set_stroke_width(1.0);
         canvas.draw_path(&screen_path, &border_paint);
@@ -48,7 +53,7 @@ impl View for WaveformView {
         // 2. Oscilloscope Reticle Grid
         let mut grid_paint = vg::Paint::default();
         grid_paint.set_anti_alias(true);
-        grid_paint.set_color(vg::Color::from_rgb(0x10, 0x15, 0x22));
+        grid_paint.set_color(vg::Color::from_rgb(0x28, 0x2e, 0x34));
         grid_paint.set_style(vg::PaintStyle::Stroke);
         grid_paint.set_stroke_width(0.75);
 
@@ -80,7 +85,7 @@ impl View for WaveformView {
 
         let mut center_paint = vg::Paint::default();
         center_paint.set_anti_alias(true);
-        center_paint.set_color(vg::Color::from_rgb(0x20, 0x2b, 0x40));
+        center_paint.set_color(vg::Color::from_rgb(0x42, 0x4b, 0x54));
         center_paint.set_style(vg::PaintStyle::Stroke);
         center_paint.set_stroke_width(1.0);
         canvas.draw_path(&center_line, &center_paint);
@@ -91,7 +96,8 @@ impl View for WaveformView {
         let total_len = AppData::sample_total_len.get(cx);
 
         if let (Some(l_start), Some(l_end)) = (loop_start, loop_end) {
-            if total_len > 0 && l_end > l_start && l_end <= total_len {
+            if AppData::auto_loop.get(cx) && total_len > 0 && l_end > l_start && l_end <= total_len
+            {
                 let start_ratio = l_start as f32 / total_len as f32;
                 let end_ratio = l_end as f32 / total_len as f32;
 
@@ -102,7 +108,7 @@ impl View for WaveformView {
                 let loop_rect = vg::Rect::from_xywh(start_x, bounds.y, end_x - start_x, bounds.h);
                 let loop_bg_path = vg::Path::rect(loop_rect, None);
                 let mut loop_bg_paint = vg::Paint::default();
-                loop_bg_paint.set_color(vg::Color::from_argb(30, 0x10, 0xb9, 0x81));
+                loop_bg_paint.set_color(vg::Color::from_argb(30, 0x87, 0xcf, 0xdb));
                 loop_bg_paint.set_style(vg::PaintStyle::Fill);
                 canvas.draw_path(&loop_bg_path, &loop_bg_paint);
 
@@ -113,7 +119,7 @@ impl View for WaveformView {
 
                 let mut start_paint = vg::Paint::default();
                 start_paint.set_anti_alias(true);
-                start_paint.set_color(vg::Color::from_rgb(0x10, 0xb9, 0x81));
+                start_paint.set_color(vg::Color::from_rgb(0x87, 0xcf, 0xdb));
                 start_paint.set_style(vg::PaintStyle::Stroke);
                 start_paint.set_stroke_width(2.0);
                 canvas.draw_path(&start_line, &start_paint);
@@ -125,7 +131,7 @@ impl View for WaveformView {
 
                 let mut end_paint = vg::Paint::default();
                 end_paint.set_anti_alias(true);
-                end_paint.set_color(vg::Color::from_rgb(0xf5, 0x9e, 0x0b));
+                end_paint.set_color(vg::Color::from_rgb(0xb8, 0xc4, 0xcc));
                 end_paint.set_style(vg::PaintStyle::Stroke);
                 end_paint.set_stroke_width(2.0);
                 canvas.draw_path(&end_line, &end_paint);
@@ -154,7 +160,7 @@ impl View for WaveformView {
 
             let mut standby_paint = vg::Paint::default();
             standby_paint.set_anti_alias(true);
-            standby_paint.set_color(vg::Color::from_argb(60, 0x38, 0xbd, 0xf8));
+            standby_paint.set_color(vg::Color::from_argb(60, 0x87, 0xcf, 0xdb));
             standby_paint.set_style(vg::PaintStyle::Stroke);
             standby_paint.set_stroke_width(1.0);
             canvas.draw_path(&standby_path, &standby_paint);
@@ -187,14 +193,14 @@ impl View for WaveformView {
         // Waveform interior gradient/fill
         let mut fill_paint = vg::Paint::default();
         fill_paint.set_anti_alias(true);
-        fill_paint.set_color(vg::Color::from_argb(45, 0x00, 0xe5, 0xff));
+        fill_paint.set_color(vg::Color::from_argb(45, 0x87, 0xcf, 0xdb));
         fill_paint.set_style(vg::PaintStyle::Fill);
         canvas.draw_path(&fill_path, &fill_paint);
 
         // Waveform contour strokes (electric cyan)
         let mut stroke_paint = vg::Paint::default();
         stroke_paint.set_anti_alias(true);
-        stroke_paint.set_color(vg::Color::from_rgb(0x38, 0xbd, 0xf8));
+        stroke_paint.set_color(vg::Color::from_rgb(0x87, 0xcf, 0xdb));
         stroke_paint.set_style(vg::PaintStyle::Stroke);
         stroke_paint.set_stroke_width(1.5);
 
@@ -223,5 +229,16 @@ impl View for WaveformView {
             }
         }
         canvas.draw_path(&bot_path, &stroke_paint);
+        if AppData::is_playing.get(cx) {
+            let x = bounds.x + AppData::playback_position.get(cx).clamp(0.0, 1.0) as f32 * bounds.w;
+            let mut cursor = vg::Path::new();
+            cursor.move_to(vg::Point::new(x, bounds.y));
+            cursor.line_to(vg::Point::new(x, bounds.y + bounds.h));
+            let mut paint = vg::Paint::default();
+            paint.set_color(vg::Color::from_rgb(0xec, 0xf0, 0xf2));
+            paint.set_style(vg::PaintStyle::Stroke);
+            paint.set_stroke_width(2.0);
+            canvas.draw_path(&cursor, &paint);
+        }
     }
 }
