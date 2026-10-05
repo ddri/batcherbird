@@ -9,6 +9,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = PathBuf::from(std::env::args_os().nth(1).ok_or(
         "Usage: cargo run -p batcherbird-vizia --example generate_test_session -- OUTPUT.batcherbird"
     )?);
+    // Native launches may use a different working directory from this generator.
+    let output = if output.is_absolute() {
+        output
+    } else {
+        std::env::current_dir()?.join(output)
+    };
     let samples = fixtures::instrument();
     let settings = SessionSettings {
         instrument_name: "QA quiet attack and long release".into(),

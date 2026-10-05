@@ -161,6 +161,7 @@ pub fn stage(cx: &mut Context) {
                                     .text_overflow(TextOverflow::Ellipsis)
                             })
                             .name(item)
+                            .text_value(item)
                             .on_press(move |cx| cx.emit(AppEvent::SelectSample(index)))
                             .class("sample-row")
                             .checked(
@@ -244,6 +245,13 @@ pub fn stage(cx: &mut Context) {
                             "Play selected sample"
                         }
                     }))
+                    .text_value(AppData::is_playing.map(|playing| {
+                        if *playing {
+                            "Stop preview"
+                        } else {
+                            "Play selected sample"
+                        }
+                    }))
                     .on_press(|cx| {
                         if AppData::is_playing.get(cx) {
                             cx.emit(AppEvent::StopPreview);
@@ -260,6 +268,9 @@ pub fn stage(cx: &mut Context) {
                         )
                     })
                     .name(AppData::export_format_display.map(|format| format!("Export {}", format)))
+                    .text_value(
+                        AppData::export_format_display.map(|format| format!("Export {}", format)),
+                    )
                     .on_press(|cx| cx.emit(AppEvent::ExportAll))
                     .class("primary")
                     .disabled(AppData::controls_busy);

@@ -32,6 +32,7 @@ pub(super) fn disclosure<'a>(
     Disclosure { is_open: false }
         .build(cx, |cx| {
             let target = cx.current();
+            let accessible_title = title.to_owned();
             Button::new(cx, |cx| {
                 HStack::new(cx, |cx| {
                     Label::new(cx, title).width(Stretch(1.0)).hoverable(false);
@@ -46,9 +47,13 @@ pub(super) fn disclosure<'a>(
                 .alignment(Alignment::Center)
             })
             .name(title.to_owned())
-            .text_value(
-                Disclosure::is_open.map(|open| if *open { "Expanded" } else { "Collapsed" }),
-            )
+            .text_value(Disclosure::is_open.map(move |open| {
+                format!(
+                    "{} · {}",
+                    accessible_title,
+                    if *open { "expanded" } else { "collapsed" }
+                )
+            }))
             .checked(Disclosure::is_open)
             .on_press(move |cx| cx.emit_to(target, ToggleDisclosure))
             .class("disclosure-header")

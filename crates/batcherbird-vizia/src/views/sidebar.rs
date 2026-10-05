@@ -6,6 +6,7 @@ use vizia::prelude::*;
 pub(super) fn action<'a>(cx: &'a mut Context, label: &str, event: AppEvent) -> Handle<'a, Button> {
     Button::new(cx, |cx| Label::new(cx, label))
         .name(label.to_owned())
+        .text_value(label.to_owned())
         .on_press(move |cx| cx.emit(event.clone()))
 }
 
@@ -21,10 +22,12 @@ fn stepper(
         HStack::new(cx, |cx| {
             action(cx, "−", dec)
                 .name(format!("Decrease {}", title))
+                .text_value(format!("Decrease {}", title))
                 .class("stepper-btn");
             value(cx);
             action(cx, "+", inc)
                 .name(format!("Increase {}", title))
+                .text_value(format!("Increase {}", title))
                 .class("stepper-btn");
         })
         .class("stepper");
@@ -44,7 +47,7 @@ pub fn sidebar(cx: &mut Context) {
                     AppData::selected_midi_device,
                     true,
                 )
-                .name("MIDI output device")
+                .name("MIDI output device").text_value("MIDI output device")
                 .on_select(|cx, idx| cx.emit(AppEvent::SelectMidiDevice(idx)))
                 .width(Stretch(1.0));
                 Label::new(cx, "Audio input").class("field-label");
@@ -54,7 +57,7 @@ pub fn sidebar(cx: &mut Context) {
                     AppData::selected_audio_input,
                     true,
                 )
-                .name("Audio input device")
+                .name("Audio input device").text_value("Audio input device")
                 .on_select(|cx, idx| cx.emit(AppEvent::SelectAudioInput(idx)))
                 .width(Stretch(1.0));
                 action(cx, "Refresh devices", AppEvent::RefreshDevices).width(Stretch(1.0));
@@ -71,6 +74,12 @@ pub fn sidebar(cx: &mut Context) {
                     )
                 })
                 .name(AppData::playthrough_enabled.map(|on| {
+                    if *on {
+                        "Monitoring on"
+                    } else {
+                        "Monitoring off"
+                    }
+                })).text_value(AppData::playthrough_enabled.map(|on| {
                     if *on {
                         "Monitoring on"
                     } else {
@@ -158,7 +167,7 @@ pub fn sidebar(cx: &mut Context) {
                     AppData::selected_step_index,
                     true,
                 )
-                .name("Note spacing")
+                .name("Note spacing").text_value("Note spacing")
                 .on_select(|cx, idx| cx.emit(AppEvent::SelectNoteStepByIndex(idx)))
                 .width(Stretch(1.0));
                 HStack::new(cx, |cx| {
@@ -193,7 +202,7 @@ pub fn sidebar(cx: &mut Context) {
                 Label::new(cx, "Release tail").class("field-label");
                 HStack::new(cx, |cx| {
                     Button::new(cx, |cx| Label::new(cx, "−"))
-                        .name("Decrease release tail")
+                        .name("Decrease release tail").text_value("Decrease release tail")
                         .on_press(|cx| {
                             let ms = AppData::release_duration_ms.get(cx);
                             cx.emit(AppEvent::SetReleaseDuration(ms.saturating_sub(100)));
@@ -207,7 +216,7 @@ pub fn sidebar(cx: &mut Context) {
                     .class("field-value")
                     .width(Stretch(1.0));
                     Button::new(cx, |cx| Label::new(cx, "+"))
-                        .name("Increase release tail")
+                        .name("Increase release tail").text_value("Increase release tail")
                         .on_press(|cx| {
                             let ms = AppData::release_duration_ms.get(cx);
                             cx.emit(AppEvent::SetReleaseDuration(ms.saturating_add(100)));
@@ -237,7 +246,7 @@ pub fn sidebar(cx: &mut Context) {
                 .on_select(|cx, idx| cx.emit(AppEvent::SelectFormatByIndex(idx)))
                 .width(Stretch(1.0));
                 Button::new(cx, |cx| Label::new(cx, "Choose export folder…"))
-                    .name("Choose export folder")
+                    .name("Choose export folder").text_value("Choose export folder")
                     .on_press(|cx| cx.emit(AppEvent::SelectOutputDirectory))
                     .width(Stretch(1.0));
                 Label::new(
@@ -248,7 +257,7 @@ pub fn sidebar(cx: &mut Context) {
                 .width(Stretch(1.0));
                 disclosure(cx, "Silence trimming", false, |cx| {
                     Button::new(cx, |cx| Label::new(cx, AppData::trim_silence.map(|on| if *on { "Trim silence on" } else { "Trim silence off" })))
-                        .name(AppData::trim_silence.map(|on| if *on { "Trim silence enabled" } else { "Trim silence disabled" }))
+                        .name(AppData::trim_silence.map(|on| if *on { "Trim silence enabled" } else { "Trim silence disabled" })).text_value(AppData::trim_silence.map(|on| if *on { "Trim silence enabled" } else { "Trim silence disabled" }))
                         .checked(AppData::trim_silence)
                         .on_press(|cx| { let on = AppData::trim_silence.get(cx); cx.emit(AppEvent::SetTrimSilence(!on)); })
                         .width(Stretch(1.0));
@@ -269,6 +278,12 @@ pub fn sidebar(cx: &mut Context) {
                     )
                 })
                 .name(AppData::auto_loop.map(|on| {
+                    if *on {
+                        "Automatic loops enabled, experimental"
+                    } else {
+                        "Automatic loops disabled"
+                    }
+                })).text_value(AppData::auto_loop.map(|on| {
                     if *on {
                         "Automatic loops enabled, experimental"
                     } else {
@@ -295,6 +310,12 @@ pub fn sidebar(cx: &mut Context) {
                     )
                 })
                 .name(AppData::export_in_progress.map(|busy| {
+                    if *busy {
+                        "Exporting instrument"
+                    } else {
+                        "Export selected format"
+                    }
+                })).text_value(AppData::export_in_progress.map(|busy| {
                     if *busy {
                         "Exporting instrument"
                     } else {

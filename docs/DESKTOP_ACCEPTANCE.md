@@ -59,4 +59,33 @@ and disabled conflicting actions. Do not treat a static fixture as proof that a
 device operation or cancellation works.
 
 Record the build revision, macOS version, window size, steps attempted, and any
-failed expectation. All interactive checks remain pending until performed.
+failed expectation. Unperformed checks remain pending.
+
+## Recorded native checks — October 5, 2026
+
+An isolated demo app built from `2624733` plus the accessibility-value follow-up
+was inspected on the local Mac at 1240 × 820 logical pixels. The revised review
+layout, collapsed settings, expanded export section, sample list, and waveform
+were readable. Tab focus was visible; Return activated disclosure headers and
+buttons. A native Open dialog loaded the six-take fixture, and keyboard sample
+selection updated the caption and waveform to C4 / velocity 64.
+
+The native folder chooser selected an absolute disposable output directory.
+Combined export reported eight files, confirmed on disk as six stereo 48kHz
+24-bit WAVs plus DecentSampler and SFZ presets. The native Save dialog wrote
+`native-saved.batcherbird` with six sample records and sibling audio files.
+These checks establish the observed load, selection, save, and export paths;
+they do not establish player compatibility or audio quality.
+
+Vizia 0.3 does not forward `.name()` to AccessKit labels in this build. Explicit
+text values now make ordinary action buttons identifiable in the macOS
+accessibility tree. Checked sample rows and disclosure toggles still lack useful
+labels in that tree, and accessibility mouse activation produced no observable
+changes. Keyboard activation worked. Full VoiceOver support needs a framework
+fix and native verification. Synthetic modifier-key checks were inconclusive;
+verify Shift+Tab and application shortcuts manually.
+
+Playback/listening, minimum-size resizing, edited-session replacement warnings,
+invalid-file and dialog cancellation recovery, and the other static layouts
+still need hands-on checks. Automated session and export regressions supplement
+these observations without satisfying the remaining native gates.
