@@ -90,9 +90,9 @@ fn peaks_buckets_capped_by_input_len() {
 fn stepped_notes_calculation() {
     let mut data = AppData::default();
     data.start_note = 60; // C4
-    data.end_note = 72;   // C5
+    data.end_note = 72; // C5
     data.velocity_layers = 2;
-    data.note_step = 3;   // Every 3rd note: 60, 63, 66, 69, 72 = 5 notes
+    data.note_step = 3; // Every 3rd note: 60, 63, 66, 69, 72 = 5 notes
     assert_eq!(data.total_samples(), 10);
 
     // Every octave (step 12) from C2 (36) to C6 (84): 36, 48, 60, 72, 84 = 5 notes
@@ -242,32 +242,164 @@ fn test_keyboard_hit_testing() {
     let bounds_w = 290.0;
     let bounds_h = 50.0;
     let display_start = 36; // C2
-    let display_end = 84;   // C6
+    let display_end = 84; // C6
 
     // 1. Out-of-bounds checks
-    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, -1.0, 25.0), None);
-    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 291.0, 25.0), None);
-    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 150.0, -1.0), None);
-    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 150.0, 51.0), None);
-    assert_eq!(hit_test_note(bounds_x, bounds_y, 0.0, bounds_h, display_start, display_end, 10.0, 25.0), None);
+    assert_eq!(
+        hit_test_note(
+            bounds_x,
+            bounds_y,
+            bounds_w,
+            bounds_h,
+            display_start,
+            display_end,
+            -1.0,
+            25.0
+        ),
+        None
+    );
+    assert_eq!(
+        hit_test_note(
+            bounds_x,
+            bounds_y,
+            bounds_w,
+            bounds_h,
+            display_start,
+            display_end,
+            291.0,
+            25.0
+        ),
+        None
+    );
+    assert_eq!(
+        hit_test_note(
+            bounds_x,
+            bounds_y,
+            bounds_w,
+            bounds_h,
+            display_start,
+            display_end,
+            150.0,
+            -1.0
+        ),
+        None
+    );
+    assert_eq!(
+        hit_test_note(
+            bounds_x,
+            bounds_y,
+            bounds_w,
+            bounds_h,
+            display_start,
+            display_end,
+            150.0,
+            51.0
+        ),
+        None
+    );
+    assert_eq!(
+        hit_test_note(
+            bounds_x,
+            bounds_y,
+            0.0,
+            bounds_h,
+            display_start,
+            display_end,
+            10.0,
+            25.0
+        ),
+        None
+    );
 
     // 2. White key in bottom 40% (y = 40.0, bounds_h = 50.0 => below black keys):
     // First white key (0.0..10.0) is C2 (note 36)
-    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 5.0, 40.0), Some(36));
+    assert_eq!(
+        hit_test_note(
+            bounds_x,
+            bounds_y,
+            bounds_w,
+            bounds_h,
+            display_start,
+            display_end,
+            5.0,
+            40.0
+        ),
+        Some(36)
+    );
     // Second white key (10.0..20.0) is D2 (note 38)
-    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 15.0, 40.0), Some(38));
+    assert_eq!(
+        hit_test_note(
+            bounds_x,
+            bounds_y,
+            bounds_w,
+            bounds_h,
+            display_start,
+            display_end,
+            15.0,
+            40.0
+        ),
+        Some(38)
+    );
     // Third white key (20.0..30.0) is E2 (note 40)
-    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 25.0, 40.0), Some(40));
+    assert_eq!(
+        hit_test_note(
+            bounds_x,
+            bounds_y,
+            bounds_w,
+            bounds_h,
+            display_start,
+            display_end,
+            25.0,
+            40.0
+        ),
+        Some(40)
+    );
 
     // 3. Black key in top 60% (y = 15.0, bounds_h = 50.0 => black_h is 30.0):
     // Black key C#2 (note 37) is centered at x = 10.0 with width = 6.0 (7.0..13.0)
-    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 10.0, 15.0), Some(37));
+    assert_eq!(
+        hit_test_note(
+            bounds_x,
+            bounds_y,
+            bounds_w,
+            bounds_h,
+            display_start,
+            display_end,
+            10.0,
+            15.0
+        ),
+        Some(37)
+    );
     // Black key D#2 (note 39) is centered at x = 20.0 with width = 6.0 (17.0..23.0)
-    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 20.0, 15.0), Some(39));
+    assert_eq!(
+        hit_test_note(
+            bounds_x,
+            bounds_y,
+            bounds_w,
+            bounds_h,
+            display_start,
+            display_end,
+            20.0,
+            15.0
+        ),
+        Some(39)
+    );
 
     // 4. White key in top 60% away from black keys:
     // Left edge of C2 (e.g. x = 2.0, y = 15.0) is not covered by C#2 (starts at 7.0)
-    assert_eq!(hit_test_note(bounds_x, bounds_y, bounds_w, bounds_h, display_start, display_end, 2.0, 15.0), Some(36));
+    assert_eq!(
+        hit_test_note(
+            bounds_x,
+            bounds_y,
+            bounds_w,
+            bounds_h,
+            display_start,
+            display_end,
+            2.0,
+            15.0
+        ),
+        Some(36)
+    );
 }
 
 #[test]
@@ -362,7 +494,10 @@ fn test_export_format_cycling_and_display() {
     assert_eq!(data.format_options[5], "DecentSampler + SFZ");
     assert_eq!(data.format_options[6], "All Formats");
 
-    assert_eq!(AppData::format_display(&AudioFormat::DecentSamplerAndSfz), "DecentSampler + SFZ");
+    assert_eq!(
+        AppData::format_display(&AudioFormat::DecentSamplerAndSfz),
+        "DecentSampler + SFZ"
+    );
     assert_eq!(AppData::format_display(&AudioFormat::All), "All Formats");
 
     // Test cycling forward through all 7
@@ -398,6 +533,89 @@ fn test_export_format_cycling_and_display() {
     }
 }
 
+fn fixture(note: u8, velocity: u8, amplitude: f32) -> batcherbird_core::sampler::Sample {
+    use std::time::{Duration, UNIX_EPOCH};
+    batcherbird_core::sampler::Sample {
+        note,
+        velocity,
+        audio_data: vec![amplitude; 480],
+        sample_rate: 48000,
+        channels: 1,
+        recorded_at: UNIX_EPOCH,
+        midi_timing: Duration::from_millis(10),
+        audio_timing: Duration::from_millis(10),
+    }
+}
 
+#[test]
+fn cancelled_rerecord_keeps_original_and_other_samples() {
+    let mut data = AppData::default();
+    data.set_recorded_samples(vec![fixture(60, 64, 0.25), fixture(60, 127, 0.5)]);
+    data.replacement_sample = Some(1);
+    data.app_state = AppState::Stopping;
+    data.accept_captured_samples(Vec::new());
+    assert_eq!(data.app_state, AppState::Review);
+    assert_eq!(data.recorded_count, 2);
+    assert_eq!(data.recorded_samples[1].audio_data[0], 0.5);
+    assert!(!data.has_unsaved_changes);
+}
 
+#[test]
+fn successful_rerecord_replaces_only_selected_take() {
+    let mut data = AppData::default();
+    data.set_recorded_samples(vec![fixture(60, 64, 0.25), fixture(60, 127, 0.5)]);
+    data.replacement_sample = Some(1);
+    data.accept_captured_samples(vec![fixture(60, 127, 0.75)]);
+    assert_eq!(data.recorded_count, 2);
+    assert_eq!(data.recorded_samples[0].audio_data[0], 0.25);
+    assert_eq!(data.recorded_samples[1].audio_data[0], 0.75);
+    assert!(data.has_unsaved_changes);
+}
 
+#[test]
+fn stopped_batch_keeps_completed_takes_and_selects_matching_waveform() {
+    let mut data = AppData::default();
+    data.app_state = AppState::Stopping;
+    data.accept_captured_samples(vec![fixture(60, 64, 0.25), fixture(63, 127, 0.75)]);
+    data.select_sample(1);
+    assert_eq!(data.app_state, AppState::Review);
+    assert_eq!(data.selected_sample, 1);
+    assert!(data.selected_sample_label.contains("D#4"));
+    assert!(data.selected_sample_label.contains("127"));
+    assert_eq!(data.viz_peaks[0], 0.75);
+    assert_eq!(data.sample_total_len, 480);
+}
+
+#[test]
+fn restored_configuration_clamps_invalid_values_and_retains_release_tail() {
+    use batcherbird_vizia::session::SessionSettings;
+    let mut data = AppData::default();
+    data.apply_session_settings(SessionSettings {
+        start_note: 255,
+        end_note: 0,
+        velocity_layers: 0,
+        note_step: 0,
+        note_duration_ms: u32::MAX,
+        release_duration_ms: 3000,
+        input_gain_db: f32::NAN,
+        export_format: 5,
+        ..Default::default()
+    });
+    assert_eq!((data.start_note, data.end_note), (127, 127));
+    assert_eq!(data.velocity_layers, 1);
+    assert_eq!(data.note_step, 1);
+    assert_eq!(data.note_duration_ms, 10000);
+    assert_eq!(data.input_gain_db, 0.0);
+    assert_eq!(data.build_sampling_config().release_time_ms, 3000);
+    assert_eq!(data.export_format, AudioFormat::DecentSamplerAndSfz);
+}
+
+#[test]
+fn demo_is_hardware_free_and_reviewable() {
+    let data = AppData::demo();
+    assert!(data.demo_mode);
+    assert_eq!(data.app_state, AppState::Review);
+    assert_eq!(data.recorded_count, 18);
+    assert!(data.preferences_path.is_none());
+    assert!(!data.viz_peaks.is_empty());
+}

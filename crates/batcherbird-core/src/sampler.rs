@@ -10,10 +10,54 @@ use crate::{BatcherbirdError, Result};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use midir::MidiOutputConnection;
 use rtrb::{Consumer, Producer, RingBuffer};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
+
+/// Push complete frames only: a full ring must never leave half a stereo frame.
+pub(crate) fn push_capture_frame(
+    producer: &mut Producer<f32>,
+    left: f32,
+    right: f32,
+    hw_channels: u16,
+    routing: ChannelRouting,
+) -> bool {
+    let count = routing.output_channels(hw_channels) as usize;
+    if producer.slots() < count {
+        return false;
+    }
+    let first = if routing == ChannelRouting::MonoRight {
+        right
+    } else {
+        left
+    };
+    let _ = producer.push(first);
+    if count == 2 {
+        let _ = producer.push(right);
+    }
+    true
+}
+
+/// Polling bounds cancellation latency to 10ms during every phase of a note.
+async fn wait_for_capture(ms: u64, cancel: &AtomicBool, failed: &AtomicBool) -> Result<bool> {
+    let deadline = Instant::now() + Duration::from_millis(ms);
+    loop {
+        if failed.load(Ordering::Acquire) {
+            return Err(BatcherbirdError::Audio(
+                "Audio capture failed or buffer overflowed".into(),
+            ));
+        }
+        if cancel.load(Ordering::Acquire) {
+            return Ok(false);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Ok(true);
+        }
+        tokio::time::sleep(remaining.min(Duration::from_millis(10))).await;
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct SamplingConfig {
@@ -38,12 +82,12 @@ pub struct SamplingConfig {
 impl Default for SamplingConfig {
     fn default() -> Self {
         Self {
-            note_duration_ms: 2000, // 2 second note duration
-            release_time_ms: 1000,  // 1 second release capture
-            pre_delay_ms: 100,      // 100ms pre-roll
-            post_delay_ms: 100,     // 100ms post delay
-            midi_channel: 0,        // Channel 1 (0-indexed)
-            velocity: 100,          // Default velocity
+            note_duration_ms: 2000,  // 2 second note duration
+            release_time_ms: 1000,   // 1 second release capture
+            pre_delay_ms: 100,       // 100ms pre-roll
+            post_delay_ms: 100,      // 100ms post delay
+            midi_channel: 0,         // Channel 1 (0-indexed)
+            velocity: 100,           // Default velocity
             input_device_name: None, // System default input device
             channel_routing: ChannelRouting::Stereo,
             input_gain_db: 0.0,
@@ -94,12 +138,25 @@ impl AudioLevelDetector {
     }
 
     /// Process interleaved audio samples across multiple channels with gain scaling (called from audio thread)
-    pub fn process_interleaved_samples_with_gain(&mut self, samples: &[f32], channels: usize, gain: f32) -> AudioLevels {
+    pub fn process_interleaved_samples_with_gain(
+        &mut self,
+        samples: &[f32],
+        channels: usize,
+        gain: f32,
+    ) -> AudioLevels {
         let is_unity = (gain - 1.0).abs() < 1e-6;
         if channels >= 2 {
             for chunk in samples.chunks(channels) {
-                let left = if is_unity { chunk[0].abs() } else { (chunk[0] * gain).abs() };
-                let right = if is_unity { chunk[1].abs() } else { (chunk[1] * gain).abs() };
+                let left = if is_unity {
+                    chunk[0].abs()
+                } else {
+                    (chunk[0] * gain).abs()
+                };
+                let right = if is_unity {
+                    chunk[1].abs()
+                } else {
+                    (chunk[1] * gain).abs()
+                };
                 if left > self.peak_left {
                     self.peak_left = left;
                 }
@@ -115,7 +172,11 @@ impl AudioLevelDetector {
             }
         } else {
             for &sample in samples {
-                let abs_sample = if is_unity { sample.abs() } else { (sample * gain).abs() };
+                let abs_sample = if is_unity {
+                    sample.abs()
+                } else {
+                    (sample * gain).abs()
+                };
                 if abs_sample > self.peak_left {
                     self.peak_left = abs_sample;
                 }
@@ -142,7 +203,7 @@ impl AudioLevelDetector {
         }
 
         // Epic 3.1.1: Process through professional meters for enhanced readings
-        let _professional_readings = self.professional_meters.process_samples(samples);
+        // Advanced readings are requested explicitly off the recording callback.
 
         AudioLevels {
             peak: self.peak_level,
@@ -262,6 +323,8 @@ impl VizChunk {
     }
 }
 
+const WAVEFORM_HISTORY_CAPACITY: usize = 256;
+
 /// Thread-safe level meter state using atomic operations
 #[derive(Debug)]
 pub struct LevelMeterState {
@@ -273,6 +336,10 @@ pub struct LevelMeterState {
     input_peak_right: AtomicU32,
     input_peak_left_db: AtomicU32,
     input_peak_right_db: AtomicU32,
+    // A bounded envelope history. The one active input callback is the writer;
+    // UI snapshots read atomic values without locking or interrupting audio.
+    waveform_peaks: [AtomicU32; WAVEFORM_HISTORY_CAPACITY],
+    waveform_written: AtomicUsize,
     #[allow(dead_code)] // Reserved for future rate limiting features
     last_update: std::time::Instant,
 }
@@ -288,12 +355,15 @@ impl LevelMeterState {
             input_peak_right: AtomicU32::new(0),
             input_peak_left_db: AtomicU32::new(f32::to_bits(-60.0)),
             input_peak_right_db: AtomicU32::new(f32::to_bits(-60.0)),
+            waveform_peaks: std::array::from_fn(|_| AtomicU32::new(0)),
+            waveform_written: AtomicUsize::new(0),
             last_update: std::time::Instant::now(),
         }
     }
 
     /// Update levels from audio thread (atomic write)
     pub fn update_levels(&self, levels: AudioLevels) {
+        self.push_waveform_peak(levels.peak);
         self.input_peak
             .store(f32::to_bits(levels.peak), Ordering::Relaxed);
         self.input_rms
@@ -310,6 +380,42 @@ impl LevelMeterState {
             .store(f32::to_bits(levels.peak_left_db), Ordering::Relaxed);
         self.input_peak_right_db
             .store(f32::to_bits(levels.peak_right_db), Ordering::Relaxed);
+    }
+
+    fn push_waveform_peak(&self, peak: f32) {
+        let peak = if peak.is_finite() {
+            peak.abs().clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let written = self.waveform_written.load(Ordering::Relaxed);
+        self.waveform_peaks[written % WAVEFORM_HISTORY_CAPACITY]
+            .store(peak.to_bits(), Ordering::Relaxed);
+        // Publish the value after its slot is populated.
+        self.waveform_written
+            .store(written.wrapping_add(1), Ordering::Release);
+    }
+
+    /// Recent input envelope peaks, oldest to newest, with at most 256 entries.
+    /// Call on the UI thread: allocation happens only here, never during capture.
+    /// This is a rolling envelope, not a sample-accurate oscilloscope trace.
+    pub fn get_waveform_peaks(&self) -> Vec<f32> {
+        // Retry a racing UI snapshot once; the audio writer never waits for us.
+        let mut peaks = Vec::with_capacity(WAVEFORM_HISTORY_CAPACITY);
+        for _ in 0..2 {
+            peaks.clear();
+            let written = self.waveform_written.load(Ordering::Acquire);
+            let count = written.min(WAVEFORM_HISTORY_CAPACITY);
+            for index in written - count..written {
+                peaks.push(f32::from_bits(
+                    self.waveform_peaks[index % WAVEFORM_HISTORY_CAPACITY].load(Ordering::Relaxed),
+                ));
+            }
+            if self.waveform_written.load(Ordering::Acquire) == written {
+                break;
+            }
+        }
+        peaks
     }
 
     /// Get current levels for UI (atomic read)
@@ -360,9 +466,9 @@ pub struct SamplingEngine {
 /// each individual sample is captured.
 #[derive(Debug, Clone)]
 pub struct RecordingProgress {
-    /// MIDI note number just recorded.
+    /// MIDI note being recorded or most recently completed.
     pub note: u8,
-    /// MIDI velocity used for the sample just recorded.
+    /// MIDI velocity of the current or most recently completed take.
     pub velocity: u8,
     /// 0-based index of the current velocity layer.
     pub layer: u8,
@@ -446,7 +552,8 @@ impl SamplingEngine {
     pub fn set_input_gain_db(&self, db: f32) {
         let clamped = db.clamp(-12.0, 12.0);
         let factor = 10.0f32.powf(clamped / 20.0);
-        self.input_gain_factor.store(factor.to_bits(), Ordering::Relaxed);
+        self.input_gain_factor
+            .store(factor.to_bits(), Ordering::Relaxed);
     }
 
     /// Get current linear input gain factor (1.0 = 0 dB)
@@ -467,7 +574,8 @@ impl SamplingEngine {
 
     /// Set input channel routing selection (thread-safe, lock-free)
     pub fn set_channel_routing(&self, routing: ChannelRouting) {
-        self.channel_routing.store(routing.to_u8(), Ordering::Relaxed);
+        self.channel_routing
+            .store(routing.to_u8(), Ordering::Relaxed);
     }
 
     /// Get current input channel routing selection
@@ -539,7 +647,7 @@ impl SamplingEngine {
         let (mut producer, mut consumer) = RingBuffer::<f32>::new(8192);
 
         use cpal::SampleFormat;
-        let input_stream_config = AudioManager::get_standard_stream_config();
+        let input_stream_config = input_config.config();
 
         // Build input stream
         let input_stream = match input_config.sample_format() {
@@ -554,40 +662,45 @@ impl SamplingEngine {
                     .build_input_stream(
                         &input_stream_config,
                         move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
+                            let gain =
+                                f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
 
+                            level_detector.reset_peak();
                             // Continuous level detection for UI meters across hardware channels
-                            let levels = level_detector.process_interleaved_samples_with_gain(data, input_channels, gain);
+                            let levels = level_detector.process_interleaved_samples_with_gain(
+                                data,
+                                input_channels,
+                                gain,
+                            );
                             level_state_clone.update_levels(levels);
 
                             // Forward to playthrough output if active (lock-free)
                             if playthrough_active_clone.load(Ordering::Relaxed) {
-                                let routing = ChannelRouting::from_u8(channel_routing_clone.load(Ordering::Relaxed));
-                                if input_channels >= 2 {
-                                    for chunk in data.chunks(input_channels) {
-                                        match routing {
-                                            ChannelRouting::Stereo => {
-                                                let _ = producer.push(chunk[0] * gain);
-                                                let _ = producer.push(chunk[1] * gain);
-                                            }
-                                            ChannelRouting::MonoLeft => {
-                                                let s = chunk[0] * gain;
-                                                let _ = producer.push(s);
-                                                let _ = producer.push(s);
-                                            }
-                                            ChannelRouting::MonoRight => {
-                                                let s = chunk[1] * gain;
-                                                let _ = producer.push(s);
-                                                let _ = producer.push(s);
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    // Mono input hardware: duplicate sample for stereo playthrough
-                                    for &sample in data {
-                                        let s = sample * gain;
-                                        let _ = producer.push(s);
-                                        let _ = producer.push(s);
+                                let routing = ChannelRouting::from_u8(
+                                    channel_routing_clone.load(Ordering::Relaxed),
+                                );
+                                for frame in data.chunks_exact(input_channels) {
+                                    let left = frame[0] * gain;
+                                    let right = if input_channels > 1 {
+                                        frame[1] * gain
+                                    } else {
+                                        left
+                                    };
+                                    let (left, right) = match routing {
+                                        ChannelRouting::Stereo => (left, right),
+                                        ChannelRouting::MonoLeft => (left, left),
+                                        ChannelRouting::MonoRight => (right, right),
+                                    };
+                                    // A monitoring dropout may discard complete frames,
+                                    // but must never swap left and right channels.
+                                    if !push_capture_frame(
+                                        &mut producer,
+                                        left,
+                                        right,
+                                        2,
+                                        ChannelRouting::Stereo,
+                                    ) {
+                                        break;
                                     }
                                 }
                             }
@@ -606,15 +719,19 @@ impl SamplingEngine {
             }
         };
 
-        input_stream
-            .play()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to start input monitoring stream: {}", e)))?;
+        input_stream.play().map_err(|e| {
+            BatcherbirdError::Audio(format!("Failed to start input monitoring stream: {}", e))
+        })?;
 
         // Build output stream for playthrough
         let output_stream = match self.audio_manager.get_default_output_device() {
             Ok(output_device) => match output_device.default_output_config() {
                 Ok(output_config) => {
-                    let output_stream_config = AudioManager::get_standard_stream_config();
+                    let output_stream_config = cpal::StreamConfig {
+                        channels: 2,
+                        sample_rate: cpal::SampleRate(sample_rate),
+                        buffer_size: cpal::BufferSize::Default,
+                    };
                     let playthrough_active_out = Arc::clone(&playthrough_active);
 
                     match output_config.sample_format() {
@@ -628,6 +745,7 @@ impl SamplingEngine {
                                         }
                                     } else {
                                         data.fill(0.0);
+                                        while consumer.pop().is_ok() {}
                                     }
                                 },
                                 |err| tracing::error!("Audio output error: {}", err),
@@ -635,14 +753,20 @@ impl SamplingEngine {
                             ) {
                                 Ok(stream) => {
                                     if let Err(e) = stream.play() {
-                                        tracing::warn!("Failed to start playthrough output stream: {}", e);
+                                        tracing::warn!(
+                                            "Failed to start playthrough output stream: {}",
+                                            e
+                                        );
                                         None
                                     } else {
                                         Some(stream)
                                     }
                                 }
                                 Err(e) => {
-                                    tracing::warn!("Failed to build playthrough output stream: {}", e);
+                                    tracing::warn!(
+                                        "Failed to build playthrough output stream: {}",
+                                        e
+                                    );
                                     None
                                 }
                             }
@@ -676,100 +800,18 @@ impl SamplingEngine {
             .default_input_config()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
 
-        let sample_rate = 44100; // Use our standard sample rate
-        let input_channels = config.channels() as usize;
-        let level_state = Arc::clone(&self.level_meter_state);
-        let input_gain_factor = Arc::clone(&self.input_gain_factor);
+        let (producer, _consumer) = RingBuffer::<f32>::new(1);
+        let stream = self.build_persistent_recording_stream(
+            &device,
+            &config,
+            producer,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        )?;
 
-        use cpal::SampleFormat;
-
-        let stream_config = AudioManager::get_standard_stream_config();
-
-        let stream = match config.sample_format() {
-            SampleFormat::F32 => {
-                let level_state_clone = Arc::clone(&level_state);
-                let input_gain_factor_clone = Arc::clone(&input_gain_factor);
-                let mut level_detector = AudioLevelDetector::new(sample_rate);
-
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
-                            // Continuous level detection for monitoring
-                            let levels = level_detector.process_interleaved_samples_with_gain(data, input_channels, gain);
-                            level_state_clone.update_levels(levels);
-                        },
-                        |err| tracing::error!("Audio monitoring error: {}", err),
-                        None,
-                    )
-                    .map_err(|e| {
-                        BatcherbirdError::Audio(format!("Failed to build monitoring stream: {}", e))
-                    })?
-            }
-            SampleFormat::I16 => {
-                let level_state_clone = Arc::clone(&level_state);
-                let input_gain_factor_clone = Arc::clone(&input_gain_factor);
-                let mut level_detector = AudioLevelDetector::new(sample_rate);
-
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
-                            // Convert to f32 for level detection
-                            let f32_samples: Vec<f32> = data
-                                .iter()
-                                .map(|&sample| sample as f32 / i16::MAX as f32)
-                                .collect();
-
-                            let levels = level_detector.process_interleaved_samples_with_gain(&f32_samples, input_channels, gain);
-                            level_state_clone.update_levels(levels);
-                        },
-                        |err| tracing::error!("Audio monitoring error: {}", err),
-                        None,
-                    )
-                    .map_err(|e| {
-                        BatcherbirdError::Audio(format!("Failed to build monitoring stream: {}", e))
-                    })?
-            }
-            SampleFormat::U16 => {
-                let level_state_clone = Arc::clone(&level_state);
-                let input_gain_factor_clone = Arc::clone(&input_gain_factor);
-                let mut level_detector = AudioLevelDetector::new(sample_rate);
-
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
-                            // Convert to f32 for level detection
-                            let f32_samples: Vec<f32> = data
-                                .iter()
-                                .map(|&sample| (sample as f32 - 32768.0) / 32768.0)
-                                .collect();
-
-                            let levels = level_detector.process_interleaved_samples_with_gain(&f32_samples, input_channels, gain);
-                            level_state_clone.update_levels(levels);
-                        },
-                        |err| tracing::error!("Audio monitoring error: {}", err),
-                        None,
-                    )
-                    .map_err(|e| {
-                        BatcherbirdError::Audio(format!("Failed to build monitoring stream: {}", e))
-                    })?
-            }
-            _ => {
-                return Err(BatcherbirdError::Audio(format!(
-                    "Unsupported sample format: {:?}",
-                    config.sample_format()
-                )));
-            }
-        };
-
-        stream
-            .play()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to start monitoring stream: {}", e)))?;
+        stream.play().map_err(|e| {
+            BatcherbirdError::Audio(format!("Failed to start monitoring stream: {}", e))
+        })?;
 
         Ok(stream)
     }
@@ -792,6 +834,90 @@ impl SamplingEngine {
                 .await?;
             Ok(sample)
         })
+    }
+
+    /// Re-record one note at its original velocity. Cancellation discards the
+    /// partial take and returns `None`, allowing callers to keep the previous take.
+    pub fn sample_note_velocity_with_cancel_blocking(
+        &self,
+        midi_conn: &mut MidiOutputConnection,
+        note: u8,
+        velocity: u8,
+        cancel: &AtomicBool,
+    ) -> Result<Option<Sample>> {
+        Self::validate_note_range(note, note)?;
+        if velocity == 0 || velocity > 127 {
+            return Err(BatcherbirdError::Config(
+                "Velocity must be in 1..=127".into(),
+            ));
+        }
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {e}")))?;
+        rt.block_on(async {
+            if cancel.load(Ordering::Acquire) {
+                return Ok(None);
+            }
+            let device = self
+                .audio_manager
+                .find_input_device(self.config.input_device_name.as_deref())?;
+            let config = device
+                .default_input_config()
+                .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {e}")))?;
+            let sample_rate = config.sample_rate().0;
+            let channels = self
+                .get_channel_routing()
+                .output_channels(config.channels());
+            let capacity = self.capture_capacity(sample_rate, channels)?;
+            let (producer, mut consumer) = RingBuffer::new(capacity);
+            let active = Arc::new(AtomicBool::new(false));
+            let failed = Arc::new(AtomicBool::new(false));
+            let stream = self.build_persistent_recording_stream(
+                &device,
+                &config,
+                producer,
+                Arc::clone(&active),
+                Arc::clone(&failed),
+            )?;
+            stream
+                .play()
+                .map_err(|e| BatcherbirdError::Audio(format!("Failed to start stream: {e}")))?;
+            let result = self
+                .record_one_on_stream(
+                    midi_conn,
+                    &mut consumer,
+                    &active,
+                    note,
+                    velocity,
+                    sample_rate,
+                    channels,
+                    cancel,
+                    &failed,
+                )
+                .await;
+            active.store(false, Ordering::Release);
+            drop(stream);
+            let cleanup = MidiManager::send_channel_panic(midi_conn, self.config.midi_channel);
+            let sample = result?;
+            cleanup?;
+            Ok(sample)
+        })
+    }
+
+    fn capture_capacity(&self, sample_rate: u32, channels: u16) -> Result<usize> {
+        let duration = self
+            .config
+            .pre_delay_ms
+            .checked_add(self.config.note_duration_ms)
+            .and_then(|d| d.checked_add(self.config.release_time_ms))
+            .and_then(|d| d.checked_add(self.config.post_delay_ms))
+            .and_then(|d| d.checked_add(1000))
+            .ok_or_else(|| BatcherbirdError::Config("Recording duration is too large".into()))?;
+        let values = duration
+            .checked_mul(sample_rate as u64)
+            .and_then(|n| n.checked_mul(channels as u64))
+            .and_then(|n| usize::try_from(n / 1000).ok())
+            .ok_or_else(|| BatcherbirdError::Config("Recording buffer is too large".into()))?;
+        Ok(values.max(sample_rate as usize * channels as usize))
     }
 
     /// Blocking interface with real-time visualization support
@@ -851,214 +977,105 @@ impl SamplingEngine {
         &self,
         device: &cpal::Device,
         config: &cpal::SupportedStreamConfig,
+        producer: Producer<f32>,
+        recording_active: Arc<AtomicBool>,
+        capture_failed: Arc<AtomicBool>,
+    ) -> Result<cpal::Stream> {
+        match config.sample_format() {
+            cpal::SampleFormat::F32 => self.build_capture_stream::<f32>(
+                device,
+                config,
+                producer,
+                recording_active,
+                capture_failed,
+            ),
+            cpal::SampleFormat::I16 => self.build_capture_stream::<i16>(
+                device,
+                config,
+                producer,
+                recording_active,
+                capture_failed,
+            ),
+            cpal::SampleFormat::U16 => self.build_capture_stream::<u16>(
+                device,
+                config,
+                producer,
+                recording_active,
+                capture_failed,
+            ),
+            format => Err(BatcherbirdError::Audio(format!(
+                "Unsupported sample format: {format:?}"
+            ))),
+        }
+    }
+
+    fn build_capture_stream<T>(
+        &self,
+        device: &cpal::Device,
+        config: &cpal::SupportedStreamConfig,
         mut producer: Producer<f32>,
         recording_active: Arc<AtomicBool>,
-    ) -> Result<cpal::Stream> {
+        capture_failed: Arc<AtomicBool>,
+    ) -> Result<cpal::Stream>
+    where
+        T: cpal::SizedSample,
+        f32: cpal::FromSample<T>,
+    {
         let level_state = Arc::clone(&self.level_meter_state);
-        let sample_rate = 44100; // Use our standard sample rate
-        let input_channels = config.channels() as usize;
-        let channel_routing = Arc::clone(&self.channel_routing);
-        let input_gain_factor = Arc::clone(&self.input_gain_factor);
-        use cpal::SampleFormat;
-
-        let stream_config = AudioManager::get_standard_stream_config();
-
-        let stream = match config.sample_format() {
-            SampleFormat::F32 => {
-                let level_state_clone = Arc::clone(&level_state);
-                let channel_routing_clone = Arc::clone(&channel_routing);
-                let input_gain_factor_clone = Arc::clone(&input_gain_factor);
-                let mut level_detector = AudioLevelDetector::new(sample_rate);
-
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
-
-                            // Always update level meters, even when not recording
-                            let levels = level_detector.process_interleaved_samples_with_gain(data, input_channels, gain);
-                            level_state_clone.update_levels(levels);
-
-                            // Only collect samples when recording is active (lock-free)
-                            if recording_active.load(Ordering::Acquire) {
-                                let routing = ChannelRouting::from_u8(channel_routing_clone.load(Ordering::Relaxed));
-                                if input_channels >= 2 {
-                                    for chunk in data.chunks(input_channels) {
-                                        match routing {
-                                            ChannelRouting::Stereo => {
-                                                if producer.push(chunk[0] * gain).is_err() || producer.push(chunk[1] * gain).is_err() {
-                                                    break;
-                                                }
-                                            }
-                                            ChannelRouting::MonoLeft => {
-                                                if producer.push(chunk[0] * gain).is_err() {
-                                                    break;
-                                                }
-                                            }
-                                            ChannelRouting::MonoRight => {
-                                                if producer.push(chunk[1] * gain).is_err() {
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    for &sample in data {
-                                        if producer.push(sample * gain).is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
+        let mut detector = AudioLevelDetector::new(config.sample_rate().0);
+        let channels = config.channels() as usize;
+        // Freeze routing for this stream so a UI change cannot invalidate sample metadata.
+        let routing = self.get_channel_routing();
+        let gain_factor = Arc::clone(&self.input_gain_factor);
+        let stream_failed = Arc::clone(&capture_failed);
+        device
+            .build_input_stream(
+                &config.config(),
+                move |data: &[T], _: &cpal::InputCallbackInfo| {
+                    let gain = f32::from_bits(gain_factor.load(Ordering::Relaxed));
+                    // Fixed stack scratch space avoids callback heap allocations,
+                    // while updating atomics once per block instead of once per frame.
+                    for block in data.chunks(channels * 256) {
+                        detector.reset_peak();
+                        let mut meter_samples = [0.0f32; 512];
+                        let mut used = 0;
+                        for frame in block.chunks_exact(channels) {
+                            let left = <f32 as cpal::FromSample<T>>::from_sample_(frame[0]);
+                            let right = if channels > 1 {
+                                <f32 as cpal::FromSample<T>>::from_sample_(frame[1])
+                            } else {
+                                left
+                            };
+                            meter_samples[used] = left;
+                            meter_samples[used + 1] = right;
+                            used += 2;
+                            if recording_active.load(Ordering::Acquire)
+                                && !push_capture_frame(
+                                    &mut producer,
+                                    left * gain,
+                                    right * gain,
+                                    channels as u16,
+                                    routing,
+                                )
+                            {
+                                capture_failed.store(true, Ordering::Release);
+                                recording_active.store(false, Ordering::Release);
                             }
-                        },
-                        |err| tracing::error!("Persistent stream audio input error: {}", err),
-                        None,
-                    )
-                    .map_err(|e| {
-                        BatcherbirdError::Audio(format!(
-                            "Failed to build persistent input stream: {}",
-                            e
-                        ))
-                    })?
-            }
-            SampleFormat::I16 => {
-                let level_state_clone = Arc::clone(&level_state);
-                let channel_routing_clone = Arc::clone(&channel_routing);
-                let input_gain_factor_clone = Arc::clone(&input_gain_factor);
-                let mut level_detector = AudioLevelDetector::new(sample_rate);
-
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
-
-                            // Convert to f32 for level detection
-                            let f32_samples: Vec<f32> = data
-                                .iter()
-                                .map(|&sample| sample as f32 / i16::MAX as f32)
-                                .collect();
-
-                            // Always update level meters
-                            let levels = level_detector.process_interleaved_samples_with_gain(&f32_samples, input_channels, gain);
-                            level_state_clone.update_levels(levels);
-
-                            // Only collect samples when recording is active (lock-free)
-                            if recording_active.load(Ordering::Acquire) {
-                                let routing = ChannelRouting::from_u8(channel_routing_clone.load(Ordering::Relaxed));
-                                if input_channels >= 2 {
-                                    for chunk in f32_samples.chunks(input_channels) {
-                                        match routing {
-                                            ChannelRouting::Stereo => {
-                                                if producer.push(chunk[0] * gain).is_err() || producer.push(chunk[1] * gain).is_err() {
-                                                    break;
-                                                }
-                                            }
-                                            ChannelRouting::MonoLeft => {
-                                                if producer.push(chunk[0] * gain).is_err() {
-                                                    break;
-                                                }
-                                            }
-                                            ChannelRouting::MonoRight => {
-                                                if producer.push(chunk[1] * gain).is_err() {
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    for &sample in f32_samples.iter() {
-                                        if producer.push(sample * gain).is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        |err| tracing::error!("Persistent stream audio input error: {}", err),
-                        None,
-                    )
-                    .map_err(|e| {
-                        BatcherbirdError::Audio(format!(
-                            "Failed to build persistent input stream: {}",
-                            e
-                        ))
-                    })?
-            }
-            SampleFormat::U16 => {
-                let level_state_clone = Arc::clone(&level_state);
-                let channel_routing_clone = Arc::clone(&channel_routing);
-                let input_gain_factor_clone = Arc::clone(&input_gain_factor);
-                let mut level_detector = AudioLevelDetector::new(sample_rate);
-
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                            let gain = f32::from_bits(input_gain_factor_clone.load(Ordering::Relaxed));
-
-                            // Convert to f32 for level detection
-                            let f32_samples: Vec<f32> = data
-                                .iter()
-                                .map(|&sample| (sample as f32 - 32768.0) / 32768.0)
-                                .collect();
-
-                            // Always update level meters
-                            let levels = level_detector.process_interleaved_samples_with_gain(&f32_samples, input_channels, gain);
-                            level_state_clone.update_levels(levels);
-
-                            // Only collect samples when recording is active (lock-free)
-                            if recording_active.load(Ordering::Acquire) {
-                                let routing = ChannelRouting::from_u8(channel_routing_clone.load(Ordering::Relaxed));
-                                if input_channels >= 2 {
-                                    for chunk in f32_samples.chunks(input_channels) {
-                                        match routing {
-                                            ChannelRouting::Stereo => {
-                                                if producer.push(chunk[0] * gain).is_err() || producer.push(chunk[1] * gain).is_err() {
-                                                    break;
-                                                }
-                                            }
-                                            ChannelRouting::MonoLeft => {
-                                                if producer.push(chunk[0] * gain).is_err() {
-                                                    break;
-                                                }
-                                            }
-                                            ChannelRouting::MonoRight => {
-                                                if producer.push(chunk[1] * gain).is_err() {
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    for &sample in f32_samples.iter() {
-                                        if producer.push(sample * gain).is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        |err| tracing::error!("Persistent stream audio input error: {}", err),
-                        None,
-                    )
-                    .map_err(|e| {
-                        BatcherbirdError::Audio(format!(
-                            "Failed to build persistent input stream: {}",
-                            e
-                        ))
-                    })?
-            }
-            _ => {
-                return Err(BatcherbirdError::Audio(format!(
-                    "Unsupported sample format: {:?}",
-                    config.sample_format()
-                )));
-            }
-        };
-
-        Ok(stream)
+                        }
+                        let levels = detector.process_interleaved_samples_with_gain(
+                            &meter_samples[..used],
+                            2,
+                            gain,
+                        );
+                        level_state.update_levels(levels);
+                    }
+                },
+                move |_err| {
+                    stream_failed.store(true, Ordering::Release);
+                },
+                None,
+            )
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to build input stream: {e}")))
     }
 
     /// Blocking interface for range sampling (follows TAURI_AUDIO_ARCHITECTURE.md)
@@ -1078,6 +1095,11 @@ impl SamplingEngine {
 
     /// Validate a MIDI note range for range sampling
     fn validate_note_range(start_note: u8, end_note: u8) -> Result<()> {
+        if start_note > 127 || end_note > 127 {
+            return Err(BatcherbirdError::Config(
+                "MIDI notes must be in 0..=127".into(),
+            ));
+        }
         if start_note > end_note {
             return Err(BatcherbirdError::Config(format!(
                 "start_note ({}) must be <= end_note ({})",
@@ -1094,87 +1116,17 @@ impl SamplingEngine {
         start_note: u8,
         end_note: u8,
     ) -> Result<Vec<Sample>> {
-        Self::validate_note_range(start_note, end_note)?;
-
-        let mut samples = Vec::new();
-        let total_notes = end_note - start_note + 1;
-
-        // Safety: Clear any stuck notes before starting range recording session
-        MidiManager::send_midi_panic(midi_conn)?;
-        tokio::time::sleep(Duration::from_millis(100)).await; // Give hardware time to process
-
-        let device = self
-            .audio_manager
-            .find_input_device(self.config.input_device_name.as_deref())?;
-        let config = device
-            .default_input_config()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
-
-        let sample_rate = config.sample_rate().0;
-        let channels = config.channels();
-        let recorded_channels = self.get_channel_routing().output_channels(channels);
-
-        // Calculate ring buffer size: enough for the longest single note recording
-        // (pre_delay + note_duration + release + post_delay) * sample_rate * channels
-        let max_note_duration_secs = (self.config.pre_delay_ms
-            + self.config.note_duration_ms
-            + self.config.release_time_ms
-            + self.config.post_delay_ms
-            + 1000) as usize; // +1s safety margin
-        let ring_buffer_size =
-            (sample_rate as usize) * max_note_duration_secs / 1000 * channels as usize;
-        // Ensure minimum buffer size and round up to power of 2 for efficiency
-        let ring_buffer_size = ring_buffer_size.max(44100 * 4);
-
-        let (producer, mut consumer) = RingBuffer::<f32>::new(ring_buffer_size);
-        let recording_active = Arc::new(AtomicBool::new(false));
-        let recording_active_clone = Arc::clone(&recording_active);
-
-        // Create ONE stream for entire range (like professional DAWs)
-        let stream = self.build_persistent_recording_stream(
-            &device,
-            &config,
-            producer,
-            recording_active_clone,
-        )?;
-
-        // Start the persistent stream
-        stream.play().map_err(|e| {
-            BatcherbirdError::Audio(format!("Failed to start persistent stream: {}", e))
-        })?;
-
-        // Record each note using the same stream
-        for (_index, note) in (start_note..=end_note).enumerate() {
-            let sample = self
-                .record_one_on_stream(
-                    midi_conn,
-                    &mut consumer,
-                    &recording_active,
-                    note,
-                    self.config.velocity,
-                    sample_rate,
-                    recorded_channels,
-                )
-                .await?;
-
-            samples.push(sample);
-
-            // Brief pause between notes (hardware stability)
-            if _index < total_notes as usize - 1 {
-                tokio::time::sleep(Duration::from_millis(300)).await;
-            }
-        }
-
-        // Clean shutdown of persistent stream
-        stream.pause().map_err(|e| {
-            BatcherbirdError::Audio(format!("Failed to stop persistent stream: {}", e))
-        })?;
-        drop(stream); // Explicit cleanup
-
-        // Safety: Final MIDI panic to ensure no stuck notes (professional practice)
-        MidiManager::send_midi_panic(midi_conn)?;
-
-        Ok(samples)
+        self.sample_note_range_stepped_with_progress_async(
+            midi_conn,
+            start_note,
+            end_note,
+            1,
+            1,
+            &AtomicBool::new(false),
+            |_| {},
+            |_| {},
+        )
+        .await
     }
 
     /// Record a single note at a given velocity using an already-running
@@ -1185,9 +1137,8 @@ impl SamplingEngine {
     /// stream lifecycle (build / play / pause): the caller is responsible for
     /// starting and stopping the persistent stream. This helper only performs
     /// the timed MIDI + lock-free ring-buffer drain sequence for one note, with
-    /// `velocity` parameterized. The lock-free recording behavior is identical
-    /// to the original inlined loop body — nothing about the audio thread,
-    /// ring buffer, or atomic `recording_active` toggling has changed.
+    /// `velocity` parameterized. Cancellation during a note silences MIDI and
+    /// discards that partial sample; capture failures are reported explicitly.
     #[allow(clippy::too_many_arguments)]
     async fn record_one_on_stream(
         &self,
@@ -1198,62 +1149,54 @@ impl SamplingEngine {
         velocity: u8,
         sample_rate: u32,
         channels: u16,
-    ) -> Result<Sample> {
-        // Drain any leftover samples from the ring buffer before this note
+        cancel: &AtomicBool,
+        capture_failed: &AtomicBool,
+    ) -> Result<Option<Sample>> {
         while consumer.pop().is_ok() {}
-
-        // Start recording for this note (lock-free)
         recording_active.store(true, Ordering::Release);
-
         let start_time = Instant::now();
-
-        // Pre-delay
-        if self.config.pre_delay_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(self.config.pre_delay_ms)).await;
+        let result: Result<Option<Duration>> = async {
+            if !wait_for_capture(self.config.pre_delay_ms, cancel, capture_failed).await? {
+                return Ok(None);
+            }
+            MidiManager::send_channel_panic(midi_conn, self.config.midi_channel)?;
+            if !wait_for_capture(50, cancel, capture_failed).await? {
+                return Ok(None);
+            }
+            let midi_start = Instant::now();
+            MidiManager::send_note_on(midi_conn, self.config.midi_channel, note, velocity)?;
+            if !wait_for_capture(self.config.note_duration_ms, cancel, capture_failed).await? {
+                return Ok(None);
+            }
+            MidiManager::send_note_off(midi_conn, self.config.midi_channel, note, velocity)?;
+            let midi_timing = midi_start.elapsed();
+            if !wait_for_capture(self.config.release_time_ms, cancel, capture_failed).await?
+                || !wait_for_capture(self.config.post_delay_ms, cancel, capture_failed).await?
+            {
+                return Ok(None);
+            }
+            Ok(Some(midi_timing))
         }
-
-        // Safety: Clear any stuck notes on this channel before starting
-        MidiManager::send_channel_panic(midi_conn, self.config.midi_channel)?;
-
-        // Brief delay after panic to ensure hardware processes it
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        // Send MIDI note on
-        let midi_start = Instant::now();
-        MidiManager::send_note_on(midi_conn, self.config.midi_channel, note, velocity)?;
-
-        // Wait for note duration
-        tokio::time::sleep(Duration::from_millis(self.config.note_duration_ms)).await;
-
-        // Send MIDI note off
-        MidiManager::send_note_off(midi_conn, self.config.midi_channel, note, velocity)?;
-        let midi_timing = midi_start.elapsed();
-
-        // Wait for release
-        if self.config.release_time_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(self.config.release_time_ms)).await;
-        }
-
-        // Post delay
-        if self.config.post_delay_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(self.config.post_delay_ms)).await;
-        }
-
-        // Stop recording for this note (lock-free)
+        .await;
         recording_active.store(false, Ordering::Release);
-
-        // Brief yield to let any in-flight audio callback finish
+        if !matches!(&result, Ok(Some(_))) {
+            // Best effort cleanup must also happen when a MIDI send or capture fails.
+            let _ = MidiManager::send_channel_panic(midi_conn, self.config.midi_channel);
+        }
+        let Some(midi_timing) = result? else {
+            return Ok(None);
+        };
         tokio::time::sleep(Duration::from_millis(10)).await;
-
-        let audio_timing = start_time.elapsed();
-
-        // Drain recorded audio data from ring buffer (non-blocking consumer side)
+        if capture_failed.load(Ordering::Acquire) {
+            return Err(BatcherbirdError::Audio(
+                "Audio capture failed or buffer overflowed; sample was discarded".into(),
+            ));
+        }
         let mut audio_data = Vec::new();
         while let Ok(sample) = consumer.pop() {
             audio_data.push(sample);
         }
-
-        Ok(Sample {
+        Ok(Some(Sample {
             note,
             velocity,
             audio_data,
@@ -1261,8 +1204,8 @@ impl SamplingEngine {
             channels,
             recorded_at: std::time::SystemTime::now(),
             midi_timing,
-            audio_timing,
-        })
+            audio_timing: start_time.elapsed(),
+        }))
     }
 
     /// Blocking range sampling with progress reporting, cooperative
@@ -1272,8 +1215,8 @@ impl SamplingEngine {
     /// (which is retained as-is for CLI back-compat). It:
     /// - records each note across `velocity_layer_count` velocity layers
     ///   (see [`velocity_layers`]),
-    /// - invokes `progress` after every successful sample,
-    /// - checks `cancel` before recording each sample and, if set, silences any
+    /// - invokes `progress` before and after every sample,
+    /// - checks `cancel` throughout each recording phase and, if set, silences any
     ///   held note and returns the samples gathered so far (partial result).
     ///
     /// Per-note recording errors are propagated (matching the legacy path: one
@@ -1311,9 +1254,35 @@ impl SamplingEngine {
         cancel: &AtomicBool,
         progress: impl FnMut(RecordingProgress),
     ) -> Result<Vec<Sample>> {
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {}", e)))?;
+        self.sample_note_range_stepped_with_capture_blocking(
+            midi_conn,
+            start_note,
+            end_note,
+            step,
+            velocity_layer_count,
+            cancel,
+            progress,
+            |_| {},
+        )
+    }
 
+    /// Record a batch while handing off each completed take before continuing.
+    /// `captured` runs on the caller's worker thread, never the audio callback.
+    /// A later recording error cannot revoke samples already handed to it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn sample_note_range_stepped_with_capture_blocking(
+        &self,
+        midi_conn: &mut MidiOutputConnection,
+        start_note: u8,
+        end_note: u8,
+        step: u8,
+        velocity_layer_count: u8,
+        cancel: &AtomicBool,
+        progress: impl FnMut(RecordingProgress),
+        captured: impl FnMut(&Sample),
+    ) -> Result<Vec<Sample>> {
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {e}")))?;
         rt.block_on(self.sample_note_range_stepped_with_progress_async(
             midi_conn,
             start_note,
@@ -1322,6 +1291,7 @@ impl SamplingEngine {
             velocity_layer_count,
             cancel,
             progress,
+            captured,
         ))
     }
 
@@ -1341,10 +1311,15 @@ impl SamplingEngine {
         velocity_layer_count: u8,
         cancel: &AtomicBool,
         mut progress: impl FnMut(RecordingProgress),
+        mut captured: impl FnMut(&Sample),
     ) -> Result<Vec<Sample>> {
         Self::validate_note_range(start_note, end_note)?;
 
-        let velocities = velocity_layers(velocity_layer_count);
+        let velocities = if velocity_layer_count <= 1 {
+            vec![self.config.velocity]
+        } else {
+            velocity_layers(velocity_layer_count)
+        };
         let total_layers = velocities.len() as u8;
         let step = step.max(1);
         let notes: Vec<u8> = (start_note..=end_note).step_by(step as usize).collect();
@@ -1352,6 +1327,9 @@ impl SamplingEngine {
         let total = num_notes * velocities.len() as u32;
 
         let mut samples = Vec::new();
+        if cancel.load(Ordering::Acquire) {
+            return Ok(samples);
+        }
 
         // Safety: Clear any stuck notes before starting range recording session
         MidiManager::send_midi_panic(midi_conn)?;
@@ -1368,19 +1346,12 @@ impl SamplingEngine {
         let channels = config.channels();
         let recorded_channels = self.get_channel_routing().output_channels(channels);
 
-        // Ring buffer size: enough for the longest single note recording.
-        let max_note_duration_secs = (self.config.pre_delay_ms
-            + self.config.note_duration_ms
-            + self.config.release_time_ms
-            + self.config.post_delay_ms
-            + 1000) as usize; // +1s safety margin
-        let ring_buffer_size =
-            (sample_rate as usize) * max_note_duration_secs / 1000 * channels as usize;
-        let ring_buffer_size = ring_buffer_size.max(44100 * 4);
+        let ring_buffer_size = self.capture_capacity(sample_rate, recorded_channels)?;
 
         let (producer, mut consumer) = RingBuffer::<f32>::new(ring_buffer_size);
         let recording_active = Arc::new(AtomicBool::new(false));
         let recording_active_clone = Arc::clone(&recording_active);
+        let capture_failed = Arc::new(AtomicBool::new(false));
 
         // Create ONE stream for the entire range (like professional DAWs).
         let stream = self.build_persistent_recording_stream(
@@ -1388,6 +1359,7 @@ impl SamplingEngine {
             &config,
             producer,
             recording_active_clone,
+            Arc::clone(&capture_failed),
         )?;
 
         stream.play().map_err(|e| {
@@ -1406,10 +1378,26 @@ impl SamplingEngine {
                 // very first sample. Mirrors the 300ms inter-note pause of the
                 // legacy path and also separates velocity layers.
                 if !first {
-                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    match wait_for_capture(300, cancel, &capture_failed).await {
+                        Ok(true) => {}
+                        Ok(false) => break 'outer,
+                        Err(error) => {
+                            let _ = stream.pause();
+                            let _ = MidiManager::send_midi_panic(midi_conn);
+                            return Err(error);
+                        }
+                    }
                 }
                 first = false;
 
+                progress(RecordingProgress {
+                    note,
+                    velocity: *vel,
+                    layer: layer_idx as u8,
+                    total_layers,
+                    completed: samples.len() as u32,
+                    total,
+                });
                 let sample = self
                     .record_one_on_stream(
                         midi_conn,
@@ -1419,9 +1407,21 @@ impl SamplingEngine {
                         *vel,
                         sample_rate,
                         recorded_channels,
+                        cancel,
+                        &capture_failed,
                     )
-                    .await?;
-
+                    .await;
+                let sample = match sample {
+                    Ok(Some(sample)) => sample,
+                    Ok(None) => break 'outer,
+                    Err(error) => {
+                        recording_active.store(false, Ordering::Release);
+                        let _ = stream.pause();
+                        let _ = MidiManager::send_midi_panic(midi_conn);
+                        return Err(error);
+                    }
+                };
+                captured(&sample);
                 samples.push(sample);
 
                 progress(RecordingProgress {
@@ -1436,14 +1436,13 @@ impl SamplingEngine {
         }
 
         // Clean shutdown of persistent stream
-        stream.pause().map_err(|e| {
-            BatcherbirdError::Audio(format!("Failed to stop persistent stream: {}", e))
+        let pause_result = stream.pause();
+        drop(stream);
+        let panic_result = MidiManager::send_midi_panic(midi_conn);
+        panic_result?;
+        pause_result.map_err(|e| {
+            BatcherbirdError::Audio(format!("Failed to stop persistent stream: {e}"))
         })?;
-        drop(stream); // Explicit cleanup
-
-        // Safety: Final MIDI panic to silence any held note / stuck notes.
-        // This also covers the cancellation path (we always panic on exit).
-        MidiManager::send_midi_panic(midi_conn)?;
 
         Ok(samples)
     }
@@ -1486,7 +1485,8 @@ impl SamplingEngine {
             ring_buffer_size: samples_per_second * 4, // 4 seconds buffer (professional standard)
             sample_rate,
             channels,
-            max_recording_samples: samples_per_second * 30, // 30 second safety limit
+            max_recording_samples: self
+                .capture_capacity(sample_rate, routing.output_channels(channels))?,
             channel_routing: routing,
             input_gain_factor: Arc::clone(&self.input_gain_factor),
         };
@@ -1507,22 +1507,23 @@ impl SamplingEngine {
         // MIDI sequence with precise timing (following Pro Tools approach)
         let start_time = tokio::time::Instant::now();
 
-        // Pre-recording delay (industry standard)
-        tokio::time::sleep(Duration::from_millis(self.config.pre_delay_ms)).await;
-
-        // Send MIDI note on
-        MidiManager::send_note_on(midi_output, self.config.midi_channel, note, velocity)?;
-        let midi_start = tokio::time::Instant::now();
-
-        // Note duration with high precision
-        tokio::time::sleep(Duration::from_millis(self.config.note_duration_ms)).await;
-
-        // Send MIDI note off
-        MidiManager::send_note_off(midi_output, self.config.midi_channel, note, velocity)?;
-        let midi_end = tokio::time::Instant::now();
-
-        // Post-recording delay (capture reverb tails)
-        tokio::time::sleep(Duration::from_millis(self.config.release_time_ms)).await;
+        let sequence: Result<(Instant, Instant)> = async {
+            tokio::time::sleep(Duration::from_millis(self.config.pre_delay_ms)).await;
+            MidiManager::send_note_on(midi_output, self.config.midi_channel, note, velocity)?;
+            let midi_start = Instant::now();
+            tokio::time::sleep(Duration::from_millis(self.config.note_duration_ms)).await;
+            MidiManager::send_note_off(midi_output, self.config.midi_channel, note, velocity)?;
+            let midi_end = Instant::now();
+            tokio::time::sleep(Duration::from_millis(
+                self.config.release_time_ms + self.config.post_delay_ms,
+            ))
+            .await;
+            Ok((midi_start, midi_end))
+        }
+        .await;
+        let panic_result = MidiManager::send_channel_panic(midi_output, self.config.midi_channel);
+        let (midi_start, midi_end) = sequence?;
+        panic_result?;
 
         // Stop lock-free recording
         let audio_data = recorder.stop_recording()?;
@@ -1555,7 +1556,11 @@ impl Sample {
     /// Apply sample detection and trimming to this sample
     pub fn apply_detection(&mut self, config: DetectionConfig) -> Result<DetectionResult> {
         let detector = SampleDetector::new(config);
-        let detection_result = detector.detect_boundaries(&self.audio_data, self.sample_rate)?;
+        let detection_result = detector.detect_boundaries_channels(
+            &self.audio_data,
+            self.sample_rate,
+            self.channels,
+        )?;
 
         if detection_result.success {
             // Trim the audio data
@@ -1571,7 +1576,8 @@ impl Sample {
         config: LoopDetectionConfig,
     ) -> Result<LoopDetectionResult> {
         let detector = LoopDetector::new(config);
-        let loop_result = detector.detect_loop_points(&self.audio_data, self.sample_rate);
+        let loop_result =
+            detector.detect_loop_points_channels(&self.audio_data, self.sample_rate, self.channels);
 
         if loop_result.success {
             if let Some(ref candidate) = loop_result.best_candidate {
@@ -1800,10 +1806,126 @@ mod tests {
 
         // Gain 0.5 (-6dB) on a fresh detector: 0.4 -> 0.2, 0.1 -> 0.05
         let mut detector_attenuated = AudioLevelDetector::new(44100);
-        let levels_attenuated = detector_attenuated.process_interleaved_samples_with_gain(&samples, 2, 0.5);
+        let levels_attenuated =
+            detector_attenuated.process_interleaved_samples_with_gain(&samples, 2, 0.5);
         assert!((levels_attenuated.peak_left - 0.2).abs() < 1e-5);
         assert!((levels_attenuated.peak_right - 0.05).abs() < 1e-5);
         assert!((levels_attenuated.peak - 0.2).abs() < 1e-5);
     }
 }
 
+#[cfg(test)]
+mod capture_integrity_tests {
+    use super::*;
+
+    #[test]
+    fn waveform_history_starts_empty_and_keeps_chronological_peaks() {
+        let state = LevelMeterState::new();
+        assert!(state.get_waveform_peaks().is_empty());
+        for peak in [0.1, 0.3, 0.2] {
+            state.update_levels(AudioLevels {
+                peak,
+                ..AudioLevels::default()
+            });
+        }
+        assert_eq!(state.get_waveform_peaks(), vec![0.1, 0.3, 0.2]);
+    }
+
+    #[test]
+    fn waveform_history_wraps_without_old_or_uninitialized_entries() {
+        let state = LevelMeterState::new();
+        for index in 0..300 {
+            state.push_waveform_peak(index as f32 / 1000.0);
+        }
+        let expected: Vec<f32> = (44..300).map(|index| index as f32 / 1000.0).collect();
+        assert_eq!(state.get_waveform_peaks(), expected);
+        assert_eq!(state.get_waveform_peaks().len(), WAVEFORM_HISTORY_CAPACITY);
+    }
+
+    #[test]
+    fn waveform_envelope_is_finite_and_normalized() {
+        let state = LevelMeterState::new();
+        for peak in [-0.5, 8.0, f32::NAN, f32::INFINITY] {
+            state.push_waveform_peak(peak);
+        }
+        assert_eq!(state.get_waveform_peaks(), vec![0.5, 1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn stereo_overflow_never_pushes_half_frame() {
+        let (mut producer, mut consumer) = RingBuffer::new(3);
+        assert!(push_capture_frame(
+            &mut producer,
+            0.1,
+            0.2,
+            8,
+            ChannelRouting::Stereo
+        ));
+        assert!(!push_capture_frame(
+            &mut producer,
+            0.3,
+            0.4,
+            8,
+            ChannelRouting::Stereo
+        ));
+        assert_eq!(consumer.pop().unwrap(), 0.1);
+        assert_eq!(consumer.pop().unwrap(), 0.2);
+        assert!(consumer.pop().is_err());
+    }
+
+    #[test]
+    fn routing_records_selected_channel_and_mono_fallback() {
+        let (mut producer, mut consumer) = RingBuffer::new(4);
+        assert!(push_capture_frame(
+            &mut producer,
+            0.1,
+            0.9,
+            8,
+            ChannelRouting::MonoRight
+        ));
+        assert_eq!(consumer.pop().unwrap(), 0.9);
+        assert!(push_capture_frame(
+            &mut producer,
+            0.4,
+            0.4,
+            1,
+            ChannelRouting::Stereo
+        ));
+        assert_eq!(consumer.pop().unwrap(), 0.4);
+        assert!(consumer.pop().is_err());
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_a_long_note_wait() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let trigger = Arc::clone(&cancel);
+        let task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(15)).await;
+            trigger.store(true, Ordering::Release);
+        });
+        let result = tokio::time::timeout(
+            Duration::from_millis(250),
+            wait_for_capture(10_000, &cancel, &AtomicBool::new(false)),
+        )
+        .await;
+        assert!(!result
+            .expect("cancel should not wait for full note duration")
+            .unwrap());
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn capture_failure_is_reported_even_during_zero_length_wait() {
+        assert!(
+            wait_for_capture(0, &AtomicBool::new(false), &AtomicBool::new(true))
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn all_midi_notes_range_is_valid_but_out_of_range_notes_are_rejected() {
+        assert!(SamplingEngine::validate_note_range(0, 127).is_ok());
+        assert!(SamplingEngine::validate_note_range(127, 128).is_err());
+    }
+}

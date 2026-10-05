@@ -120,11 +120,7 @@ impl AudioDiagnostics {
         let callback_count = self.callback_count.load(Ordering::Relaxed);
         let total_time = self.total_execution_time_ns.load(Ordering::Relaxed);
 
-        let avg_execution_time_ns = if callback_count > 0 {
-            total_time / callback_count
-        } else {
-            0
-        };
+        let avg_execution_time_ns = total_time.checked_div(callback_count).unwrap_or(0);
 
         let max_execution_time_ns = self.max_execution_time_ns.load(Ordering::Relaxed);
         let min_execution_time_ns = self.min_execution_time_ns.load(Ordering::Relaxed);
@@ -133,19 +129,11 @@ impl AudioDiagnostics {
         let lock_contentions = self.lock_contentions.load(Ordering::Relaxed);
         let lock_wait_time = self.lock_wait_time_ns.load(Ordering::Relaxed);
 
-        let avg_lock_wait_time_ns = if lock_attempts > 0 {
-            lock_wait_time / lock_attempts
-        } else {
-            0
-        };
+        let avg_lock_wait_time_ns = lock_wait_time.checked_div(lock_attempts).unwrap_or(0);
 
         let midi_events = self.midi_events_processed.load(Ordering::Relaxed);
         let total_jitter = self.midi_timing_jitter_ns.load(Ordering::Relaxed);
-        let avg_midi_jitter_ns = if midi_events > 0 {
-            total_jitter / midi_events
-        } else {
-            0
-        };
+        let avg_midi_jitter_ns = total_jitter.checked_div(midi_events).unwrap_or(0);
 
         AudioPerformanceReport {
             callback_count,

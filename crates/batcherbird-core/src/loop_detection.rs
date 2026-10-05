@@ -30,9 +30,9 @@ impl Default for LoopDetectionConfig {
 /// Represents a potential loop point in the audio
 #[derive(Debug, Clone)]
 pub struct LoopCandidate {
-    /// Start sample index
+    /// Start frame index (inclusive)
     pub start_sample: usize,
-    /// End sample index  
+    /// End frame index (exclusive); RIFF/SFZ export subtracts one.
     pub end_sample: usize,
     /// Length in samples
     pub length_samples: usize,
@@ -96,36 +96,97 @@ impl LoopDetector {
         let mut evaluated_candidates = self.evaluate_candidates(&candidates, audio_data);
         evaluated_candidates.sort_by(|a, b| b.quality_score.total_cmp(&a.quality_score));
 
-        // Step 4: Return results - ALWAYS SUCCESS with fallback
-        let best_candidate = evaluated_candidates.first().cloned();
-
-        // If no candidates found through normal means, create a basic fallback loop
-        let (final_candidate, success) = match best_candidate {
-            None => {
-                let fallback_start = audio_data.len() / 4; // Start at 25%
-                let fallback_end = (audio_data.len() * 3) / 4; // End at 75%
-                let fallback_candidate = LoopCandidate {
-                    start_sample: fallback_start,
-                    end_sample: fallback_end,
-                    length_samples: fallback_end - fallback_start,
-                    quality_score: 0.3, // Low but acceptable quality
-                    zero_crossing_aligned: false,
-                    correlation: 0.3,
-                };
-                (Some(fallback_candidate), true)
-            }
-            Some(candidate) => {
-                // ALWAYS SUCCESS - even if quality is low, user can edit manually
-                (Some(candidate), true)
-            }
-        };
-
+        // A weak or phase-inverted match must not silently become a sustain loop.
+        let best_candidate = evaluated_candidates
+            .iter()
+            .find(|candidate| candidate.correlation >= self.config.correlation_threshold)
+            .cloned();
+        let success = best_candidate.is_some();
         LoopDetectionResult {
             success,
-            best_candidate: final_candidate,
+            best_candidate,
             all_candidates: evaluated_candidates,
-            failure_reason: None, // Never fail - always provide something to work with
+            failure_reason: if success {
+                None
+            } else {
+                Some("No candidate meets the correlation threshold".into())
+            },
         }
+    }
+
+    /// Detect interleaved audio in frame coordinates, validating all channels.
+    pub fn detect_loop_points_channels(
+        &self,
+        audio_data: &[f32],
+        sample_rate: u32,
+        channels: u16,
+    ) -> LoopDetectionResult {
+        let channels = channels as usize;
+        if channels == 0 || sample_rate == 0 || !audio_data.len().is_multiple_of(channels) {
+            return LoopDetectionResult {
+                success: false,
+                best_candidate: None,
+                all_candidates: vec![],
+                failure_reason: Some("Invalid audio frames".into()),
+            };
+        }
+        // Use the highest-energy channel for candidates, avoiding phase cancellation in stereo.
+        let channel = (0..channels)
+            .max_by(|&a, &b| {
+                let energy = |channel| {
+                    audio_data
+                        .iter()
+                        .skip(channel)
+                        .step_by(channels)
+                        .map(|v| v * v)
+                        .sum::<f32>()
+                };
+                energy(a).total_cmp(&energy(b))
+            })
+            .unwrap_or(0);
+        let reference: Vec<f32> = audio_data
+            .iter()
+            .skip(channel)
+            .step_by(channels)
+            .copied()
+            .collect();
+        let mut result = self.detect_loop_points(&reference, sample_rate);
+        // Check every audible channel at identical frame positions.
+        for candidate in &mut result.all_candidates {
+            let mut correlation = candidate.correlation;
+            for channel in 0..channels {
+                let mono: Vec<f32> = audio_data
+                    .iter()
+                    .skip(channel)
+                    .step_by(channels)
+                    .copied()
+                    .collect();
+                if mono.iter().any(|value| value.abs() > 1e-6) {
+                    correlation = correlation.min(self.calculate_region_correlation(
+                        &mono,
+                        candidate.start_sample,
+                        candidate.end_sample,
+                    ));
+                }
+            }
+            candidate.correlation = correlation;
+            candidate.quality_score = self.calculate_quality_score(candidate);
+        }
+        result
+            .all_candidates
+            .sort_by(|a, b| b.quality_score.total_cmp(&a.quality_score));
+        result.best_candidate = result
+            .all_candidates
+            .iter()
+            .find(|candidate| candidate.correlation >= self.config.correlation_threshold)
+            .cloned();
+        result.success = result.best_candidate.is_some();
+        result.failure_reason = if result.success {
+            None
+        } else {
+            Some("No matching loop across all channels".into())
+        };
+        result
     }
 
     /// Find all zero crossing points in the audio
@@ -157,14 +218,18 @@ impl LoopDetector {
 
         // Try different combinations of zero crossings as loop points
         // Use step size to create more diverse candidates
-        let step_size = (zero_crossings.len() / (self.config.max_candidates * 3)).max(1);
+        let step_size = (zero_crossings.len() / (self.config.max_candidates.max(1) * 3)).max(1);
 
         for (i, &start_crossing) in zero_crossings.iter().enumerate().step_by(step_size) {
             for &end_crossing in zero_crossings.iter().skip(i + step_size).step_by(step_size) {
                 let length = end_crossing - start_crossing;
 
                 // Check if length is within acceptable range
-                if length >= min_samples && length <= max_samples && length < audio_data.len() {
+                if length >= min_samples
+                    && length <= max_samples
+                    && length < audio_data.len()
+                    && (audio_data[start_crossing] > 0.0) == (audio_data[end_crossing] > 0.0)
+                {
                     // Check for diversity - avoid candidates too similar to existing ones
                     // But only if we already have some candidates
                     let is_diverse = if candidates.is_empty() {
@@ -208,7 +273,11 @@ impl LoopDetector {
                 for &end_crossing in zero_crossings.iter().skip(i + step_size).step_by(step_size) {
                     let length = end_crossing - start_crossing;
 
-                    if length >= min_samples && length <= max_samples && length < audio_data.len() {
+                    if length >= min_samples
+                        && length <= max_samples
+                        && length < audio_data.len()
+                        && (audio_data[start_crossing] > 0.0) == (audio_data[end_crossing] > 0.0)
+                    {
                         candidates.push(LoopCandidate {
                             start_sample: start_crossing,
                             end_sample: end_crossing,
@@ -269,18 +338,12 @@ impl LoopDetector {
         // Compare small windows around start and end points
         let window_size = 1024.min(audio_data.len() / 10); // 1024 samples or 10% of audio
 
-        let start_window_start = start_sample.saturating_sub(window_size / 2);
-        let start_window_end = (start_sample + window_size / 2).min(audio_data.len());
-
-        let end_window_start = end_sample.saturating_sub(window_size / 2);
-        let end_window_end = (end_sample + window_size / 2).min(audio_data.len());
-
-        if start_window_end <= start_window_start || end_window_end <= end_window_start {
+        let length = window_size.min(audio_data.len().saturating_sub(end_sample));
+        if length < 2 {
             return 0.0;
         }
-
-        let start_window = &audio_data[start_window_start..start_window_end];
-        let end_window = &audio_data[end_window_start..end_window_end];
+        let start_window = &audio_data[start_sample..start_sample + length];
+        let end_window = &audio_data[end_sample..end_sample + length];
 
         // Calculate normalized cross-correlation
         self.normalized_cross_correlation(start_window, end_window)
@@ -313,7 +376,7 @@ impl LoopDetector {
 
         let denominator = (sum_sq1 * sum_sq2).sqrt();
         if denominator > 0.0 {
-            (numerator / denominator).abs() // Take absolute value
+            (numerator / denominator).clamp(-1.0, 1.0)
         } else {
             0.0
         }
@@ -417,6 +480,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rejected_loop_is_not_promoted_to_success() {
+        let detector = LoopDetector::new(LoopDetectionConfig {
+            correlation_threshold: 1.1,
+            ..Default::default()
+        });
+        let audio: Vec<f32> = (0..1000)
+            .map(|frame| (std::f32::consts::TAU * frame as f32 / 20.0).sin())
+            .collect();
+        let result = detector.detect_loop_points(&audio, 1000);
+        assert!(!result.all_candidates.is_empty());
+        assert!(!result.success);
+        assert!(result.best_candidate.is_none());
+        assert!(result.failure_reason.is_some());
+    }
+
+    #[test]
+    fn inverted_waveforms_are_not_matching_loop_boundaries() {
+        let detector = LoopDetector::new(Default::default());
+        assert!(detector.normalized_cross_correlation(&[0.0, 0.5, 1.0], &[0.0, -0.5, -1.0]) < 0.0);
+    }
+
+    #[test]
     fn test_zero_crossing_detection() {
         let detector = LoopDetector::new(LoopDetectionConfig::default());
         let audio = vec![-1.0, -0.5, 0.0, 0.5, 1.0, 0.5, 0.0, -0.5, -1.0];
@@ -490,7 +575,8 @@ mod tests {
             correlation: 0.95,
         };
 
-        let res = detector.apply_loop_with_crossfade_channels(&mut stereo_audio, &candidate, 10000, 2);
+        let res =
+            detector.apply_loop_with_crossfade_channels(&mut stereo_audio, &candidate, 10000, 2);
         assert!(res.is_ok());
 
         // Verify Left channel remains positive and Right channel remains negative without crosstalk

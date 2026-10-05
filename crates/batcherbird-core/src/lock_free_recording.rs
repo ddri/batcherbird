@@ -40,6 +40,7 @@ pub struct LockFreeRecorder {
     // Recording state (lock-free atomic)
     is_recording: Arc<AtomicBool>,
     samples_recorded: Arc<AtomicUsize>,
+    capture_failed: Arc<AtomicBool>,
 
     // Configuration
     pub sample_rate: u32,
@@ -90,6 +91,15 @@ impl Default for LockFreeRecordingConfig {
 impl LockFreeRecorder {
     /// Create new lock-free recorder with professional configuration
     pub fn new(config: LockFreeRecordingConfig) -> Result<Self> {
+        if config.channels == 0
+            || config.sample_rate == 0
+            || config.ring_buffer_size == 0
+            || config.max_recording_samples == 0
+        {
+            return Err(BatcherbirdError::Config(
+                "Recording rate, channels and buffer limits must be positive".into(),
+            ));
+        }
         // Create lock-free SPSC ring buffer for audio samples
         let (sample_producer, sample_consumer) = RingBuffer::<f32>::new(config.ring_buffer_size);
 
@@ -104,6 +114,7 @@ impl LockFreeRecorder {
             meter_consumer: Some(meter_consumer),
             is_recording: Arc::new(AtomicBool::new(false)),
             samples_recorded: Arc::new(AtomicUsize::new(0)),
+            capture_failed: Arc::new(AtomicBool::new(false)),
             sample_rate: config.sample_rate,
             channels: output_channels,
             hw_channels: config.channels,
@@ -141,6 +152,7 @@ impl LockFreeRecorder {
         let samples_recorded = Arc::clone(&self.samples_recorded);
         let max_samples = self.max_recording_samples.max(1); // Safety limit
         let initial_capacity = self.buffer_size.min(max_samples);
+        let capture_failed = Arc::clone(&self.capture_failed);
 
         // Set recording flag BEFORE spawning the consumer thread so the thread
         // never observes `false` on an empty ring and exits prematurely.
@@ -166,7 +178,9 @@ impl LockFreeRecorder {
                             max_samples
                         );
                         is_recording.store(false, Ordering::Relaxed);
-                        return Ok(recorded_samples);
+                        return Err(BatcherbirdError::Audio(
+                            "Recording exceeded configured duration limit".into(),
+                        ));
                     }
                 }
 
@@ -177,6 +191,11 @@ impl LockFreeRecorder {
                 thread::sleep(Duration::from_micros(100));
             }
 
+            if capture_failed.load(Ordering::Acquire) {
+                return Err(BatcherbirdError::Audio(
+                    "Audio capture failed or buffer overflowed; recording was discarded".into(),
+                ));
+            }
             Ok(recorded_samples)
         }));
 
@@ -288,13 +307,16 @@ impl LockFreeRecorder {
         let hw_channels = self.hw_channels;
         let channel_routing = self.channel_routing;
         let input_gain_factor = Arc::clone(&self.input_gain_factor);
+        let failed = Arc::clone(&self.capture_failed);
+        let stream_failed = Arc::clone(&self.capture_failed);
         let mut sample_count = 0u64;
         let mut rms_accumulator_left = 0.0f32;
         let mut rms_accumulator_right = 0.0f32;
         let mut rms_window_samples = 0usize;
         let rms_window_size = 512; // ~11ms at 44.1kHz for smooth meters
-        // sample_count below counts interleaved samples across all channels
-        let interleaved_samples_per_sec = self.sample_rate.max(1) as u64 * hw_channels.max(1) as u64;
+                                   // sample_count below counts interleaved samples across all channels
+        let interleaved_samples_per_sec =
+            self.sample_rate.max(1) as u64 * hw_channels.max(1) as u64;
 
         let stream = device
             .build_input_stream(
@@ -304,26 +326,24 @@ impl LockFreeRecorder {
 
                     // ✅ PROFESSIONAL AUDIO: Lock-free recording in audio thread
                     if is_recording.load(Ordering::Relaxed) {
-                        if hw_channels >= 2 {
-                            for chunk in data.chunks(hw_channels as usize) {
-                                match channel_routing {
-                                    ChannelRouting::Stereo => {
-                                        let _ = producer.push(chunk[0] * gain);
-                                        let _ = producer.push(chunk[1] * gain);
-                                    }
-                                    ChannelRouting::MonoLeft => {
-                                        let _ = producer.push(chunk[0] * gain);
-                                    }
-                                    ChannelRouting::MonoRight => {
-                                        let _ = producer.push(chunk[1] * gain);
-                                    }
-                                }
-                            }
-                        } else {
-                            for &sample in data {
-                                if producer.push(sample * gain).is_err() {
-                                    break;
-                                }
+                        for frame in data.chunks_exact(hw_channels as usize) {
+                            let left =
+                                <f32 as cpal::FromSample<f32>>::from_sample_(frame[0]) * gain;
+                            let right = if hw_channels > 1 {
+                                <f32 as cpal::FromSample<f32>>::from_sample_(frame[1]) * gain
+                            } else {
+                                left
+                            };
+                            if !crate::sampler::push_capture_frame(
+                                &mut producer,
+                                left,
+                                right,
+                                hw_channels,
+                                channel_routing,
+                            ) {
+                                failed.store(true, Ordering::Release);
+                                is_recording.store(false, Ordering::Release);
+                                break;
                             }
                         }
                     }
@@ -336,7 +356,7 @@ impl LockFreeRecorder {
                     // Process samples based on channel configuration
                     if hw_channels >= 2 {
                         // Stereo / Multi-channel: interleaved samples
-                        for chunk in data.chunks(hw_channels as usize) {
+                        for chunk in data.chunks_exact(hw_channels as usize) {
                             let left = chunk[0] * gain;
                             let right = chunk[1] * gain;
 
@@ -398,7 +418,9 @@ impl LockFreeRecorder {
                     sample_count += data.len() as u64;
                     // ✅ No mutex locks, no memory allocation, no blocking operations
                 },
-                |err| tracing::error!("Audio input error: {}", err),
+                move |_err| {
+                    stream_failed.store(true, Ordering::Release);
+                },
                 None,
             )
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to build F32 stream: {}", e)))?;
@@ -418,6 +440,8 @@ impl LockFreeRecorder {
         let hw_channels = self.hw_channels;
         let channel_routing = self.channel_routing;
         let input_gain_factor = Arc::clone(&self.input_gain_factor);
+        let failed = Arc::clone(&self.capture_failed);
+        let stream_failed = Arc::clone(&self.capture_failed);
         let stream = device
             .build_input_stream(
                 config,
@@ -425,32 +449,31 @@ impl LockFreeRecorder {
                     let gain = f32::from_bits(input_gain_factor.load(Ordering::Relaxed));
                     // ✅ PROFESSIONAL AUDIO: Lock-free recording in audio thread
                     if is_recording.load(Ordering::Relaxed) {
-                        if hw_channels >= 2 {
-                            for chunk in data.chunks(hw_channels as usize) {
-                                match channel_routing {
-                                    ChannelRouting::Stereo => {
-                                        let _ = producer.push((chunk[0] as f32 / i16::MAX as f32) * gain);
-                                        let _ = producer.push((chunk[1] as f32 / i16::MAX as f32) * gain);
-                                    }
-                                    ChannelRouting::MonoLeft => {
-                                        let _ = producer.push((chunk[0] as f32 / i16::MAX as f32) * gain);
-                                    }
-                                    ChannelRouting::MonoRight => {
-                                        let _ = producer.push((chunk[1] as f32 / i16::MAX as f32) * gain);
-                                    }
-                                }
-                            }
-                        } else {
-                            for &sample in data {
-                                let f32_sample = (sample as f32 / i16::MAX as f32) * gain;
-                                if producer.push(f32_sample).is_err() {
-                                    break;
-                                }
+                        for frame in data.chunks_exact(hw_channels as usize) {
+                            let left =
+                                <f32 as cpal::FromSample<i16>>::from_sample_(frame[0]) * gain;
+                            let right = if hw_channels > 1 {
+                                <f32 as cpal::FromSample<i16>>::from_sample_(frame[1]) * gain
+                            } else {
+                                left
+                            };
+                            if !crate::sampler::push_capture_frame(
+                                &mut producer,
+                                left,
+                                right,
+                                hw_channels,
+                                channel_routing,
+                            ) {
+                                failed.store(true, Ordering::Release);
+                                is_recording.store(false, Ordering::Release);
+                                break;
                             }
                         }
                     }
                 },
-                |err| tracing::error!("Audio input error: {}", err),
+                move |_err| {
+                    stream_failed.store(true, Ordering::Release);
+                },
                 None,
             )
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to build I16 stream: {}", e)))?;
@@ -470,6 +493,8 @@ impl LockFreeRecorder {
         let hw_channels = self.hw_channels;
         let channel_routing = self.channel_routing;
         let input_gain_factor = Arc::clone(&self.input_gain_factor);
+        let failed = Arc::clone(&self.capture_failed);
+        let stream_failed = Arc::clone(&self.capture_failed);
         let stream = device
             .build_input_stream(
                 config,
@@ -477,32 +502,31 @@ impl LockFreeRecorder {
                     let gain = f32::from_bits(input_gain_factor.load(Ordering::Relaxed));
                     // ✅ PROFESSIONAL AUDIO: Lock-free recording in audio thread
                     if is_recording.load(Ordering::Relaxed) {
-                        if hw_channels >= 2 {
-                            for chunk in data.chunks(hw_channels as usize) {
-                                match channel_routing {
-                                    ChannelRouting::Stereo => {
-                                        let _ = producer.push(((chunk[0] as f32 - 32768.0) / 32768.0) * gain);
-                                        let _ = producer.push(((chunk[1] as f32 - 32768.0) / 32768.0) * gain);
-                                    }
-                                    ChannelRouting::MonoLeft => {
-                                        let _ = producer.push(((chunk[0] as f32 - 32768.0) / 32768.0) * gain);
-                                    }
-                                    ChannelRouting::MonoRight => {
-                                        let _ = producer.push(((chunk[1] as f32 - 32768.0) / 32768.0) * gain);
-                                    }
-                                }
-                            }
-                        } else {
-                            for &sample in data {
-                                let f32_sample = ((sample as f32 - 32768.0) / 32768.0) * gain;
-                                if producer.push(f32_sample).is_err() {
-                                    break;
-                                }
+                        for frame in data.chunks_exact(hw_channels as usize) {
+                            let left =
+                                <f32 as cpal::FromSample<u16>>::from_sample_(frame[0]) * gain;
+                            let right = if hw_channels > 1 {
+                                <f32 as cpal::FromSample<u16>>::from_sample_(frame[1]) * gain
+                            } else {
+                                left
+                            };
+                            if !crate::sampler::push_capture_frame(
+                                &mut producer,
+                                left,
+                                right,
+                                hw_channels,
+                                channel_routing,
+                            ) {
+                                failed.store(true, Ordering::Release);
+                                is_recording.store(false, Ordering::Release);
+                                break;
                             }
                         }
                     }
                 },
-                |err| tracing::error!("Audio input error: {}", err),
+                move |_err| {
+                    stream_failed.store(true, Ordering::Release);
+                },
                 None,
             )
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to build U16 stream: {}", e)))?;
@@ -534,7 +558,8 @@ impl LockFreeRecorder {
     pub fn set_input_gain_db(&self, db: f32) {
         let clamped = db.clamp(-12.0, 12.0);
         let factor = 10.0f32.powf(clamped / 20.0);
-        self.input_gain_factor.store(factor.to_bits(), Ordering::Relaxed);
+        self.input_gain_factor
+            .store(factor.to_bits(), Ordering::Relaxed);
     }
 
     /// Get current linear input gain factor (1.0 = 0 dB)
@@ -546,6 +571,15 @@ impl LockFreeRecorder {
     pub fn get_input_gain_db(&self) -> f32 {
         let factor = self.get_input_gain_factor();
         20.0 * factor.log10()
+    }
+}
+
+impl Drop for LockFreeRecorder {
+    fn drop(&mut self) {
+        self.is_recording.store(false, Ordering::Release);
+        if let Some(handle) = self.consumer_thread.take() {
+            let _ = handle.join();
+        }
     }
 }
 
@@ -602,7 +636,9 @@ mod tests {
             ..LockFreeRecordingConfig::default()
         };
         let mono_recorder = LockFreeRecorder::new(mono_config).unwrap();
-        mono_recorder.samples_recorded.store(44100, Ordering::Relaxed);
+        mono_recorder
+            .samples_recorded
+            .store(44100, Ordering::Relaxed);
         assert_eq!(mono_recorder.recording_duration_ms(), 1000.0);
     }
 
@@ -618,12 +654,7 @@ mod tests {
         let mut recorder = LockFreeRecorder::new(config).unwrap();
 
         // Take the producer (normally moved into the audio callback)
-        let mut producer = recorder
-            .sample_producer
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap();
+        let mut producer = recorder.sample_producer.lock().unwrap().take().unwrap();
 
         recorder.start_recording().unwrap();
 
@@ -644,8 +675,11 @@ mod tests {
             "recorder should stop itself at max_recording_samples"
         );
 
-        let samples = recorder.stop_recording().unwrap();
-        assert_eq!(samples.len(), 100, "recording must be capped at the limit");
+        let error = recorder.stop_recording().unwrap_err();
+        assert!(
+            error.to_string().contains("duration limit"),
+            "truncation must be reported"
+        );
     }
 
     #[test]

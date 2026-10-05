@@ -551,12 +551,13 @@ fn sample_and_export(
     // Create export config
     let export_config = ExportConfig {
         output_directory: PathBuf::from(output_dir),
-        naming_pattern: "{note_name}_{note}_vel{velocity}_{timestamp}.wav".to_string(),
+        naming_pattern: "{note_name}_{note}_{velocity}_{timestamp}.wav".to_string(),
         sample_format: AudioFormat::Wav24Bit,
         normalize: true,
         fade_in_ms: 0.0,
         fade_out_ms: 10.0,
         apply_detection: true,
+        auto_loop: false,
         detection_config: Default::default(),
         creator_name: None,
         instrument_description: None,

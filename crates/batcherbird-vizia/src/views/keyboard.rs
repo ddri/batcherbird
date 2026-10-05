@@ -1,4 +1,4 @@
-use crate::app_data::AppData;
+use crate::app_data::{AppData, AppState};
 use crate::app_event::AppEvent;
 use vizia::prelude::*;
 use vizia::vg;
@@ -83,6 +83,7 @@ impl KeyboardView {
     pub fn new(cx: &mut Context) -> Handle<'_, Self> {
         Self { held_note: None }.build(cx, |cx| {
             let id = cx.current();
+            Binding::new(cx, AppData::app_state, move |cx, _| cx.needs_redraw(id));
             Binding::new(cx, AppData::start_note, move |cx, _| cx.needs_redraw(id));
             Binding::new(cx, AppData::end_note, move |cx, _| cx.needs_redraw(id));
             Binding::new(cx, AppData::note_step, move |cx, _| cx.needs_redraw(id));
@@ -99,7 +100,9 @@ impl View for KeyboardView {
                 let bounds = cx.bounds();
                 let start_note = AppData::start_note.get(cx);
                 let display_start = (start_note / 12) * 12;
-                let display_end = (display_start + 48).min(127);
+                let display_end = (display_start.saturating_add(48))
+                    .max(AppData::end_note.get(cx))
+                    .min(127);
 
                 let cursor_x = cx.mouse().cursor_x;
                 let cursor_y = cx.mouse().cursor_y;
@@ -144,11 +147,9 @@ impl View for KeyboardView {
                     cx.emit(AppEvent::AuditionNoteOff);
                 }
             }
-            WindowEvent::MouseLeave => {
-                if self.held_note.is_some() {
-                    self.held_note = None;
-                    cx.emit(AppEvent::AuditionNoteOff);
-                }
+            WindowEvent::MouseLeave if self.held_note.is_some() => {
+                self.held_note = None;
+                cx.emit(AppEvent::AuditionNoteOff);
             }
             _ => {}
         });
@@ -179,7 +180,9 @@ impl View for KeyboardView {
 
         // Display range: 4 octaves anchored at start_note's octave
         let display_start = (start_note / 12) * 12;
-        let display_end = (display_start + 48).min(127);
+        let display_end = (display_start.saturating_add(48))
+            .max(AppData::end_note.get(cx))
+            .min(127);
 
         // Count white keys
         let white_count = (display_start..=display_end)
@@ -205,7 +208,8 @@ impl View for KeyboardView {
             }
 
             let is_audition = Some(note) == audition_note;
-            let is_current = note == current_note;
+            let is_current =
+                note == current_note && AppData::app_state.get(cx) == AppState::Recording;
             let is_target = is_stepped_target(note);
             let in_range = note >= start_note && note <= end_note;
 
@@ -220,12 +224,8 @@ impl View for KeyboardView {
                 vg::Color::from_rgb(0xd1, 0xd5, 0xdb) // Realistic off-white
             };
 
-            let key_rect = vg::Rect::from_xywh(
-                white_x + 0.5,
-                bounds.y + 0.5,
-                white_w - 1.0,
-                white_h - 1.0,
-            );
+            let key_rect =
+                vg::Rect::from_xywh(white_x + 0.5, bounds.y + 0.5, white_w - 1.0, white_h - 1.0);
             let key_path = vg::Path::rect(key_rect, None);
             let mut key_paint = vg::Paint::default();
             key_paint.set_anti_alias(true);
@@ -283,17 +283,14 @@ impl View for KeyboardView {
                 let bx = white_x - black_w * 0.5;
 
                 let is_audition = Some(note) == audition_note;
-                let is_current = note == current_note;
+                let is_current =
+                    note == current_note && AppData::app_state.get(cx) == AppState::Recording;
                 let is_target = is_stepped_target(note);
                 let in_range = note >= start_note && note <= end_note;
 
                 // 1. Soft Drop Shadow onto white keys
-                let shadow_rect = vg::Rect::from_xywh(
-                    bx - 1.0,
-                    bounds.y,
-                    black_w + 2.0,
-                    black_h + 3.0,
-                );
+                let shadow_rect =
+                    vg::Rect::from_xywh(bx - 1.0, bounds.y, black_w + 2.0, black_h + 3.0);
                 let shadow_path = vg::Path::rect(shadow_rect, None);
                 let mut shadow_paint = vg::Paint::default();
                 shadow_paint.set_anti_alias(true);
@@ -324,7 +321,8 @@ impl View for KeyboardView {
                 if !is_audition && !is_current {
                     let sheen_w = (black_w - 2.0).max(1.0);
                     let sheen_h = (black_h - 4.0).max(1.0);
-                    let sheen_rect = vg::Rect::from_xywh(bx + 1.0, bounds.y + 1.0, sheen_w, sheen_h);
+                    let sheen_rect =
+                        vg::Rect::from_xywh(bx + 1.0, bounds.y + 1.0, sheen_w, sheen_h);
                     let sheen_path = vg::Path::rect(sheen_rect, None);
                     let mut sheen_paint = vg::Paint::default();
                     sheen_paint.set_anti_alias(true);
@@ -360,7 +358,7 @@ impl View for KeyboardView {
 pub fn keyboard(cx: &mut Context) {
     VStack::new(cx, |cx| {
         KeyboardView::new(cx)
-            .height(Pixels(64.0))
+            .height(Pixels(78.0))
             .width(Stretch(1.0))
             .corner_radius(Pixels(6.0))
             .cursor(CursorIcon::Hand);
@@ -370,8 +368,8 @@ pub fn keyboard(cx: &mut Context) {
                 cx,
                 "Audition: Left-click  ·  Set Start: Right-click  ·  Set End: Shift-click",
             )
-            .font_size(10.0)
-            .color(Color::from("#64748b"))
+            .font_size(12.0)
+            .color(Color::from("#a2b0b8"))
             .width(Stretch(1.0))
             .alignment(Alignment::Center);
         })

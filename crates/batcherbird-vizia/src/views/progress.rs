@@ -80,11 +80,10 @@ pub fn progress_bar(cx: &mut Context) {
                     let completed = completed.get(cx);
                     Binding::new(cx, AppData::notes_total, move |cx, total| {
                         let total = total.get(cx);
-                        let pct = if total > 0 {
-                            (completed * 100) / total
-                        } else {
-                            0
-                        };
+                        let pct = completed
+                            .saturating_mul(100)
+                            .checked_div(total)
+                            .unwrap_or(0);
                         Label::new(cx, &format!("{}%", pct)).class("progress-pct");
                     });
                 });

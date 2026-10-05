@@ -1,355 +1,337 @@
-use crate::app_data::AppData;
+use super::disclosure::disclosure;
+use crate::app_data::{AppData, AppState};
 use crate::app_event::{AppEvent, InstrumentPreset};
 use vizia::prelude::*;
 
-fn card_header(cx: &mut Context, title: &str) {
-    HStack::new(cx, move |cx| {
-        Element::new(cx).class("card-indicator");
-        Label::new(cx, title).class("card-title");
-    })
-    .class("card-header");
+pub(super) fn action<'a>(cx: &'a mut Context, label: &str, event: AppEvent) -> Handle<'a, Button> {
+    Button::new(cx, |cx| Label::new(cx, label))
+        .name(label.to_owned())
+        .text_value(label.to_owned())
+        .on_press(move |cx| cx.emit(event.clone()))
 }
 
-fn compact_stepper(
+fn stepper(
     cx: &mut Context,
-    label: &str,
+    title: &str,
     value: impl FnOnce(&mut Context),
     dec: AppEvent,
     inc: AppEvent,
 ) {
     VStack::new(cx, |cx| {
-        Label::new(cx, label).class("field-label");
+        Label::new(cx, title).class("field-label");
         HStack::new(cx, |cx| {
-            Label::new(cx, "-")
-                .class("stepper-btn")
-                .on_press(move |cx| cx.emit(dec.clone()));
+            action(cx, "−", dec)
+                .name(format!("Decrease {}", title))
+                .text_value(format!("Decrease {}", title))
+                .class("stepper-btn");
             value(cx);
-            Label::new(cx, "+")
-                .class("stepper-btn")
-                .on_press(move |cx| cx.emit(inc.clone()));
+            action(cx, "+", inc)
+                .name(format!("Increase {}", title))
+                .text_value(format!("Increase {}", title))
+                .class("stepper-btn");
         })
-        .height(Auto)
-        .horizontal_gap(Pixels(4.0))
-        .alignment(Alignment::Center);
+        .class("stepper");
     })
-    .class("field-box");
-}
-
-#[allow(clippy::too_many_arguments)]
-fn stepper_pair(
-    cx: &mut Context,
-    label_a: &str,
-    value_a: impl FnOnce(&mut Context),
-    dec_a: AppEvent,
-    inc_a: AppEvent,
-    label_b: &str,
-    value_b: impl FnOnce(&mut Context),
-    dec_b: AppEvent,
-    inc_b: AppEvent,
-) {
-    HStack::new(cx, |cx| {
-        compact_stepper(cx, label_a, value_a, dec_a, inc_a);
-        compact_stepper(cx, label_b, value_b, dec_b, inc_b);
-    })
-    .width(Stretch(1.0))
-    .height(Auto)
-    .horizontal_gap(Pixels(6.0));
+    .class("field")
+    .width(Stretch(1.0));
 }
 
 pub fn sidebar(cx: &mut Context) {
-    VStack::new(cx, |cx| {
-            // ==========================================
-            // CARD 1: I/O & ROUTING
-            // ==========================================
-            VStack::new(cx, |cx| {
-                card_header(cx, "I/O & ROUTING");
-
-                // MIDI Output
-                VStack::new(cx, |cx| {
-                    Label::new(cx, "MIDI DESTINATION").class("field-label");
-                    PickList::new(cx, AppData::midi_devices, AppData::selected_midi_device, true)
-                        .on_select(|cx, idx| cx.emit(AppEvent::SelectMidiDevice(idx)))
-                        .width(Stretch(1.0));
-                })
-                .height(Auto)
-                .vertical_gap(Pixels(3.0));
-
-                // Audio Input
-                VStack::new(cx, |cx| {
-                    Label::new(cx, "AUDIO SOURCE").class("field-label");
-                    PickList::new(cx, AppData::audio_input_devices, AppData::selected_audio_input, true)
-                        .on_select(|cx, idx| cx.emit(AppEvent::SelectAudioInput(idx)))
-                        .width(Stretch(1.0));
-                })
-                .height(Auto)
-                .vertical_gap(Pixels(3.0));
-
-                // Channel Routing
-                VStack::new(cx, |cx| {
-                    Label::new(cx, "CHANNEL TOPOLOGY").class("field-label");
-                    PickList::new(cx, AppData::channel_routing_options, AppData::selected_channel_routing, true)
-                        .on_select(|cx, idx| cx.emit(AppEvent::SelectChannelRouting(idx)))
-                        .width(Stretch(1.0));
-                })
-                .height(Auto)
-                .vertical_gap(Pixels(3.0));
-
-                // Playthrough Monitor Toggle
-                HStack::new(cx, |cx| {
-                    Label::new(cx, "MONITOR PLAYTHROUGH").class("field-label").width(Stretch(1.0));
-
-                    Binding::new(cx, AppData::playthrough_enabled, |cx, enabled| {
-                        let is_on = enabled.get(cx);
-                        HStack::new(cx, move |cx| {
-                            Label::new(cx, if is_on { "ACTIVE" } else { "MUTED" })
-                                .font_size(9.0)
-                                .font_weight(FontWeightKeyword::Bold)
-                                .color(if is_on {
-                                    Color::from("#10b981")
-                                } else {
-                                    Color::from("#64748b")
-                                });
-                        })
-                        .padding_left(Pixels(8.0))
-                        .padding_right(Pixels(8.0))
-                        .padding_top(Pixels(3.0))
-                        .padding_bottom(Pixels(3.0))
-                        .background_color(if is_on {
-                            Color::from("#062817")
-                        } else {
-                            Color::from("#161a27")
-                        })
-                        .border_width(Pixels(1.0))
-                        .border_color(if is_on {
-                            Color::from("#10b98166")
-                        } else {
-                            Color::from("#242c3f")
-                        })
-                        .corner_radius(Pixels(4.0))
-                        .cursor(CursorIcon::Hand)
-                        .on_press(|cx| cx.emit(AppEvent::TogglePlaythrough));
-                    });
-                })
-                .height(Auto)
-                .alignment(Alignment::Center);
-
-                // Input Gain Trim
-                VStack::new(cx, |cx| {
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, "PREAMP GAIN TRIM").class("field-label").width(Stretch(1.0));
-
-                        Binding::new(cx, AppData::input_gain_display, |cx, display| {
-                            let text = display.get(cx);
-                            Label::new(cx, &text)
-                                .font_size(10.0)
-                                .font_weight(FontWeightKeyword::Bold)
-                                .color(Color::from("#f59e0b"))
-                                .cursor(CursorIcon::Hand)
-                                .on_press(|cx| cx.emit(AppEvent::ResetInputGain));
-                        });
-                    })
-                    .height(Auto)
-                    .alignment(Alignment::Center);
-
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, "-1 dB")
-                            .class("chip-btn")
-                            .width(Stretch(1.0))
-                            .on_press(|cx| cx.emit(AppEvent::AdjustInputGain(-1.0)));
-
-                        Label::new(cx, "0 dB")
-                            .class("chip-btn")
-                            .width(Stretch(1.0))
-                            .on_press(|cx| cx.emit(AppEvent::ResetInputGain));
-
-                        Label::new(cx, "+1 dB")
-                            .class("chip-btn")
-                            .width(Stretch(1.0))
-                            .on_press(|cx| cx.emit(AppEvent::AdjustInputGain(1.0)));
-                    })
-                    .class("chip-group");
-                })
-                .height(Auto)
-                .vertical_gap(Pixels(4.0));
-            })
-            .class("card");
-
-            // ==========================================
-            // CARD 2: SAMPLER ENGINE
-            // ==========================================
-            VStack::new(cx, |cx| {
-                card_header(cx, "SAMPLER ENGINE");
-
-                // Octave Range Presets
-                VStack::new(cx, |cx| {
-                    Label::new(cx, "OCTAVE SPAN").class("field-label");
-                    HStack::new(cx, |cx| {
-                        for (label, octaves) in [("1 OCT", 1), ("2 OCT", 2), ("4 OCT", 4)] {
-                            Label::new(cx, label)
-                                .class("chip-btn")
-                                .width(Stretch(1.0))
-                                .on_press(move |cx| cx.emit(AppEvent::SetOctavePreset(octaves)));
-                        }
-                    })
-                    .class("chip-group");
-                })
-                .height(Auto)
-                .vertical_gap(Pixels(3.0));
-
-                // Instrument Style Presets
-                VStack::new(cx, |cx| {
-                    Label::new(cx, "INSTRUMENT PROFILE").class("field-label");
-                    HStack::new(cx, |cx| {
-                        for (label, preset) in [
-                            ("LEAD", InstrumentPreset::Lead),
-                            ("PAD", InstrumentPreset::Pad),
-                            ("BASS", InstrumentPreset::Bass),
-                            ("PLUCK", InstrumentPreset::Pluck),
-                        ] {
-                            Label::new(cx, label)
-                                .class("chip-btn")
-                                .width(Stretch(1.0))
-                                .on_press(move |cx| cx.emit(AppEvent::ApplyInstrumentPreset(preset)));
-                        }
-                    })
-                    .class("chip-group");
-                })
-                .height(Auto)
-                .vertical_gap(Pixels(3.0));
-
-                // Note Range Steppers
-                stepper_pair(
+    ScrollView::new(cx, |cx| {
+        VStack::new(cx, |cx| {
+            disclosure(cx, "01  Connections", AppData::app_state.map(|s| matches!(s, AppState::Idle | AppState::Armed)), |cx| {
+                Label::new(cx, "MIDI output").class("field-label");
+                PickList::new(
                     cx,
-                    "START NOTE",
-                    |cx| {
-                        Label::new(cx, AppData::start_note.map(|n: &u8| AppData::note_name(*n)))
-                            .class("field-value")
-                            .width(Stretch(1.0))
-                            .alignment(Alignment::Center);
-                    },
-                    AppEvent::DecrementStartNote,
-                    AppEvent::IncrementStartNote,
-                    "END NOTE",
-                    |cx| {
-                        Label::new(cx, AppData::end_note.map(|n: &u8| AppData::note_name(*n)))
-                            .class("field-value")
-                            .width(Stretch(1.0))
-                            .alignment(Alignment::Center);
-                    },
-                    AppEvent::DecrementEndNote,
-                    AppEvent::IncrementEndNote,
-                );
-
-                // Step Interval Picklist
-                VStack::new(cx, |cx| {
-                    Label::new(cx, "STEPPING INTERVAL").class("field-label");
-                    PickList::new(
+                    AppData::midi_devices,
+                    AppData::selected_midi_device,
+                    true,
+                )
+                .name("MIDI output device").text_value("MIDI output device")
+                .on_select(|cx, idx| cx.emit(AppEvent::SelectMidiDevice(idx)))
+                .width(Stretch(1.0));
+                Label::new(cx, "Audio input").class("field-label");
+                PickList::new(
+                    cx,
+                    AppData::audio_input_devices,
+                    AppData::selected_audio_input,
+                    true,
+                )
+                .name("Audio input device").text_value("Audio input device")
+                .on_select(|cx, idx| cx.emit(AppEvent::SelectAudioInput(idx)))
+                .width(Stretch(1.0));
+                action(cx, "Refresh devices", AppEvent::RefreshDevices).width(Stretch(1.0));
+                Button::new(cx, |cx| {
+                    Label::new(
                         cx,
-                        AppData::note_step_options,
-                        AppData::selected_step_index,
-                        true,
+                        AppData::playthrough_enabled.map(|on| {
+                            if *on {
+                                "Monitoring on"
+                            } else {
+                                "Monitoring off"
+                            }
+                        }),
                     )
-                    .on_select(|cx, idx| cx.emit(AppEvent::SelectNoteStepByIndex(idx)))
-                    .width(Stretch(1.0));
                 })
-                .height(Auto)
-                .vertical_gap(Pixels(3.0));
-
-                // Layers & Duration Steppers
-                stepper_pair(
+                .name(AppData::playthrough_enabled.map(|on| {
+                    if *on {
+                        "Monitoring on"
+                    } else {
+                        "Monitoring off"
+                    }
+                })).text_value(AppData::playthrough_enabled.map(|on| {
+                    if *on {
+                        "Monitoring on"
+                    } else {
+                        "Monitoring off"
+                    }
+                }))
+                .on_press(|cx| cx.emit(AppEvent::TogglePlaythrough))
+                .width(Stretch(1.0));
+                disclosure(cx, "Routing and gain", false, |cx| {
+                Label::new(cx, "Input channels").class("field-label");
+                PickList::new(
                     cx,
-                    "VEL LAYERS",
-                    |cx| {
-                        Label::new(cx, AppData::velocity_layers.map(|n: &u8| n.to_string()))
-                            .class("field-value")
-                            .width(Stretch(1.0))
-                            .alignment(Alignment::Center);
-                    },
-                    AppEvent::DecrementVelocityLayers,
-                    AppEvent::IncrementVelocityLayers,
-                    "DURATION",
-                    |cx| {
-                        Label::new(
-                            cx,
-                            AppData::note_duration_ms
-                                .map(|ms: &u32| format!("{:.1}s", *ms as f32 / 1000.0)),
-                        )
-                        .class("field-value")
-                        .width(Stretch(1.0))
-                        .alignment(Alignment::Center);
-                    },
-                    AppEvent::DecrementDuration,
-                    AppEvent::IncrementDuration,
-                );
-
-                // Live session telemetry badge
+                    AppData::channel_routing_options,
+                    AppData::selected_channel_routing,
+                    true,
+                )
+                .name("Input channels")
+                .text_value(AppData::channel_routing_display)
+                .on_select(|cx, idx| cx.emit(AppEvent::SelectChannelRouting(idx)))
+                .width(Stretch(1.0));
                 HStack::new(cx, |cx| {
-                    Label::new(cx, AppData::session_summary_display)
-                        .font_size(10.0)
-                        .font_weight(FontWeightKeyword::Bold)
-                        .color(Color::from("#38bdf8"))
-                        .alignment(Alignment::Center);
-                })
-                .width(Stretch(1.0))
-                .height(Pixels(26.0))
-                .background_color(Color::from("#0c2033"))
-                .corner_radius(Pixels(4.0))
-                .border_width(Pixels(1.0))
-                .border_color(Color::from("#0284c755"))
-                .alignment(Alignment::Center);
-            })
-            .class("card");
-
-            // ==========================================
-            // CARD 3: EXPORT PIPELINE
-            // ==========================================
-            VStack::new(cx, |cx| {
-                card_header(cx, "EXPORT PIPELINE");
-
-                // Target Format
-                VStack::new(cx, |cx| {
-                    Label::new(cx, "EXPORT FORMAT").class("field-label");
-                    PickList::new(cx, AppData::format_options, AppData::selected_format_index, true)
-                        .on_select(|cx, idx| cx.emit(AppEvent::SelectFormatByIndex(idx)))
+                    Label::new(cx, "Digital gain")
+                        .class("field-label")
                         .width(Stretch(1.0));
+                    Label::new(cx, AppData::input_gain_display)
+                        .name("Digital gain")
+                        .text_value(AppData::input_gain_display)
+                        .class("field-value");
                 })
                 .height(Auto)
-                .vertical_gap(Pixels(3.0));
-
-                // Destination Folder
-                VStack::new(cx, |cx| {
-                    Label::new(cx, "DESTINATION DIRECTORY").class("field-label");
-                    HStack::new(cx, |cx| {
-                        Label::new(
-                            cx,
-                            AppData::output_directory.map(|p: &std::path::PathBuf| {
-                                p.file_name()
-                                    .map(|n| n.to_string_lossy().to_string())
-                                    .unwrap_or_else(|| p.to_string_lossy().to_string())
-                            }),
-                        )
-                        .font_size(11.0)
-                        .color(Color::from("#cbd5e1"))
-                        .width(Stretch(1.0));
-
-                        Label::new(cx, "Browse")
-                            .font_size(10.0)
-                            .color(Color::from("#60a5fa"));
-                    })
-                    .height(Auto)
-                    .alignment(Alignment::Center);
+                .alignment(Alignment::Center);
+                HStack::new(cx, |cx| {
+                    action(cx, "−1 dB", AppEvent::AdjustInputGain(-1.0)).width(Stretch(1.0));
+                    action(cx, "Reset", AppEvent::ResetInputGain).width(Stretch(1.0));
+                    action(cx, "+1 dB", AppEvent::AdjustInputGain(1.0)).width(Stretch(1.0));
                 })
-                .class("field-box")
-                .cursor(CursorIcon::Hand)
-                .on_press(|cx| cx.emit(AppEvent::SelectOutputDirectory));
-
-                // Export All Button
-                Label::new(cx, "EXPORT ALL FORMATS")
-                    .class("btn-secondary")
-                    .width(Stretch(1.0))
-                    .on_press(|cx| cx.emit(AppEvent::ExportAll));
+                .class("control-row");
+                }).class("advanced-disclosure");
             })
-            .class("card");
+            .class("settings-group");
+
+            disclosure(cx, "02  Capture plan", AppData::app_state.map(|s| *s != AppState::Review), |cx| {
+                Label::new(cx, "Starting point").class("field-label");
+                HStack::new(cx, |cx| {
+                    for (label, preset) in [
+                        ("Lead", InstrumentPreset::Lead),
+                        ("Pad", InstrumentPreset::Pad),
+                        ("Bass", InstrumentPreset::Bass),
+                        ("Pluck", InstrumentPreset::Pluck),
+                    ] {
+                        action(cx, label, AppEvent::ApplyInstrumentPreset(preset))
+                            .width(Stretch(1.0));
+                    }
+                })
+                .class("control-row");
+                HStack::new(cx, |cx| {
+                    stepper(
+                        cx,
+                        "First note",
+                        |cx| {
+                            Label::new(cx, AppData::start_note.map(|n| AppData::note_name(*n)))
+                                .class("field-value")
+                                .width(Stretch(1.0));
+                        },
+                        AppEvent::DecrementStartNote,
+                        AppEvent::IncrementStartNote,
+                    );
+                    stepper(
+                        cx,
+                        "Last note",
+                        |cx| {
+                            Label::new(cx, AppData::end_note.map(|n| AppData::note_name(*n)))
+                                .class("field-value")
+                                .width(Stretch(1.0));
+                        },
+                        AppEvent::DecrementEndNote,
+                        AppEvent::IncrementEndNote,
+                    );
+                })
+                .class("control-row");
+                Label::new(cx, "Note spacing").class("field-label");
+                PickList::new(
+                    cx,
+                    AppData::note_step_options,
+                    AppData::selected_step_index,
+                    true,
+                )
+                .name("Note spacing").text_value("Note spacing")
+                .on_select(|cx, idx| cx.emit(AppEvent::SelectNoteStepByIndex(idx)))
+                .width(Stretch(1.0));
+                HStack::new(cx, |cx| {
+                    stepper(
+                        cx,
+                        "Velocity layers",
+                        |cx| {
+                            Label::new(cx, AppData::velocity_layers.map(|n| n.to_string()))
+                                .class("field-value")
+                                .width(Stretch(1.0));
+                        },
+                        AppEvent::DecrementVelocityLayers,
+                        AppEvent::IncrementVelocityLayers,
+                    );
+                    stepper(
+                        cx,
+                        "Hold",
+                        |cx| {
+                            Label::new(
+                                cx,
+                                AppData::note_duration_ms
+                                    .map(|ms| format!("{:.1} s", *ms as f32 / 1000.0)),
+                            )
+                            .class("field-value")
+                            .width(Stretch(1.0));
+                        },
+                        AppEvent::DecrementDuration,
+                        AppEvent::IncrementDuration,
+                    );
+                })
+                .class("control-row");
+                Label::new(cx, "Release tail").class("field-label");
+                HStack::new(cx, |cx| {
+                    Button::new(cx, |cx| Label::new(cx, "−"))
+                        .name("Decrease release tail").text_value("Decrease release tail")
+                        .on_press(|cx| {
+                            let ms = AppData::release_duration_ms.get(cx);
+                            cx.emit(AppEvent::SetReleaseDuration(ms.saturating_sub(100)));
+                        })
+                        .class("stepper-btn");
+                    Label::new(
+                        cx,
+                        AppData::release_duration_ms
+                            .map(|ms| format!("{:.1} s", *ms as f32 / 1000.0)),
+                    )
+                    .class("field-value")
+                    .width(Stretch(1.0));
+                    Button::new(cx, |cx| Label::new(cx, "+"))
+                        .name("Increase release tail").text_value("Increase release tail")
+                        .on_press(|cx| {
+                            let ms = AppData::release_duration_ms.get(cx);
+                            cx.emit(AppEvent::SetReleaseDuration(ms.saturating_add(100)));
+                        })
+                        .class("stepper-btn");
+                })
+                .class("stepper");
+                Label::new(cx, AppData::session_summary_display).class("plan-summary");
+            })
+            .class("settings-group");
+
+            disclosure(cx, "03  Export instrument", AppData::app_state.map(|s| *s == AppState::Review), |cx| {
+                Label::new(cx, "Instrument name").class("field-label");
+                Textbox::new(cx, AppData::instrument_name)
+                    .name("Instrument name")
+                    .on_edit(|cx, text| cx.emit(AppEvent::SetInstrumentName(text)))
+                    .width(Stretch(1.0));
+                Label::new(cx, "Format").class("field-label");
+                PickList::new(
+                    cx,
+                    AppData::format_options,
+                    AppData::selected_format_index,
+                    true,
+                )
+                .name("Export format")
+                .text_value(AppData::export_format_display)
+                .on_select(|cx, idx| cx.emit(AppEvent::SelectFormatByIndex(idx)))
+                .width(Stretch(1.0));
+                Button::new(cx, |cx| Label::new(cx, "Choose export folder…"))
+                    .name("Choose export folder").text_value("Choose export folder")
+                    .on_press(|cx| cx.emit(AppEvent::SelectOutputDirectory))
+                    .width(Stretch(1.0));
+                Label::new(
+                    cx,
+                    AppData::output_directory.map(|p| p.to_string_lossy().to_string()),
+                )
+                .class("muted")
+                .width(Stretch(1.0));
+                disclosure(cx, "Silence trimming", false, |cx| {
+                    Button::new(cx, |cx| Label::new(cx, AppData::trim_silence.map(|on| if *on { "Trim silence on" } else { "Trim silence off" })))
+                        .name(AppData::trim_silence.map(|on| if *on { "Trim silence enabled" } else { "Trim silence disabled" })).text_value(AppData::trim_silence.map(|on| if *on { "Trim silence enabled" } else { "Trim silence disabled" }))
+                        .checked(AppData::trim_silence)
+                        .on_press(|cx| { let on = AppData::trim_silence.get(cx); cx.emit(AppEvent::SetTrimSilence(!on)); })
+                        .width(Stretch(1.0));
+                    Label::new(cx, "Automatic trimming may remove very quiet attacks. Turn it off to keep the full take; edge fades still apply.")
+                        .class("muted").width(Stretch(1.0));
+                }).class("advanced-disclosure");
+                disclosure(cx, "Loop options", false, |cx| {
+                Button::new(cx, |cx| {
+                    Label::new(
+                        cx,
+                        AppData::auto_loop.map(|enabled| {
+                            if *enabled {
+                                "Automatic loops on (experimental)"
+                            } else {
+                                "Automatic loops off"
+                            }
+                        }),
+                    )
+                })
+                .name(AppData::auto_loop.map(|on| {
+                    if *on {
+                        "Automatic loops enabled, experimental"
+                    } else {
+                        "Automatic loops disabled"
+                    }
+                })).text_value(AppData::auto_loop.map(|on| {
+                    if *on {
+                        "Automatic loops enabled, experimental"
+                    } else {
+                        "Automatic loops disabled"
+                    }
+                }))
+                .on_press(|cx| {
+                    let enabled = AppData::auto_loop.get(cx);
+                    cx.emit(AppEvent::SetAutoLoop(!enabled));
+                })
+                .width(Stretch(1.0));
+                    Label::new(cx, "Automatic loop detection is experimental. Listen to the exported instrument before sharing it.").class("muted").width(Stretch(1.0));
+                }).class("advanced-disclosure");
+                Button::new(cx, |cx| {
+                    Label::new(
+                        cx,
+                        AppData::export_in_progress.map(|busy| {
+                            if *busy {
+                                "Exporting…"
+                            } else {
+                                "Export selected format"
+                            }
+                        }),
+                    )
+                })
+                .name(AppData::export_in_progress.map(|busy| {
+                    if *busy {
+                        "Exporting instrument"
+                    } else {
+                        "Export selected format"
+                    }
+                })).text_value(AppData::export_in_progress.map(|busy| {
+                    if *busy {
+                        "Exporting instrument"
+                    } else {
+                        "Export selected format"
+                    }
+                }))
+                .on_press(|cx| cx.emit(AppEvent::ExportAll))
+                .class("primary")
+                .width(Stretch(1.0))
+                .disabled(AppData::recorded_count.map(|n| *n == 0));
+            })
+            .class("settings-group");
+        })
+        .class("inspector-content")
+        .disabled(AppData::controls_busy);
     })
-    .class("sidebar");
+    .class("sidebar")
+    .show_horizontal_scrollbar(false);
 }

@@ -553,10 +553,12 @@ dependencies = [
  "cpal",
  "crossbeam-channel",
  "dirs",
+ "hound",
  "midir",
  "rfd",
  "rtrb",
  "serde",
+ "serde_json",
  "vizia",
 ]
 

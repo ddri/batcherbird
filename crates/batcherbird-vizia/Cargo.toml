@@ -22,6 +22,8 @@ rtrb = "0.3"
 cpal = { workspace = true }
 midir = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
+hound = { workspace = true }
 crossbeam-channel = "0.5"
 rfd = "0.15"
 dirs = "5.0"

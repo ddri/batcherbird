@@ -9,12 +9,10 @@ permissions:
   contents: write
 
 jobs:
-  # TODO(release): The macOS release build previously packaged the deprecated
-  # Tauri GUI crate (crates/batcherbird-gui) into a .dmg. That crate has been
-  # removed. A new release job that builds and packages the VIZIA app
-  # (crates/batcherbird-vizia) will be implemented in the release-pipeline
-  # follow-up task. Until then this workflow only performs a placeholder build
-  # so it does not reference the deleted crate's paths.
+  # Builds the current Vizia application through scripts/package-macos.sh.
+  # A v* tag publishes a DMG: complete docs/RELEASE_CHECKLIST.md before tagging.
+  # Packaging currently has no signing/notarization step and uses the runner's
+  # architecture; an upload alone does not establish hardware or OS compatibility.
   build-macos:
     name: Build & Release macOS DMG
     runs-on: macos-latest

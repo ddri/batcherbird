@@ -43,6 +43,7 @@ fn test_sfz_export() {
         fade_in_ms: 0.0,
         fade_out_ms: 0.0,
         apply_detection: false,
+        auto_loop: false,
         detection_config: DetectionConfig::default(),
         creator_name: Some("Test User".to_string()),
         instrument_description: Some("Test SFZ instrument".to_string()),
@@ -117,6 +118,7 @@ fn test_decent_sampler_export() {
         fade_in_ms: 0.0,
         fade_out_ms: 0.0,
         apply_detection: true,
+        auto_loop: true,
         detection_config: DetectionConfig::default(),
         creator_name: Some("Test User".to_string()),
         instrument_description: Some("Test Decent Sampler instrument".to_string()),
@@ -178,6 +180,7 @@ fn test_sfz_export_with_loop_crossfade() {
         fade_in_ms: 0.0,
         fade_out_ms: 0.0,
         apply_detection: true,
+        auto_loop: true,
         detection_config: DetectionConfig::default(),
         creator_name: Some("Test User".to_string()),
         instrument_description: Some("Test SFZ Loop instrument".to_string()),
@@ -230,6 +233,7 @@ fn test_riff_metadata_embedding_roundtrip() {
         fade_in_ms: 0.0,
         fade_out_ms: 0.0,
         apply_detection: true,
+        auto_loop: true,
         detection_config: DetectionConfig::default(),
         creator_name: Some("Batcherbird Studio".to_string()),
         instrument_description: Some("Custom Prophet-5 Lead".to_string()),
@@ -261,7 +265,10 @@ fn test_riff_metadata_embedding_roundtrip() {
 
     // bext chunk
     assert_eq!(meta.bext_originator.as_deref(), Some("Batcherbird Studio"));
-    assert_eq!(meta.bext_description.as_deref(), Some("Custom Prophet-5 Lead"));
+    assert_eq!(
+        meta.bext_description.as_deref(),
+        Some("Custom Prophet-5 Lead")
+    );
     assert!(meta.bext_origination_date.is_some());
     assert!(meta.bext_origination_time.is_some());
 
@@ -303,6 +310,7 @@ fn test_simultaneous_ds_and_sfz_integration() {
         fade_in_ms: 0.0,
         fade_out_ms: 0.0,
         apply_detection: false,
+        auto_loop: false,
         detection_config: DetectionConfig::default(),
         creator_name: Some("Sound Designer".to_string()),
         instrument_description: Some("Hybrid Pad".to_string()),
@@ -352,7 +360,11 @@ fn test_batch_exporter_pipeline_integration() {
     let batch_cfg = BatchExportConfig {
         output_directory: temp_dir.clone(),
         naming_pattern: "Test_{note_name}_{note}_{velocity}.wav".to_string(),
-        formats: vec![AudioFormat::DecentSampler, AudioFormat::SFZ, AudioFormat::Wav16Bit],
+        formats: vec![
+            AudioFormat::DecentSampler,
+            AudioFormat::SFZ,
+            AudioFormat::Wav16Bit,
+        ],
         organize_subdirectories: true,
         ..Default::default()
     };
@@ -368,4 +380,263 @@ fn test_batch_exporter_pipeline_integration() {
     std::fs::remove_dir_all(&temp_dir).ok();
 }
 
+fn fixture_sample(note: u8, velocity: u8, channels: u16) -> Sample {
+    Sample {
+        note,
+        velocity,
+        channels,
+        sample_rate: 1000,
+        audio_data: (0..1000)
+            .flat_map(|frame| {
+                let value = if (200..800).contains(&frame) {
+                    (std::f32::consts::TAU * frame as f32 / 20.0).sin() * 0.5
+                } else {
+                    0.0
+                };
+                (0..channels).map(move |channel| if channel == 0 { value } else { -value })
+            })
+            .collect(),
+        recorded_at: SystemTime::now(),
+        midi_timing: Duration::ZERO,
+        audio_timing: Duration::from_secs(1),
+    }
+}
 
+#[test]
+fn sparse_note_and_velocity_zones_cover_once_and_paths_resolve() {
+    let temp = std::env::temp_dir().join("batcherbird_zones_regression");
+    let samples: Vec<_> = [30, 90, 127]
+        .into_iter()
+        .flat_map(|velocity| {
+            [60, 64, 72]
+                .into_iter()
+                .map(move |note| fixture_sample(note, velocity, 1))
+        })
+        .collect();
+    let exporter = SampleExporter::new(ExportConfig {
+        output_directory: temp.clone(),
+        sample_format: AudioFormat::DecentSamplerAndSfz,
+        apply_detection: false,
+        fade_out_ms: 0.0,
+        ..Default::default()
+    })
+    .unwrap();
+    let files = exporter.export_samples(&samples).unwrap();
+    let sfz = std::fs::read_to_string(
+        files
+            .iter()
+            .find(|p| p.extension().unwrap() == "sfz")
+            .unwrap(),
+    )
+    .unwrap();
+    let xml = std::fs::read_to_string(
+        files
+            .iter()
+            .find(|p| p.extension().unwrap() == "dspreset")
+            .unwrap(),
+    )
+    .unwrap();
+    let number = |text: &str, key: &str| -> u8 {
+        text.split(&format!("{}=", key))
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let mut regions = Vec::new();
+    for group in sfz.split("<group>").skip(1) {
+        let low_velocity = number(group, "lovel");
+        let high_velocity = number(group, "hivel");
+        for region in group.split("<region>").skip(1) {
+            regions.push((
+                number(region, "lokey"),
+                number(region, "hikey"),
+                low_velocity,
+                high_velocity,
+            ));
+            let filename = region
+                .split("sample=")
+                .nth(1)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap();
+            assert!(temp.join(filename).is_file());
+        }
+    }
+    for key in 60..=72 {
+        for velocity in 1..=127 {
+            assert_eq!(
+                regions
+                    .iter()
+                    .filter(|&&(lo, hi, lv, hv)| key >= lo
+                        && key <= hi
+                        && velocity >= lv
+                        && velocity <= hv)
+                    .count(),
+                1,
+                "key {key}, velocity {velocity}"
+            );
+        }
+    }
+    for (lo, hi, lv, hv) in regions {
+        assert!(xml.contains(&format!("loNote=\"{lo}\" hiNote=\"{hi}\"")));
+        assert!(xml.contains(&format!("loVel=\"{lv}\" hiVel=\"{hv}\"")));
+    }
+    assert!(sfz.contains("default_path=./"));
+    assert!(!sfz.contains("loop_mode="));
+    assert!(!xml.contains("loopEnabled="));
+    std::fs::remove_dir_all(temp).unwrap();
+}
+
+#[test]
+fn stereo_trimmed_wav_and_presets_share_frame_loop_coordinates() {
+    let temp = std::env::temp_dir().join("batcherbird_stereo_loop_regression");
+    let sample = fixture_sample(60, 100, 2);
+    let exporter = SampleExporter::new(ExportConfig {
+        output_directory: temp.clone(),
+        sample_format: AudioFormat::DecentSamplerAndSfz,
+        auto_loop: true,
+        fade_out_ms: 0.0,
+        detection_config: DetectionConfig {
+            pre_trigger_ms: 0.0,
+            post_trigger_ms: 0.0,
+            confirmation_windows: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .unwrap();
+    let files = exporter.export_samples(&[sample]).unwrap();
+    let wav = files
+        .iter()
+        .find(|p| p.extension().unwrap() == "wav")
+        .unwrap();
+    let reader = hound::WavReader::open(wav).unwrap();
+    let frames = reader.duration();
+    assert!(frames < 1000 && frames > 500, "trimmed frames: {frames}");
+    let (start, end) = read_wav_metadata(wav)
+        .unwrap()
+        .loop_points
+        .expect("periodic stereo has a loop");
+    assert!(start < end && end < frames);
+    let sfz = std::fs::read_to_string(
+        files
+            .iter()
+            .find(|p| p.extension().unwrap() == "sfz")
+            .unwrap(),
+    )
+    .unwrap();
+    let xml = std::fs::read_to_string(
+        files
+            .iter()
+            .find(|p| p.extension().unwrap() == "dspreset")
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(sfz.contains(&format!("loop_start={start}\nloop_end={end}\n")));
+    assert!(xml.contains(&format!("loopStart=\"{start}\" loopEnd=\"{end}\"")));
+    // DecentSampler expresses crossfade length in frames; SFZ uses seconds.
+    assert!(xml.contains("loopCrossfade=\"10\""));
+    assert!(sfz.contains("loop_crossfade=0.010"));
+    std::fs::remove_dir_all(temp).unwrap();
+}
+
+#[test]
+fn stereo_fades_keep_channels_paired_and_use_frame_duration() {
+    let temp = std::env::temp_dir().join("batcherbird_stereo_fade_regression");
+    let mut sample = fixture_sample(60, 100, 2);
+    sample.audio_data = (0..20).flat_map(|_| [0.5, -0.5]).collect();
+    let exporter = SampleExporter::new(ExportConfig {
+        output_directory: temp.clone(),
+        sample_format: AudioFormat::Wav32BitFloat,
+        apply_detection: false,
+        fade_in_ms: 10.0,
+        fade_out_ms: 10.0,
+        ..Default::default()
+    })
+    .unwrap();
+    let path = exporter.export_sample(&sample).unwrap();
+    let audio: Vec<f32> = hound::WavReader::open(path)
+        .unwrap()
+        .samples::<f32>()
+        .map(Result::unwrap)
+        .collect();
+    for pair in audio.as_chunks::<2>().0.iter() {
+        assert_eq!(pair[0], -pair[1]);
+    }
+    assert_eq!(audio[0], 0.0);
+    assert_eq!(audio[38], 0.0);
+    assert_eq!(audio[18], 0.5);
+    assert_eq!(audio[20], 0.5);
+    std::fs::remove_dir_all(temp).unwrap();
+}
+
+#[test]
+fn shared_batch_preserves_preset_wavs_when_exporting_alternate_depths() {
+    let temp = std::env::temp_dir().join("batcherbird_depth_regression");
+    let exporter = BatchExporter::new(BatchExportConfig {
+        output_directory: temp.clone(),
+        formats: vec![
+            AudioFormat::DecentSampler,
+            AudioFormat::SFZ,
+            AudioFormat::Wav16Bit,
+            AudioFormat::Wav32BitFloat,
+        ],
+        organize_subdirectories: false,
+        apply_detection: false,
+        ..Default::default()
+    })
+    .unwrap();
+    let result = exporter
+        .export_samples(&[fixture_sample(60, 100, 1)])
+        .unwrap();
+    let paths: Vec<_> = result
+        .all_files
+        .iter()
+        .filter(|p| p.extension().unwrap() == "wav")
+        .collect();
+    assert_eq!(paths.len(), 3);
+    let wav = "C4_60_vel100.wav";
+    assert_eq!(
+        hound::WavReader::open(temp.join(wav))
+            .unwrap()
+            .spec()
+            .bits_per_sample,
+        24
+    );
+    assert_eq!(
+        hound::WavReader::open(temp.join("WAV_16Bit").join(wav))
+            .unwrap()
+            .spec()
+            .bits_per_sample,
+        16
+    );
+    assert_eq!(
+        hound::WavReader::open(temp.join("WAV_32BitFloat").join(wav))
+            .unwrap()
+            .spec()
+            .bits_per_sample,
+        32
+    );
+    std::fs::remove_dir_all(temp).unwrap();
+}
+
+#[test]
+fn duplicate_filename_pattern_rejected_before_writing_audio() {
+    let temp = std::env::temp_dir().join("batcherbird_duplicate_name_regression");
+    let exporter = SampleExporter::new(ExportConfig {
+        output_directory: temp.clone(),
+        naming_pattern: "same.wav".into(),
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(exporter
+        .export_samples(&[fixture_sample(60, 100, 1), fixture_sample(64, 100, 1)])
+        .is_err());
+    assert!(!temp.join("same.wav").exists());
+    std::fs::remove_dir_all(temp).unwrap();
+}
