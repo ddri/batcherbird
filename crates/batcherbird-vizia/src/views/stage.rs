@@ -44,12 +44,15 @@ pub fn toolbar(cx: &mut Context) {
 
 pub fn stage(cx: &mut Context) {
     VStack::new(cx, |cx| {
+        // Bound notifications so long errors never push the transport off screen.
+        ScrollView::new(cx, |cx| {
+        VStack::new(cx, |cx| {
         Binding::new(cx, AppData::pending_session_name, |cx, pending| {
             if let Some(name) = pending.get(cx) {
                 VStack::new(cx, |cx| {
                     Label::new(cx, "Open another session?").text_value("Open another session?").font_weight(FontWeightKeyword::Bold);
-                    let explanation = format!("Your current session has unsaved changes. Opening {} will replace them. Keep the current session to save your work first.", name);
-                    Label::new(cx, &explanation).text_value(explanation.clone()).width(Stretch(1.0));
+                    Label::new(cx, "Your current session has unsaved changes. Keep it to save your work first, or open the replacement below.").width(Stretch(1.0));
+                    Label::new(cx, &name).text_value(name.clone()).width(Stretch(1.0)).text_wrap(false).text_overflow(TextOverflow::Ellipsis);
                     HStack::new(cx, |cx| {
                         action(cx, "Keep current session", AppEvent::KeepCurrentSession).class("primary");
                         action(cx, "Open replacement", AppEvent::ConfirmSessionReplacement);
@@ -75,6 +78,8 @@ pub fn stage(cx: &mut Context) {
                 .class("banner-info");
             }
         });
+        }).class("stage-notices");
+        }).show_horizontal_scrollbar(false).height(Auto).max_height(Pixels(180.0)).width(Stretch(1.0));
         HStack::new(cx, |cx| {
             VStack::new(cx, |cx| {
                 Label::new(
@@ -127,6 +132,7 @@ pub fn stage(cx: &mut Context) {
 
         Binding::new(cx, AppData::app_state, |cx, state| match state.get(cx) {
             AppState::Idle | AppState::Armed => {
+                ScrollView::new(cx, |cx| {
                 VStack::new(cx, |cx| {
                     Label::new(cx, "Capture a sound. Keep it forever.").class("empty-title");
                     Label::new(
@@ -147,6 +153,7 @@ pub fn stage(cx: &mut Context) {
                     Label::new(cx, AppData::session_summary_display).class("plan-summary");
                 })
                 .class("empty-workspace");
+                }).show_horizontal_scrollbar(false).width(Stretch(1.0)).height(Stretch(1.0));
             }
             AppState::Recording | AppState::Stopping => {
                 VStack::new(cx, |cx| {
@@ -178,12 +185,18 @@ pub fn stage(cx: &mut Context) {
                             })
                             .name(item)
                             .text_value(item)
-                            .on_press(move |cx| cx.emit(AppEvent::SelectSample(index)))
+                            .on_press(move |cx| {
+                                cx.emit(ListEvent::ClearSelection);
+                                cx.emit(ListEvent::Select(index));
+                            })
                             .class("sample-row")
                             .checked(
                                 AppData::selected_sample.map(move |selected| *selected == index),
                             );
                         })
+                        .selectable(Selectable::Single)
+                        .selection_follows_focus(true)
+                        .on_select(|cx, index| cx.emit(AppEvent::SelectSample(index)))
                         .height(Stretch(1.0))
                         .width(Stretch(1.0));
                     })

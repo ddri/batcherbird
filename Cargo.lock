@@ -549,6 +549,7 @@ dependencies = [
 name = "batcherbird-vizia"
 version = "0.1.0"
 dependencies = [
+ "accesskit",
  "batcherbird-core",
  "cpal",
  "crossbeam-channel",
@@ -3844,8 +3845,6 @@ dependencies = [
 [[package]]
 name = "vizia_core"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9117ad5f9b8c05070b5146c7eb73bfc688c25768e523c0138b7d1447b6c69c3"
 dependencies = [
  "accesskit",
  "bitflags 2.13.1",

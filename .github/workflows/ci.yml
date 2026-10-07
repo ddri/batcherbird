@@ -46,8 +46,13 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      - name: Sampler audio analyzer regressions
+        run: python3 scripts/test-sampler-render.py
+
       - name: Packaging rollback and metadata regressions
-        run: bash scripts/test-package-macos.sh
+        run: |
+          bash scripts/test-package-macos.sh
+          bash scripts/test-verify-macos-package.sh
 
   package-macos:
     name: Package macOS App & DMG
@@ -74,8 +79,12 @@ jobs:
       - name: Package macOS App and DMG
         run: ./scripts/package-macos.sh
 
-      - name: Verify DMG
-        run: hdiutil verify dist/Batcherbird.dmg
+      - name: Audit copied standalone app and DMG
+        run: |
+          copied_package="$(mktemp -d)"
+          trap 'rm -rf "$copied_package"' EXIT
+          ditto dist/Batcherbird.app "$copied_package/Batcherbird.app"
+          bash scripts/verify-macos-package.sh "$copied_package/Batcherbird.app" dist/Batcherbird.dmg
 
   rust-linux:
     name: Rust Linux Build (core + vizia)

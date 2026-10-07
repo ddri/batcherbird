@@ -5,6 +5,9 @@ use std::time::Duration;
 use vizia::prelude::*;
 
 fn main() -> Result<(), ApplicationError> {
+    // A reproducible minimum-size fixture avoids resizing by hand during desktop QA.
+    let demo_minimum = std::env::var("BATCHERBIRD_DEMO_MINIMUM").as_deref() == Ok("1")
+        || std::env::args().any(|arg| arg == "--demo-minimum");
     Application::new(|cx| {
         cx.emit(EnvironmentEvent::SetThemeMode(AppTheme::BuiltIn(
             ThemeMode::DarkMode,
@@ -14,7 +17,10 @@ fn main() -> Result<(), ApplicationError> {
 
         let demo = std::env::var("BATCHERBIRD_DEMO").as_deref() == Ok("1")
             || std::env::args().any(|arg| {
-                arg == "--demo" || arg == "--demo-setup" || arg.starts_with("--demo-state=")
+                arg == "--demo"
+                    || arg == "--demo-setup"
+                    || arg == "--demo-minimum"
+                    || arg.starts_with("--demo-state=")
             });
         let mut data = if demo {
             AppData::demo()
@@ -92,7 +98,11 @@ fn main() -> Result<(), ApplicationError> {
         .height(Stretch(1.0));
     })
     .title("BatcherBird — Hardware Auto-Sampler")
-    .inner_size((1240, 820))
+    .inner_size(if demo_minimum {
+        (1040, 720)
+    } else {
+        (1240, 820)
+    })
     .min_inner_size(Some((1040, 720)))
     .run()
 }

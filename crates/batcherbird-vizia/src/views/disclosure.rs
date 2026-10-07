@@ -46,8 +46,7 @@ pub(super) fn disclosure<'a>(
                 .height(Auto)
                 .alignment(Alignment::Center)
             })
-            .name(title.to_owned())
-            .text_value(Disclosure::is_open.map(move |open| {
+            .name(Disclosure::is_open.map(move |open| {
                 format!(
                     "{} · {}",
                     accessible_title,

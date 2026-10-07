@@ -1,0 +1,907 @@
+@keyframes tooltip_fade {
+    0% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+/* * {
+    border: 1px red;
+} */
+
+/* AVATAR */
+
+avatar {
+    size: 50px;
+    alignment: center;
+}
+
+avatar.circle {
+    corner-radius: 50%;
+}
+
+avatar.square {
+    corner-radius: 0px;
+}
+
+avatar.rounded {
+    corner-radius: 4px;
+}
+
+avatar > svg {
+    size: 24px;
+}
+
+avatar > image {
+    size: 100%;
+    background-size: cover;
+}
+
+avatar.circle > image {
+    corner-radius: 50%;
+}
+
+avatar.rounded > image {
+    corner-radius: 4px;
+}
+
+/* AVATAR GROUP */
+
+avatar-group > avatar {
+    border: 2px solid #fff;
+}
+
+/* BADGE */
+
+badge {
+    position-type: absolute;
+    size: 20px;
+    corner-radius: 50%;
+    alignment: center;
+}
+
+badge > label {
+    font-size: 12;
+    alignment: center;
+    size: 1s;
+}
+
+badge > svg {
+    size: 1s;
+}
+
+/* BUTTON */
+
+button,
+toggle-button {
+    height: 32px;
+    width: auto;
+    alignment: center;
+    cursor: hand;
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+button > *,
+toggle-button > * {
+    width: auto;
+    alignment: center;
+    horizontal-gap: 4px;
+}
+
+button svg,
+toggle-button svg {
+    size: 20px;
+}
+
+/* BUTTON GROUP */
+
+button-group {
+    layout-type: row;
+    size: auto;
+}
+
+button-group.vertical {
+    layout-type: column;
+}
+
+button-group.vertical > button,
+button-group.vertical > toggle-button {
+    width: 1s;
+    min-width: auto;
+    alignment: center;
+}
+
+/* CHECKBOX */
+
+checkbox {
+    size: 20px;
+    cursor: hand;
+}
+
+checkbox > svg {
+    size: 1s;
+}
+
+/* CHIP */
+
+chip {
+    width: auto;
+    height: 24px;
+    padding-left: 8px;
+    padding-right: 8px;
+    alignment: center;
+    gap: 4px;
+    font-size: small;
+}
+
+chip.close {
+    padding-left: 8px;
+    padding-right: 4px;
+}
+
+chip > .close-icon {
+    padding: 0px;
+}
+
+chip > .close-icon svg {
+    size: 1s;
+}
+
+/* DATEPICKER */
+
+datepicker {
+    width: auto;
+    height: auto;
+    padding: 4px;
+    vertical-gap: 4px;
+    alignment: center;
+}
+
+.datepicker-header {
+    width: auto;
+    height: auto;
+    horizontal-gap: 4px;
+}
+
+.datepicker-header picklist popup {
+    left: 1s;
+    right: 1s;
+    width: auto;
+}
+
+.datepicker-calendar {
+    width: auto;
+    height: auto;
+}
+
+.datepicker-calendar-headers {
+    alignment: center;
+    height: auto;
+}
+
+.datepicker-calendar-header {
+    alignment: center;
+    width: 32px;
+    height: 32px;
+}
+
+.datepicker-calendar-day {
+    width: 32px;
+    height: 32px;
+    alignment: center;
+}
+
+.datepicker-calendar-day-disabled {
+    width: 32px;
+    height: 32px;
+    alignment: center;
+}
+
+.datepicker-selected-date {
+    left: 1s;
+    right: 1s;
+}
+
+/* DIVIDER */
+
+divider {
+    width: 1s;
+    height: 1px;
+    alignment: center;
+    padding: 2px;
+}
+
+divider.horizontal,
+vstack > divider {
+    width: 1s;
+    height: auto;
+}
+
+divider.horizontal > .divider-line,
+vstack > divider > .divider-line {
+    width: 1s;
+    height: 1px;
+}
+
+divider.vertical,
+hstack > divider {
+    height: 1s;
+    width: auto;
+}
+
+divider.vertical > .divider-line,
+hstack > divider > .divider-line {
+    height: 1s;
+    width: 1px;
+}
+
+/* DROPDOWN */
+
+dropdown,
+combobox {
+    height: 32px;
+}
+
+dropdown {
+    min-width: auto;
+}
+
+dropdown > * {
+    width: 1s;
+}
+
+combobox .title {
+    width: 1s;
+    height: 1s;
+    padding-left: 8px;
+    padding-right: 8px;
+    alignment: left;
+    cursor: text;
+}
+
+popup {
+    size: auto;
+    min-width: 100%;
+    left: 1s;
+    right: 1s;
+}
+
+popup > list {
+    width: 1s;
+    min-width: auto;
+    height: auto;
+    padding-top: 4px;
+    padding-bottom: 4px;
+}
+
+popup > list > scrollview {
+    height: auto;
+    width: 1s;
+    min-width: auto;
+}
+
+popup > list > scrollview > scroll-content {
+    height: auto;
+    width: 1s;
+    min-width: auto;
+}
+
+popup scrollview scrollbar.vertical {
+    top: 4px;
+    bottom: 4px;
+    right: 2px;
+}
+
+popup scrollview {
+    width: 1s;
+    min-width: auto;
+}
+
+popup list list-item {
+    width: 1s;
+    min-width: auto;
+    height: 32px;
+    padding-left: 6px;
+    padding-right: 6px;
+    alignment: left;
+    gap: 4px;
+    layout-type: row;
+}
+
+dropdown vstack,
+combobox vstack {
+    padding: auto;
+}
+
+/* ICON */
+
+svg {
+    size: auto;
+}
+
+/* IMAGE */
+
+image {
+    size: auto;
+}
+
+/* KNOB */
+
+knob {
+    size: 32px;
+    corner-radius: 50%;
+}
+
+.knob-track {
+    width: 1s;
+    height: 1s;
+}
+
+.knob-head {
+    width: 1s;
+    height: 1s;
+    layout-type: row;
+    top: 2px;
+    left: 2px;
+    right: 2px;
+    bottom: 2px;
+    corner-radius: 50%;
+    alignment: top-center;
+}
+
+.knob-tick {
+    width: 2px;
+    height: 8px;
+}
+
+/* LABEL */
+
+label {
+    size: auto;
+    text-wrap: false;
+}
+
+label.describing {
+    cursor: hand;
+}
+
+/* LIST */
+
+list {
+    size: 1s;
+}
+
+list.horizontal {
+    height: auto;
+}
+
+list.horizontal scrollview {
+    height: auto;
+}
+
+list.horizontal scroll-content {
+    layout-type: row;
+    height: auto;
+}
+
+list list-item {
+    min-width: auto;
+    width: 1s;
+    height: 30px;
+    min-height: auto;
+    alignment: left;
+}
+
+/* MENU */
+
+menubar {
+    size: auto;
+}
+
+menubutton {
+    height: 32px;
+    width: 1s;
+    min-width: auto;
+    padding-left: 8px;
+    padding-right: 8px;
+    alignment: left;
+    gap: 8px;
+}
+
+menubutton > hstack,
+submenu > hstack {
+    height: auto;
+    min-width: auto;
+    alignment: left;
+    gap: 8px;
+}
+
+submenu {
+    height: 32px;
+    width: 1s;
+    min-width: auto;
+    padding-left: 8px;
+    /* padding-right: 8px; */
+    alignment: left;
+    gap: 1s;
+    min-gap: 12px;
+}
+
+submenu submenu,
+dropdown > popup > submenu {
+    width: 1s;
+}
+
+submenu .icon,
+menubutton .icon {
+    size: 20px;
+}
+
+menubutton .shortcut {
+    left: 1s;
+}
+
+/* submenu submenu label,
+dropdown > popup > submenu label {
+    alignment: center;
+    size: 1s;
+    width: 1s;
+} */
+
+submenu > popup {
+    height: auto;
+    width: auto;
+    padding: 8px;
+}
+
+submenu submenu > popup,
+menubar submenu > popup {
+    opacity: 0;
+    display: none;
+}
+
+submenu submenu > popup:checked,
+menubar submenu > popup:checked {
+    opacity: 1;
+    display: flex;
+}
+
+submenu submenu > popup,
+menubar submenu > popup {
+    top: 0px;
+    left: 100%;
+}
+
+menubar > submenu {
+    width: auto;
+    padding-left: 12px;
+    padding-right: 12px;
+}
+
+submenu > .arrow {
+    display: none;
+}
+
+submenu submenu > .arrow,
+menu submenu > .arrow {
+    display: flex;
+}
+
+submenu > .arrow {
+    size: 20px;
+    left: 1s;
+    right: 4px;
+}
+
+submenu divider {
+    padding-top: 4px;
+    padding-bottom: 4px;
+}
+
+/* PICKLIST */
+
+picklist {
+    width: auto;
+    height: 32px;
+    min-width: 64px;
+}
+
+/* POPUP */
+
+popup {
+    size: auto;
+    z-index: 100;
+}
+
+/* PROGRESS BAR */
+
+progressbar {
+    height: 12px;
+    width: 1s;
+}
+
+/* RADIOBUTTON */
+
+radiobutton {
+    size: 16px;
+    alignment: center;
+    cursor: hand;
+}
+
+radiobutton .inner {
+    size: 8px;
+}
+
+/* RATING */
+
+rating {
+    size: auto;
+    layout-type: row;
+}
+
+/* SCROLLVIEW */
+
+scrollview {
+    overflow: hidden;
+}
+
+scrollview > scroll-content {
+    size: auto;
+    min-size: 100%;
+}
+
+scrollview > scrollbar.horizontal {
+    top: 1s;
+}
+
+scrollview > scrollbar.vertical {
+    left: 1s;
+}
+
+/* SCROLLBAR */
+
+scrollbar.horizontal {
+    width: 1s;
+    height: 8px;
+}
+
+scrollbar.vertical {
+    width: 8px;
+    height: 1s;
+}
+
+scrollbar .thumb {
+    min-width: 4px;
+    min-height: 4px;
+}
+
+scrollbar.horizontal .thumb {
+    height: 1s;
+}
+
+scrollbar.vertical .thumb {
+    width: 1s;
+}
+
+/* SLIDER */
+
+slider {
+    height: 5px;
+    width: 1s;
+    corner-radius: 50%;
+}
+
+slider.vertical {
+    height: 1s;
+    width: 5px;
+}
+
+slider .thumb {
+    width: 16px;
+    height: 16px;
+}
+
+/* SPINBOX */
+
+spinbox {
+    alignment: center;
+}
+
+spinbox.horizontal {
+    layout-type: row;
+    height: 32px;
+    padding-left: 4px;
+    padding-right: 4px;
+    horizontal-gap: 4px;
+}
+
+spinbox.vertical {
+    layout-type: column;
+    width: 32px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    vertical-gap: 4px;
+}
+
+spinbox .spinbox-button {
+    size: 24px;
+    alignment: center;
+}
+
+spinbox .spinbox-button > svg {
+    size: 20px;
+}
+
+spinbox .spinbox-value {
+    width: 1s;
+    min-width: auto;
+    height: auto;
+    alignment: center;
+}
+
+spinbox picklist.spinbox-value dropdown {
+    width: 1s;
+    left: 0px;
+    right: 0px;
+}
+
+/* STACK */
+
+zstack > * {
+    position-type: absolute;
+}
+
+/* SWITCH */
+
+switch {
+    width: 30px;
+    height: 18px;
+    cursor: hand;
+}
+
+switch .switch-handle {
+    left: 0px;
+    width: 18px;
+    height: 18px;
+    transition: left 100ms;
+}
+
+switch .switch-handle-bg {
+    width: 30px;
+    height: 12px;
+    top: 1s;
+    bottom: 1s;
+    transition: background-color 100ms;
+}
+
+switch:checked .switch-handle {
+    left: 12px;
+    transition: left 100ms;
+}
+
+/* TABVIEW */
+
+tabview {
+    width: 1s;
+    height: 1s;
+}
+
+tabview > scrollview {
+    width: 1s;
+    height: auto;
+}
+
+tabview.vertical {
+    layout-type: row;
+}
+
+tabview.vertical > scrollview.vertical {
+    width: auto;
+    height: 1s;
+}
+
+tabview > scrollview > scroll-content {
+    layout-type: row;
+}
+
+tabview.vertical > scrollview.vertical > scroll-content {
+    layout-type: column;
+}
+
+tabheader {
+    width: auto;
+    height: 32px;
+    cursor: hand;
+}
+
+tabheader label {
+    height: 32px;
+    padding-left: 12px;
+    padding-right: 12px;
+    alignment: left;
+}
+
+tabheader .indicator {
+    height: 2px;
+    width: 1s;
+}
+
+tabheader.vertical .indicator {
+    width: 2px;
+    height: 1s;
+}
+
+tabbar {
+    height: auto;
+    gap: 4px;
+    padding-right: 4px;
+}
+
+tabbar button {
+    size: 30px;
+}
+
+tabbar > list > scrollview {
+    height: auto;
+    width: 1s;
+    max-width: auto;
+}
+
+tabbar > list {
+    height: auto;
+    max-width: auto;
+    width: 1s;
+}
+
+tabbar > list > scrollview > scroll-content {
+    height: auto;
+    layout-type: row;
+    max-width: auto;
+    width: auto;
+    gap: -1px;
+}
+
+tabbar list-item {
+    width: 100px;
+    height: 32px;
+    cursor: hand;
+}
+
+tabbar scrollbar.horizontal {
+    width: 1s;
+    height: 4px;
+}
+
+.tab {
+    width: auto;
+    min-width: 100px;
+    height: 30px;
+    alignment: left;
+}
+
+/* TEXTBOX */
+
+textbox {
+    overflow: hidden;
+    width: auto;
+    height: 32px;
+    padding-left: 8px;
+    padding-right: 8px;
+    alignment: left;
+    cursor: text;
+    caret-color: transparent;
+    selection-color: #6464c888;
+}
+
+textbox:checked.caret {
+    caret-color: #181818;
+}
+
+textbox:read-only {
+    caret-color: transparent;
+}
+
+textbox:checked:read-only.caret {
+    caret-color: transparent;
+}
+
+textbox > label.placeholder {
+    padding-left: 8px;
+    alignment: left;
+}
+
+textbox.icon-before {
+    padding-left: 30px;
+}
+
+textbox.icon-before > label.placeholder {
+    padding-left: 30px;
+}
+
+textbox.multiline {
+    height: auto;
+    padding-top: 4px;
+    padding-bottom: 4px;
+}
+
+textbox:disabled {
+    cursor: default;
+}
+
+/* TOOLTIP */
+
+tooltip {
+    size: auto;
+    max-width: 160px;
+}
+
+/* VIRTUAL LIST */
+
+virtual-list label {
+    alignment: left;
+    padding-left: 5px;
+    width: 1s;
+}
+
+/* XY PAD */
+
+xypad {
+    size: 50px;
+}
+
+xypad .thumb {
+    size: 10px;
+    alignment: center;
+}
+
+collapsible {
+    height: auto;
+}
+
+collapsible > .header {
+    gap: 1s;
+    min-gap: 16px;
+    height: 48px;
+    alignment: left;
+    padding-left: 24px;
+    padding-right: 24px;
+    transition: height 300ms;
+}
+
+collapsible.open > .header {
+    height: 64px;
+    transition: height 300ms;
+}
+
+collapsible > .header > .expand-icon {
+    size: 20px;
+    rotate: 0deg;
+    transition: rotate 300ms;
+}
+
+collapsible.open > .header > .expand-icon {
+    rotate: 180deg;
+    transition: rotate 300ms;
+}
+
+collapsible .content {
+    height: auto;
+    max-height: 0px;
+    overflow: hidden;
+    transition: max-height 300ms;
+    padding-left: 24px;
+    padding-right: 24px;
+    padding-top: 0px;
+    padding-bottom: 16px;
+    gap: 16px;
+}
+
+collapsible.open .content {
+    width: 1s;
+    height: auto;
+    max-height: auto;
+    transition: max-height 300ms;
+}

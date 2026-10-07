@@ -6,7 +6,9 @@ Sample playback still uses the Mac's audio output; start at a comfortable volume
 
 ## Review and navigation
 
-Run `cargo run -p batcherbird-vizia -- --demo`.
+Run `cargo run -p batcherbird-vizia -- --demo`. For a reproducible 1040 × 720
+minimum-size fixture, add `--demo-minimum`; combine it with any `--demo-state`
+fixture. `BATCHERBIRD_DEMO_MINIMUM=1` is also supported for isolated QA app bundles.
 
 - Select samples at different notes and velocities. The selected row, note/velocity
   caption, and waveform must agree. Scroll to the last sample and back.
@@ -106,3 +108,48 @@ waits for a CPAL timestamp-based playback deadline with a minimum allowance of
 100ms or two output buffers, whichever is longer, because backend timestamps may
 omit device latency. Regression tests check drain timing and immediate Stop.
 This does not replace a listening check on the Mac.
+
+
+## Desktop polish checks — October 7, 2026
+
+An isolated demo app built from the desktop-readiness working branch was launched
+at the configured 1040 × 720 logical content size. A native screenshot showed the
+review title, selected sample caption, waveform, both secondary sample actions,
+Play/Export transport, folded keyboard header, toolbar actions, and expanded export
+settings within the window. The visible demo notice used its natural height, not
+the full 180px notification limit. This verifies the observed minimum-size review
+layout; it does not establish other states or dynamic resizing.
+
+Notifications now share a bounded scrolling region so a long error or replacement
+notice cannot consume the whole stage. The replacement filename occupies a separate
+ellipsis line, keeping both choices available for long names. Setup guidance also
+scrolls independently, leaving its transport and keyboard outside the scrollable
+content. These additional states still require native visual/keyboard checks.
+
+The sample list now enables single selection and selection-following-focus, routes
+row activation through the same list selection callback as arrow navigation, and
+clears an existing selection before selecting a clicked/activated row. This avoids
+the framework's repeated-row toggle clearing internal selection/focus. The native
+arrow-key and repeat-selection checks remain pending after the final rebuild.
+
+Native automation can stall while binding an app: selecting this QA app took about
+seven minutes despite a requested ten-second tool timeout. Once bound, screenshot
+capture completed in a few seconds. Unperformed desktop checks remain pending.
+
+## Accessibility implementation checks — October 7, 2026
+
+The earlier October 5 native label/activation limitation prompted a focused patch
+of `vizia_core` 0.3.0, documented in `vendor/vizia_core/PATCHES.md`. Generated
+AccessKit nodes now receive application names as labels, expose enabled built-in
+button Click actions, and reject stale disabled activation requests. Plain action
+controls no longer repeat their names as values. Input meters have names and
+numeric levels; keyboard audition supports Tab focus, arrows/Home/End, and holding
+Space, with note-off on release and focus loss.
+
+Three integration tests inspect the real generated AccessKit tree and dispatch
+activation/key events. They pass alongside a production-stage regression that
+activates the same sample twice, then moves next and previous through the actual
+list. These results verify implementation behavior. Native VoiceOver speech,
+AXPress activation, focus announcements, and meter usability remain manual gates;
+the compact screenshot above used the earlier debug binary and does not verify
+this accessibility patch.

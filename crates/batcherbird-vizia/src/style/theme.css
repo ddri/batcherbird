@@ -44,7 +44,7 @@ textbox:focus-visible { border-color: #87cfdb; }
 .stage { width: 1s; height: 1s; padding: 20px; vertical-gap: 12px; background-color: #171a1e; }
 .workspace-title { font-size: 22; font-weight: bold; height: auto; }
 .status-tag { color: #87cfdb; font-size: 12; font-weight: bold; background-color: #263b43; padding: 8px; corner-radius: 4px; }
-.empty-workspace { width: 1s; height: 1s; padding: 32px; alignment: center; vertical-gap: 22px; background-color: #1c2025; corner-radius: 8px; }
+.empty-workspace { width: 1s; height: auto; padding: 32px; alignment: center; vertical-gap: 22px; background-color: #1c2025; corner-radius: 8px; }
 .empty-title { font-size: 25; font-weight: bold; color: #ecf0f2; }
 .guide-line { width: 1s; height: auto; font-size: 14; color: #b8c4cc; }
 .plan-summary { width: 1s; height: auto; color: #87cfdb; font-size: 13; }
@@ -83,3 +83,5 @@ disclosure { width: 1s; height: auto; }
 .keyboard-disclosure .disclosure-content { padding-top: 6px; padding-bottom: 0px; }
 textbox:focus-visible { outline-color: #87cfdb; outline-width: 2px; outline-offset: 2px; }
 picklist:focus-visible { outline-color: #87cfdb; outline-width: 2px; outline-offset: 2px; }
+
+.stage-notices { width: 1s; height: auto; vertical-gap: 10px; padding-right: 8px; }

@@ -8,6 +8,21 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT_DIR}"
 
 APP_NAME="Batcherbird"
+# Signing is explicit: local builds need no developer account or credentials.
+SIGN_IDENTITY="${BATCHERBIRD_SIGN_IDENTITY:-}"
+NOTARY_PROFILE="${BATCHERBIRD_NOTARY_PROFILE:-}"
+if [[ -n "${NOTARY_PROFILE}" && ( -z "${SIGN_IDENTITY}" || "${SIGN_IDENTITY}" == "-" ) ]]; then
+    echo "Notarization requires a Developer ID signing identity." >&2
+    exit 1
+fi
+if [[ -n "${SIGN_IDENTITY}" ]]; then
+    command -v codesign >/dev/null || { echo "Signing requires codesign." >&2; exit 1; }
+fi
+if [[ -n "${NOTARY_PROFILE}" ]]; then
+    for tool in xcrun ditto hdiutil; do
+        command -v "${tool}" >/dev/null || { echo "Notarization requires ${tool}." >&2; exit 1; }
+    done
+fi
 VERSION="$(grep -m1 '^version' crates/batcherbird-vizia/Cargo.toml | cut -d '"' -f2)"
 # Stage inside the output directory so installation uses same-filesystem renames.
 DIST_DIR="${BATCHERBIRD_DIST_DIR-${ROOT_DIR}/dist}"
@@ -70,6 +85,9 @@ cargo build --release -p batcherbird-vizia
 
 echo "==> Assembling ${APP_NAME}.app bundle..."
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
+mkdir -p "${RESOURCES_DIR}/licenses"
+cp "${ROOT_DIR}/LICENSE" "${RESOURCES_DIR}/licenses/Batcherbird-AGPL.txt"
+cp "${ROOT_DIR}/vendor/vizia_core/LICENSE" "${RESOURCES_DIR}/licenses/vizia_core-MIT.txt"
 cp "${TARGET_DIR}/release/batcherbird-vizia" "${MACOS_DIR}/${APP_NAME}"
 chmod +x "${MACOS_DIR}/${APP_NAME}"
 
@@ -131,6 +149,23 @@ cat <<EOF > "${CONTENTS_DIR}/Info.plist"
 </plist>
 EOF
 
+if [[ -n "${SIGN_IDENTITY}" ]]; then
+    echo "==> Signing app with hardened runtime..."
+    codesign --force --sign "${SIGN_IDENTITY}" --options runtime --timestamp \
+        --entitlements "${SCRIPT_DIR}/macos-entitlements.plist" "${APP_DIR}"
+    codesign --verify --deep --strict "${APP_DIR}"
+fi
+
+# Staple the app before embedding it in the DMG so either distribution form can
+# carry its ticket offline. Credentials stay in the user's Keychain profile.
+if [[ -n "${NOTARY_PROFILE}" ]]; then
+    APP_ARCHIVE="${STAGING_DIR}/${APP_NAME}.zip"
+    ditto -c -k --keepParent "${APP_DIR}" "${APP_ARCHIVE}"
+    xcrun notarytool submit "${APP_ARCHIVE}" --keychain-profile "${NOTARY_PROFILE}" --wait
+    xcrun stapler staple "${APP_DIR}"
+    xcrun stapler validate "${APP_DIR}"
+fi
+
 echo "==> Created ${APP_DIR}"
 
 # If running on macOS with hdiutil, package DMG installer
@@ -150,6 +185,15 @@ if command -v hdiutil >/dev/null 2>&1; then
     if [[ ! -s "${DMG_OUTPUT}" ]]; then
         echo "DMG tool did not produce a nonempty image." >&2
         exit 1
+    fi
+    if [[ -n "${SIGN_IDENTITY}" ]]; then
+        codesign --force --sign "${SIGN_IDENTITY}" --timestamp "${DMG_OUTPUT}"
+        codesign --verify --strict "${DMG_OUTPUT}"
+    fi
+    if [[ -n "${NOTARY_PROFILE}" ]]; then
+        xcrun notarytool submit "${DMG_OUTPUT}" --keychain-profile "${NOTARY_PROFILE}" --wait
+        xcrun stapler staple "${DMG_OUTPUT}"
+        xcrun stapler validate "${DMG_OUTPUT}"
     fi
     echo "==> DMG staging complete"
 else
