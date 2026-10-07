@@ -287,6 +287,11 @@ impl Handle<'_, List> {
         self.bind(selected, |handle, s| {
             let ss = s.get(&handle).deref().to_vec();
             handle.modify(|list| {
+                // A bound selection replaces the previous model selection.
+                // Retaining old indices makes single selection toggle off when
+                // keyboard navigation revisits a previously selected row.
+                list.selected.clear();
+                list.focused = None;
                 for idx in ss {
                     list.selected.insert(idx);
                     list.focused = Some(idx);

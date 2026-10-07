@@ -195,8 +195,10 @@ pub fn stage(cx: &mut Context) {
                             );
                         })
                         .selectable(Selectable::Single)
+                        .selected(AppData::selected_sample.map(|index| vec![*index]))
                         .selection_follows_focus(true)
                         .on_select(|cx, index| cx.emit(AppEvent::SelectSample(index)))
+                        .disabled(AppData::controls_busy)
                         .height(Stretch(1.0))
                         .width(Stretch(1.0));
                     })

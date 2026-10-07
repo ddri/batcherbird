@@ -6,8 +6,10 @@ before deliberately damaging any fixture.
 
 ## Automated evidence (October 7, 2026)
 
-`cargo +1.99.0 test -p batcherbird-vizia --lib --offline` passes 27 tests,
-including storage failure tests and the actual Vizia model event dispatcher.
+`cargo +1.99.0 test -p batcherbird-vizia --lib session::tests --offline` passes
+21 storage tests, including copied manifests using audio symlink aliases and case
+aliases on case-insensitive volumes. The full library run passes 30 tests, including
+the actual Vizia model event dispatcher failure/cancellation/retry checks.
 `cargo +1.99.0 clippy -p batcherbird-vizia --lib --tests --offline -- -D warnings`
 also passes.
 
@@ -23,7 +25,9 @@ Verified behavior:
 - A failed manifest replacement removes only its newly created sidecar; existing
   destination contents remain intact.
 - Saving a copied manifest cannot remove WAVs referenced by a sibling session
-  with the same sanitized filename stem. Corrupt, unreadable or oversized sibling
+  with the same sanitized filename stem or references through a directory symlink
+  or case alias. References are compared after canonical resolution; unresolved
+  references also prevent cleanup. Corrupt, unreadable or oversized sibling
   `.batcherbird` manifests conservatively prevent cleanup because exclusive
   ownership cannot be established. This can retain old audio directories; keep
   uncertain sidecars until the associated sessions have been checked.

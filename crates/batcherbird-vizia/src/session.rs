@@ -213,6 +213,12 @@ fn sidecar_is_shared(path: &Path, sidecar: &OwnedSidecar) -> bool {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
+    let Ok(root) = parent.canonicalize() else {
+        return true;
+    };
+    let Ok(owned_directory) = sidecar.directory.canonicalize() else {
+        return true;
+    };
     let Ok(entries) = fs::read_dir(parent) else {
         return true;
     };
@@ -243,14 +249,26 @@ fn sidecar_is_shared(path: &Path, sidecar: &OwnedSidecar) -> bool {
         let Ok(file) = fs::File::open(entry.path()) else {
             return true;
         };
-        let Ok(manifest) = serde_json::from_reader::<_, Manifest>(file) else {
+        // Bound the reader as well as the metadata check: a sibling file may
+        // grow or be replaced between inspection and opening.
+        let mut reader = file.take(16 * 1024 * 1024 + 1);
+        let Ok(manifest) = serde_json::from_reader::<_, Manifest>(&mut reader) else {
             return true;
         };
-        if manifest.samples.iter().any(|sample| {
-            sample.file.components().next().is_some_and(|component| {
-                matches!(component, Component::Normal(name) if Some(name) == sidecar.directory.file_name())
-            })
-        }) { return true; }
+        if reader.limit() == 0 {
+            return true;
+        }
+        for sample in manifest.samples {
+            // The loader resolves WAV paths, so compare their actual targets.
+            // Spelling comparisons miss directory symlinks and case aliases on
+            // case-insensitive filesystems. An unresolved reference is ambiguous.
+            let Ok(audio_path) = root.join(sample.file).canonicalize() else {
+                return true;
+            };
+            if audio_path.starts_with(&owned_directory) {
+                return true;
+            }
+        }
     }
     false
 }
@@ -913,6 +931,77 @@ mod tests {
             load_session(&path).unwrap().1[0].audio_data,
             sample().audio_data
         );
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn sibling_manifest_using_an_audio_directory_alias_remains_loadable_after_save() {
+        let dir = test_dir();
+        let original = dir.join("patch.batcherbird");
+        let backup = dir.join("backup.batcherbird");
+        save_session(&original, &SessionSettings::default(), &[sample()]).unwrap();
+        let owned = referenced_directory(&original);
+        let alias = dir.join("audio-alias");
+        std::os::unix::fs::symlink(&owned, &alias).unwrap();
+        let mut manifest: Manifest =
+            serde_json::from_reader(fs::File::open(&original).unwrap()).unwrap();
+        manifest.samples[0].file = PathBuf::from("audio-alias/sample_0000.wav");
+        atomic_json(&backup, &manifest).unwrap();
+        let before = load_session(&backup).unwrap().1[0].audio_data.clone();
+        save_session(
+            &original,
+            &SessionSettings::default(),
+            &[Sample {
+                audio_data: vec![0.75, -0.75],
+                ..sample()
+            }],
+        )
+        .unwrap();
+        assert_eq!(load_session(&backup).unwrap().1[0].audio_data, before);
+        assert_eq!(
+            load_session(&original).unwrap().1[0].audio_data,
+            vec![0.75, -0.75]
+        );
+        assert!(owned.join("sample_0000.wav").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unresolved_sibling_audio_reference_prevents_cleanup_without_blocking_save() {
+        let dir = test_dir();
+        let path = dir.join("patch.batcherbird");
+        save_session(&path, &SessionSettings::default(), &[sample()]).unwrap();
+        let owned = referenced_directory(&path);
+        let mut manifest: Manifest =
+            serde_json::from_reader(fs::File::open(&path).unwrap()).unwrap();
+        manifest.samples[0].file = PathBuf::from("unresolved-alias/sample_0000.wav");
+        atomic_json(&dir.join("backup.batcherbird"), &manifest).unwrap();
+        save_session(&path, &SessionSettings::default(), &[sample()]).unwrap();
+        assert!(owned.join("sample_0000.wav").exists());
+        assert!(load_session(&path).is_ok());
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn case_alias_sibling_remains_loadable_on_case_insensitive_filesystems() {
+        let dir = test_dir();
+        let original = dir.join("patch.batcherbird");
+        let backup = dir.join("backup.batcherbird");
+        save_session(&original, &SessionSettings::default(), &[sample()]).unwrap();
+        let owned = referenced_directory(&original);
+        let alias_name = owned.file_name().unwrap().to_str().unwrap().to_uppercase();
+        if !dir.join(&alias_name).exists() {
+            // The symlink-alias regression covers every Unix filesystem; this
+            // additional case alias exists only on case-insensitive volumes.
+            fs::remove_dir_all(dir).unwrap();
+            return;
+        }
+        let mut manifest: Manifest =
+            serde_json::from_reader(fs::File::open(&original).unwrap()).unwrap();
+        manifest.samples[0].file = PathBuf::from(&alias_name).join("SAMPLE_0000.WAV");
+        atomic_json(&backup, &manifest).unwrap();
+        let before = load_session(&backup).unwrap().1[0].audio_data.clone();
+        save_session(&original, &SessionSettings::default(), &[sample()]).unwrap();
+        assert_eq!(load_session(&backup).unwrap().1[0].audio_data, before);
         fs::remove_dir_all(dir).unwrap();
     }
 }
