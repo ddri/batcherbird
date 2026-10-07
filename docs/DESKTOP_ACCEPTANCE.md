@@ -153,3 +153,14 @@ list. These results verify implementation behavior. Native VoiceOver speech,
 AXPress activation, focus announcements, and meter usability remain manual gates;
 the compact screenshot above used the earlier debug binary and does not verify
 this accessibility patch.
+
+## Review follow-up — October 7, 2026
+
+Independent review reproduced initial keyboard navigation jumping to row zero
+when the model already selected another sample. The production list now binds its
+selection to the current sample. The focused Vizia patch replaces bound selections
+instead of retaining old indices, keeping reverse navigation and external selection
+changes consistent. The sample list is disabled during conflicting operations.
+Two production-stage event tests pass: repeated activation followed by next/previous,
+and initial/external selection followed by next/previous. Native keyboard and
+VoiceOver acceptance remain pending.

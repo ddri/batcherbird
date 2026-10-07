@@ -7,11 +7,11 @@ The first release promises a complete capture → review → saved session → e
 ## Automated checks
 
 - [x] Run `cargo fmt --all -- --check` — passed with Rust 1.99 on the working tree on October 7, 2026.
-- [x] Run `cargo test --workspace` and record pass/fail/ignored counts: 155 passed, 0 failed, 1 hardware test ignored (`--offline`, Rust 1.99) on October 7, 2026. Subsequent code changes require a new recorded check. Hardware-ignored tests remain a separate gate.
+- [x] Run `cargo test --workspace` and record pass/fail/ignored counts: 159 passed, 0 failed, 1 hardware test ignored (`--offline`, Rust 1.99) on October 7, 2026. Subsequent code changes require a new recorded check. Hardware-ignored tests remain a separate gate.
 - [x] Run `cargo clippy --workspace --all-targets --offline -- -D warnings`: passed with Rust 1.99 on October 7, 2026.
 - [x] Confirm regression coverage for capture frame integrity, cancellation, sample/key/velocity mapping, actual SFZ paths, stereo trimming/fades, loop coordinates, alternate WAV depths, and session save/load failures — targeted suites and the October 5 workspace run passed. Changes after that run require a new recorded check.
 - [x] Run `bash -n scripts/package-macos.sh scripts/test-package-macos.sh` and `bash scripts/test-package-macos.sh` — passed. Fake tools verify success, preservation of unrelated files, rollback after build/DMG/install failure, empty-DMG rejection, output-root guards, and minimum-OS metadata for multiple/legacy Mach-O slices and inspection fallback.
-- [x] Independent sampler analyzer regressions: seven Python tests passed on October 7, 2026, including deliberate pitch, velocity, stereo, silence, and duplicate-voice failures.
+- [x] Independent sampler analyzer regressions: ten Python tests passed on October 7, 2026, including deliberate pitch, velocity, stereo, silence, and duplicate-voice failures.
 - [ ] Review any changes after the recorded checks; rerun affected checks before release.
 
 ## Interface and session behavior
@@ -79,6 +79,7 @@ These results refer to the uncommitted working tree based on `8df2a5c` on Octobe
 | Current package audit | Working tree based on `e47220f`; Rust 1.99, macOS arm64 | Release build and DMG passed; copied app outside checkout passed metadata/system-dependency audit; DMG checksum valid. Packaged executable matches build SHA-256 `2e0f7f45834baffd42537b1677d81e9a2442dcd1dc562845b7111423c74c57d8`. Linker ad hoc signature without Team ID; clean-account/native permission checks remain pending | Codex / October 7, 2026 |
 | Compact desktop review | Isolated native demo, 1040 × 720 | Visible review controls, waveform and sidebar checked; production-stage repeated selection/arrow navigation regression passed. Other states and native keyboard/VoiceOver remain pending | Codex / October 7, 2026 |
 | Distribution automation | Working tree based on `e47220f`; fake signing/notary tools | Package rollback and standalone audit fixtures passed. Signing/notarization are opt-in; real Developer ID, Gatekeeper, microphone permission, and clean-account installation remain pending. See [distribution](DISTRIBUTION.md) | Codex / October 7, 2026 |
+| Independent review follow-up | Working tree based on merged `75cfd91`; Rust 1.99 | 159 Rust tests passed, 0 failed, 1 hardware test ignored; strict Clippy, formatting and ten analyzer tests passed. Canonical shared-audio aliases remain loadable after save, silence checks cover both channels, and initial/external sample selection stays aligned with keyboard navigation. Existing sfizz render still passes all 45 probes | Codex / October 7, 2026 |
 | Hardware capture | Pending | Pending | Pending |
 | DecentSampler | Pending | Pending | Pending |
 | SFZ engine mapping | Working tree based on `e47220f`; official sfizz 1.2.3, float renderer output | 45/45 relocated-export probes passed for pitch, key/velocity boundaries, single-voice count, stereo identity, and outside-range silence. See [sampler evidence](SAMPLER_ACCEPTANCE.md). Human listening, loop behavior, and DecentSampler remain pending | Codex / October 7, 2026 |

@@ -94,7 +94,9 @@ python3 scripts/test-sampler-render.py
 
 The checker measures 150–350ms into each probe, checks pitch within 10 cents,
 root/layer harmonics and stereo identity, and rejects audible out-of-range
-keys. With a voice log it also requires exactly one active voice for every
+keys in either channel. It rejects unequal channel lengths, incomplete
+stereo frames, and non-finite float audio before accepting a probe.
+With a voice log it also requires exactly one active voice for every
 in-range note and zero outside. Without a voice log, it cannot rule out
 duplicate identical regions by spectral analysis. Velocity 1 may approach
 16-bit quantization limits; use float output to measure it. All in-range

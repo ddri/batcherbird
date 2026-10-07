@@ -37,6 +37,8 @@ def read_audio(path):
         if channels != 2 or bits != 32:
             raise ValueError("Expected stereo 32-bit float WAV")
         values = [v[0] for v in struct.iter_unpack("<f", audio)]
+        if len(values) % 2:
+            raise ValueError("Render contains an incomplete stereo frame")
         if not all(math.isfinite(value) for value in values):
             raise ValueError("Render contains non-finite audio")
         return rate, values[::2], values[1::2]
@@ -54,6 +56,8 @@ def read_audio(path):
     else:
         values = [int.from_bytes(data[i:i + 3], "little", signed=True) / 8388608.0
                   for i in range(0, len(data), 3)]
+    if len(values) % 2:
+        raise ValueError("Render contains an incomplete stereo frame")
     return rate, values[::2], values[1::2]
 
 
@@ -69,18 +73,23 @@ def magnitude(values, rate, frequency):
 
 
 def measure(left, right, rate, probe):
+    if len(left) != len(right):
+        return {"errors": ["stereo channels have different lengths"]}
     start = int((float(probe["start_seconds"]) + 0.15) * rate)
     end = int((float(probe["start_seconds"]) + 0.35) * rate)
     a, b = left[start:end], right[start:end]
     errors = []
-    if len(a) != end - start:
+    if len(a) != end - start or len(b) != end - start:
         return {"errors": ["render is shorter than this probe"]}
+    if not all(math.isfinite(value) for channel in (a, b) for value in channel):
+        return {"errors": ["render contains non-finite audio"]}
     power = sum(x * x for x in a) / len(a)
     rms = math.sqrt(power)
+    right_rms = math.sqrt(sum(x * x for x in b) / len(b))
     if probe["layer"] == "silent":
-        if rms > 0.00000001:
+        if max(rms, right_rms) > 0.00000001:
             errors.append("out-of-range key sounded")
-        return {"rms": rms, "errors": errors}
+        return {"rms": rms, "right_rms": right_rms, "errors": errors}
     if rms < 0.000000001:
         return {"rms": rms, "errors": ["in-range key was silent or below measurable PCM level"]}
     frequency = 440.0 * 2.0 ** ((int(probe["note"]) - 69) / 12)
@@ -101,7 +110,7 @@ def measure(left, right, rate, probe):
     residual = math.sqrt(sum((y + 0.35 * x) ** 2 for x, y in zip(a, b)) / len(a)) / rms
     if abs(right_gain + 0.35) > 0.03 or residual > 0.05:
         errors.append("stereo channel identity changed")
-    return {"rms": rms, "pitch_error_cents": cents, "harmonic_ratio": harmonic_ratio,
+    return {"rms": rms, "right_rms": right_rms, "pitch_error_cents": cents, "harmonic_ratio": harmonic_ratio,
             "root_harmonic_ratio": root_ratio,
             "right_gain": right_gain, "stereo_residual": residual, "errors": errors}
 

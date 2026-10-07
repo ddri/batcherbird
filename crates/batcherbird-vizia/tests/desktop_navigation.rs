@@ -1,6 +1,6 @@
 //! Regression for the production sample list's shared activation/navigation path.
 use accesskit::{ActionRequest, Role};
-use batcherbird_vizia::{app_data::AppData, views::stage};
+use batcherbird_vizia::{app_data::AppData, app_event::AppEvent, views::stage};
 use vizia::backend::{BackendContext, IntoNode};
 use vizia::events::EventManager;
 use vizia::prelude::*;
@@ -53,4 +53,47 @@ fn repeated_sample_activation_keeps_arrow_navigation_on_current_row() {
     backend.send_event(Event::new(ListEvent::FocusPrev).direct(list));
     events.flush_events(&mut backend.0, |_| {});
     assert_eq!(backend.0.data::<AppData>().unwrap().selected_sample, 5);
+}
+
+#[test]
+fn navigation_starts_from_current_sample_and_tracks_external_selection() {
+    for initial in [0, 5] {
+        let mut cx = Context::default();
+        let mut data = AppData::demo();
+        data.select_sample(initial);
+        data.build(&mut cx);
+        stage(&mut cx);
+        let mut backend = BackendContext::new(cx);
+        let tree = backend.init_accessibility_tree();
+        let list_id = tree
+            .nodes
+            .iter()
+            .find(|(_, node)| node.role() == Role::List)
+            .unwrap()
+            .0;
+        let list = Entity::root()
+            .branch_iter(&backend.0.tree)
+            .find(|entity| entity.accesskit_id() == list_id)
+            .unwrap();
+        let mut events = EventManager::new();
+        for (event, expected) in [
+            (ListEvent::FocusNext, initial + 1),
+            (ListEvent::FocusPrev, initial),
+        ] {
+            backend.send_event(Event::new(event).direct(list));
+            events.flush_events(&mut backend.0, |_| {});
+            assert_eq!(
+                backend.0.data::<AppData>().unwrap().selected_sample,
+                expected
+            );
+        }
+        backend.send_event(Event::new(AppEvent::SelectSample(8)));
+        events.flush_events(&mut backend.0, |_| {});
+        backend.send_event(Event::new(ListEvent::FocusNext).direct(list));
+        events.flush_events(&mut backend.0, |_| {});
+        assert_eq!(backend.0.data::<AppData>().unwrap().selected_sample, 9);
+        backend.send_event(Event::new(ListEvent::FocusPrev).direct(list));
+        events.flush_events(&mut backend.0, |_| {});
+        assert_eq!(backend.0.data::<AppData>().unwrap().selected_sample, 8);
+    }
 }
