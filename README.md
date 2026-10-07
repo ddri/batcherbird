@@ -43,7 +43,9 @@ cargo run -p batcherbird-cli -- --help
 Demo samples are synthetic and do not establish hardware recording quality. Demo mode does not restore your normal preferences or recovery session.
 
 Use the [desktop acceptance checks](docs/DESKTOP_ACCEPTANCE.md) to exercise review,
-dialogs, sessions, and export without a synth. The [hardware acceptance procedure](docs/HARDWARE_ACCEPTANCE.md)
+dialogs, sessions, and export without a synth. The [session resilience checks](docs/SESSION_ACCEPTANCE.md)
+cover corrupt files, missing audio, copied sessions, failed saves, and cancellation.
+The [hardware acceptance procedure](docs/HARDWARE_ACCEPTANCE.md)
 provides a short test with six takes and explicit expected key/velocity boundaries
 for when your synth is available.
 
@@ -65,7 +67,7 @@ Preferences and the automatic recovery snapshot live in the platform configurati
 
 ## Packaging and validation
 
-The [macOS packaging script](scripts/package-macos.sh) builds `batcherbird-vizia`, stages an `.app`, and creates a DMG when `hdiutil` is available. It replaces only `Batcherbird.app` and `Batcherbird.dmg` after successful staging, preserves unrelated output files, and restores previous artifacts if installation fails. The current script does not apply Developer ID signing or notarization; a linker-generated ad hoc signature is not Developer ID distribution signing. The bundle minimum macOS version follows the executable's Mach-O metadata. Tag pushes trigger the [release workflow](.github/workflows/release.yml), so complete the release checklist before pushing a release tag.
+The [macOS packaging script](scripts/package-macos.sh) builds `batcherbird-vizia`, stages an `.app`, and creates a DMG when `hdiutil` is available. It replaces only `Batcherbird.app` and `Batcherbird.dmg` after successful staging, preserves unrelated output files, and restores previous artifacts if installation fails. Local builds do not apply Developer ID signing or notarization by default. Optional signing and Keychain-profile notarization are described in the [distribution guide](docs/DISTRIBUTION.md); a linker-generated ad hoc signature is not Developer ID distribution signing. The bundle minimum macOS version follows the executable's Mach-O metadata. Tag pushes trigger the [release workflow](.github/workflows/release.yml), so complete the release checklist before pushing a release tag.
 
 Choose a separate local candidate directory to review a build while preserving existing distribution artifacts:
 
@@ -75,7 +77,7 @@ BATCHERBIRD_DIST_DIR=target/release-candidate ./scripts/package-macos.sh
 
 The default output is `dist/`. `CARGO_TARGET_DIR` selects the Cargo build directory and the packaged binary's source; a relative override is resolved from the repository root. The script refuses filesystem/home/repository roots and ambiguous output symlinks. Packaging fixture checks run with `bash scripts/test-package-macos.sh`.
 
-The Korg DW6000 and Arturia MiniFuse were reported working in earlier development. They need to be checked again against the current recording pipeline. Automated tests cannot establish device latency, absence of dropouts, or sampler compatibility.
+The Korg DW6000 and Arturia MiniFuse were reported working in earlier development. They need to be checked again against the current recording pipeline. Automated checks do not establish device latency or absence of dropouts. Independent SFZ renderer probes and the remaining DecentSampler listening gate are documented in [sampler acceptance](docs/SAMPLER_ACCEPTANCE.md).
 
 ## Troubleshooting
 

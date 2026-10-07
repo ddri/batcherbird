@@ -73,6 +73,9 @@ impl MeterBarLeft {
             let id = cx.current();
             Binding::new(cx, AppData::meter_left, move |cx, _| cx.needs_redraw(id));
         })
+        .role(Role::Meter)
+        .name("Left input peak")
+        .numeric_value(AppData::meter_left.map(|level| f64::from(*level)))
     }
 }
 impl View for MeterBarLeft {
@@ -88,6 +91,9 @@ impl MeterBarRight {
             let id = cx.current();
             Binding::new(cx, AppData::meter_right, move |cx, _| cx.needs_redraw(id));
         })
+        .role(Role::Meter)
+        .name("Right input peak")
+        .numeric_value(AppData::meter_right.map(|level| f64::from(*level)))
     }
 }
 impl View for MeterBarRight {

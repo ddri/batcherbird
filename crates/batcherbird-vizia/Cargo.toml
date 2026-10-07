@@ -27,3 +27,6 @@ hound = { workspace = true }
 crossbeam-channel = "0.5"
 rfd = "0.15"
 dirs = "5.0"
+
+[dev-dependencies]
+accesskit = "0.18"

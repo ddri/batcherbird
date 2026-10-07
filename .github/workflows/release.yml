@@ -11,8 +11,9 @@ permissions:
 jobs:
   # Builds the current Vizia application through scripts/package-macos.sh.
   # A v* tag publishes a DMG: complete docs/RELEASE_CHECKLIST.md before tagging.
-  # Packaging currently has no signing/notarization step and uses the runner's
-  # architecture; an upload alone does not establish hardware or OS compatibility.
+  # Signing/notarization are opt-in local steps documented in DISTRIBUTION.md.
+  # This workflow has no developer credentials and publishes a local unsigned
+  # candidate; an upload does not establish hardware or OS compatibility.
   build-macos:
     name: Build & Release macOS DMG
     runs-on: macos-latest
@@ -37,6 +38,9 @@ jobs:
 
       - name: Package macOS App & DMG
         run: ./scripts/package-macos.sh
+
+      - name: Audit package
+        run: bash scripts/verify-macos-package.sh dist/Batcherbird.app dist/Batcherbird.dmg
 
       - name: Upload DMG to GitHub Release
         uses: softprops/action-gh-release@v2

@@ -206,6 +206,55 @@ fn superseded_sidecar(path: &Path) -> Option<OwnedSidecar> {
     })
 }
 
+/// A copied/renamed manifest can still reference this sidecar. A sanitized filename
+/// is not proof of exclusive ownership; inspect sibling manifests before cleanup.
+fn sidecar_is_shared(path: &Path, sidecar: &OwnedSidecar) -> bool {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let Ok(entries) = fs::read_dir(parent) else {
+        return true;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return true;
+        };
+        if Some(entry.file_name().as_os_str()) == path.file_name() {
+            continue;
+        }
+        if !entry
+            .path()
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("batcherbird"))
+        {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            return true;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        if metadata.len() > 16 * 1024 * 1024 {
+            return true;
+        }
+        let Ok(file) = fs::File::open(entry.path()) else {
+            return true;
+        };
+        let Ok(manifest) = serde_json::from_reader::<_, Manifest>(file) else {
+            return true;
+        };
+        if manifest.samples.iter().any(|sample| {
+            sample.file.components().next().is_some_and(|component| {
+                matches!(component, Component::Normal(name) if Some(name) == sidecar.directory.file_name())
+            })
+        }) { return true; }
+    }
+    false
+}
+
 fn clean_superseded_sidecar(sidecar: &OwnedSidecar) {
     let directory = &sidecar.directory;
     // Recheck immediately before removing. Never recurse into subdirectories or links.
@@ -242,7 +291,7 @@ fn clean_superseded_sidecar(sidecar: &OwnedSidecar) {
     let _ = fs::remove_dir(directory);
 }
 
-pub fn save_session(
+fn save_session_inner(
     path: &Path,
     settings: &SessionSettings,
     samples: &[Sample],
@@ -327,19 +376,44 @@ pub fn save_session(
         let _ = fs::remove_dir_all(&audio_dir);
     } else if let Some(previous) = previous_sidecar {
         // Replacement has committed; failure to clean old audio must not invalidate the save.
-        clean_superseded_sidecar(&previous);
+        if !sidecar_is_shared(path, &previous) {
+            clean_superseded_sidecar(&previous);
+        }
     }
     result
 }
 
+pub fn save_session(
+    path: &Path,
+    settings: &SessionSettings,
+    samples: &[Sample],
+) -> Result<(), String> {
+    save_session_inner(path, settings, samples).map_err(|error| {
+        format!("Could not save session '{}': {error} Choose a writable folder with enough free space and retry. Your current recordings are still available.", path.display())
+    })
+}
+
 pub fn load_session(path: &Path) -> Result<(SessionSettings, Vec<Sample>), String> {
+    load_session_inner(path).map_err(|error| {
+        format!(
+            "Could not open session '{}': {error} Your current session has not been replaced.",
+            path.display()
+        )
+    })
+}
+
+fn load_session_inner(path: &Path) -> Result<(SessionSettings, Vec<Sample>), String> {
     let file = fs::File::open(path).map_err(err)?;
     if file.metadata().map_err(err)?.len() > 16 * 1024 * 1024 {
         return Err("Session manifest is too large.".into());
     }
-    let manifest: Manifest = serde_json::from_reader(file).map_err(err)?;
+    let manifest: Manifest = serde_json::from_reader(file)
+        .map_err(|error| format!("The session manifest is invalid: {error}"))?;
     if manifest.version != 1 {
-        return Err(format!("Unsupported session version {}.", manifest.version));
+        return Err(format!(
+            "Unsupported session version {}. Open it with a compatible version of Batcherbird.",
+            manifest.version
+        ));
     }
     let parent = path
         .parent()
@@ -358,12 +432,15 @@ pub fn load_session(path: &Path) -> Result<(SessionSettings, Vec<Sample>), Strin
         {
             return Err("Session contains an invalid note, velocity, or audio path.".into());
         }
-        let audio_path = root.join(&stored.file).canonicalize().map_err(err)?;
+        let audio_path = root.join(&stored.file).canonicalize().map_err(|error| {
+            format!("Cannot find or access audio '{}': {error} Keep the .batcherbird file and its .audio-* folder together.", stored.file.display())
+        })?;
         if !audio_path.starts_with(&root) {
             return Err("Session audio must stay inside its session folder.".into());
         }
         let file_bytes = fs::metadata(&audio_path).map_err(err)?.len();
-        let mut reader = hound::WavReader::open(audio_path).map_err(err)?;
+        let mut reader = hound::WavReader::open(&audio_path)
+            .map_err(|error| format!("Cannot read audio '{}': {error}", stored.file.display()))?;
         let spec = reader.spec();
         if spec.channels == 0
             || spec.channels > 2
@@ -371,7 +448,10 @@ pub fn load_session(path: &Path) -> Result<(SessionSettings, Vec<Sample>), Strin
             || spec.sample_format != hound::SampleFormat::Float
             || spec.bits_per_sample != 32
         {
-            return Err("Session audio must be mono or stereo 32-bit float WAV.".into());
+            return Err(format!(
+                "Session audio '{}' must be mono or stereo 32-bit float WAV.",
+                stored.file.display()
+            ));
         }
         // Bound reservation by the actual file, not a potentially forged RIFF data length.
         let values = reader.len() as usize;
@@ -386,7 +466,10 @@ pub fn load_session(path: &Path) -> Result<(SessionSettings, Vec<Sample>), Strin
         if audio_data.len() % spec.channels as usize != 0
             || audio_data.iter().any(|v| !v.is_finite())
         {
-            return Err("Session audio contains invalid frames or values.".into());
+            return Err(format!(
+                "Session audio '{}' contains invalid frames or values.",
+                stored.file.display()
+            ));
         }
         samples.push(Sample {
             note: stored.note,
@@ -664,6 +747,171 @@ mod tests {
         assert_eq!(
             fs::read_to_string(path.join("existing-data")).unwrap(),
             "keep"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn saving_a_copied_manifest_never_deletes_the_original_sessions_audio() {
+        let dir = test_dir();
+        let original = dir.join("warm pad.batcherbird");
+        let copy = dir.join("warm_pad.batcherbird");
+        save_session(&original, &SessionSettings::default(), &[sample()]).unwrap();
+        let shared = referenced_directory(&original);
+        fs::copy(&original, &copy).unwrap();
+        save_session(
+            &copy,
+            &SessionSettings::default(),
+            &[Sample {
+                audio_data: vec![0.75, -0.75],
+                ..sample()
+            }],
+        )
+        .unwrap();
+        assert!(shared.join("sample_0000.wav").is_file());
+        assert_eq!(
+            load_session(&original).unwrap().1[0].audio_data,
+            vec![0.25, -0.5]
+        );
+        assert_eq!(
+            load_session(&copy).unwrap().1[0].audio_data,
+            vec![0.75, -0.75]
+        );
+        // After the last reference is replaced, normal cleanup resumes.
+        save_session(&original, &SessionSettings::default(), &[sample()]).unwrap();
+        assert!(!shared.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn corrupt_manifest_and_future_version_report_the_session_and_recovery_action() {
+        let dir = test_dir();
+        let path = dir.join("broken.batcherbird");
+        fs::write(&path, b"{ truncated").unwrap();
+        let error = load_session(&path).unwrap_err();
+        assert!(error.contains("broken.batcherbird") && error.contains("manifest is invalid"));
+        assert!(error.contains("has not been replaced"));
+        atomic_json(
+            &path,
+            &Manifest {
+                version: 999,
+                settings: SessionSettings::default(),
+                samples: vec![],
+            },
+        )
+        .unwrap();
+        let error = load_session(&path).unwrap_err();
+        assert!(error.contains("999") && error.contains("compatible version"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn missing_audio_identifies_the_sidecar_and_explains_portable_session_layout() {
+        let dir = test_dir();
+        let path = dir.join("patch.batcherbird");
+        save_session(&path, &SessionSettings::default(), &[sample()]).unwrap();
+        fs::remove_file(referenced_directory(&path).join("sample_0000.wav")).unwrap();
+        let error = load_session(&path).unwrap_err();
+        assert!(error.contains("sample_0000.wav") && error.contains("folder together"));
+        assert!(error.contains("has not been replaced"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn edited_sidecar_with_invalid_channels_or_float_values_is_rejected() {
+        let dir = test_dir();
+        let path = dir.join("patch.batcherbird");
+        save_session(&path, &SessionSettings::default(), &[sample()]).unwrap();
+        let wav = referenced_directory(&path).join("sample_0000.wav");
+        for (channels, values) in [
+            (3, vec![0.0, 0.0, 0.0]),
+            (2, vec![f32::NAN, 0.0]),
+            (2, vec![f32::INFINITY, 0.0]),
+        ] {
+            let mut writer = hound::WavWriter::create(
+                &wav,
+                hound::WavSpec {
+                    channels,
+                    sample_rate: 48000,
+                    bits_per_sample: 32,
+                    sample_format: hound::SampleFormat::Float,
+                },
+            )
+            .unwrap();
+            for value in values {
+                writer.write_sample(value).unwrap();
+            }
+            writer.finalize().unwrap();
+            let error = load_session(&path).unwrap_err();
+            assert!(error.contains("sample_0000.wav"), "{error}");
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn blocked_destination_reports_retry_action_without_changing_existing_session() {
+        let dir = test_dir();
+        let original = dir.join("current.batcherbird");
+        save_session(&original, &SessionSettings::default(), &[sample()]).unwrap();
+        let manifest = fs::read(&original).unwrap();
+        let blocker = dir.join("not-a-folder");
+        fs::write(&blocker, b"keep").unwrap();
+        let error = save_session(
+            &blocker.join("new.batcherbird"),
+            &SessionSettings::default(),
+            &[sample()],
+        )
+        .unwrap_err();
+        assert!(error.contains("new.batcherbird") && error.contains("writable folder"));
+        assert_eq!(fs::read(&original).unwrap(), manifest);
+        assert_eq!(
+            load_session(&original).unwrap().1[0].audio_data,
+            sample().audio_data
+        );
+        assert_eq!(fs::read(&blocker).unwrap(), b"keep");
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn ambiguous_corrupt_or_oversized_sibling_manifest_preserves_old_audio() {
+        let dir = test_dir();
+        let path = dir.join("patch.batcherbird");
+        let sibling = dir.join("copy.batcherbird");
+        for oversized in [false, true] {
+            save_session(&path, &SessionSettings::default(), &[sample()]).unwrap();
+            let old = referenced_directory(&path);
+            if oversized {
+                fs::File::create(&sibling)
+                    .unwrap()
+                    .set_len(16 * 1024 * 1024 + 1)
+                    .unwrap();
+            } else {
+                fs::write(&sibling, b"{ corrupted copied manifest").unwrap();
+            }
+            save_session(&path, &SessionSettings::default(), &[sample()]).unwrap();
+            assert!(old.join("sample_0000.wav").is_file());
+            assert!(load_session(&path).is_ok());
+            fs::remove_file(&sibling).unwrap();
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_only_destination_preserves_existing_session_and_reports_retry() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = test_dir();
+        let path = dir.join("patch.batcherbird");
+        save_session(&path, &SessionSettings::default(), &[sample()]).unwrap();
+        let manifest = fs::read(&path).unwrap();
+        let permissions = fs::metadata(&dir).unwrap().permissions();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+        let result = save_session(&path, &SessionSettings::default(), &[sample()]);
+        fs::set_permissions(&dir, permissions).unwrap();
+        let error = result.unwrap_err();
+        assert!(error.contains("writable folder"));
+        assert_eq!(fs::read(&path).unwrap(), manifest);
+        assert_eq!(
+            load_session(&path).unwrap().1[0].audio_data,
+            sample().audio_data
         );
         fs::remove_dir_all(dir).unwrap();
     }

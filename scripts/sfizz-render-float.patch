@@ -1,0 +1,35 @@
+diff --git a/clients/sfizz_render.cpp b/clients/sfizz_render.cpp
+index 1affaf6..53e2e45 100644
+--- a/clients/sfizz_render.cpp
++++ b/clients/sfizz_render.cpp
+@@ -180,10 +180,10 @@ int main(int argc, char** argv)
+     drwav outputFile;
+     drwav_data_format outputFormat {};
+     outputFormat.container = drwav_container_riff;
+-    outputFormat.format = DR_WAVE_FORMAT_PCM;
++    outputFormat.format = DR_WAVE_FORMAT_IEEE_FLOAT;
+     outputFormat.channels = 2;
+     outputFormat.sampleRate = sampleRate;
+-    outputFormat.bitsPerSample = 16;
++    outputFormat.bitsPerSample = 32;
+
+ #if !defined(_WIN32)
+     drwav_bool32 outputFileOk = drwav_init_file_write(&outputFile, outputPath.c_str(), &outputFormat, nullptr);
+@@ -211,7 +211,7 @@ int main(int argc, char** argv)
+         synth.renderBlock(audioBuffer);
+         sfz::writeInterleaved(audioBuffer.getConstSpan(0), audioBuffer.getConstSpan(1), absl::MakeSpan(interleavedBuffer));
+         drwav_f32_to_s16(interleavedPcm.data(), interleavedBuffer.data(), 2 * blockSize);
+-        numFramesWritten += drwav_write_pcm_frames(&outputFile, blockSize, interleavedPcm.data());
++        numFramesWritten += drwav_write_pcm_frames(&outputFile, blockSize, interleavedBuffer.data());
+         writeLogLine();
+     }
+
+@@ -221,7 +221,7 @@ int main(int argc, char** argv)
+             synth.renderBlock(audioBuffer);
+             sfz::writeInterleaved(audioBuffer.getConstSpan(0), audioBuffer.getConstSpan(1), absl::MakeSpan(interleavedBuffer));
+             drwav_f32_to_s16(interleavedPcm.data(), interleavedBuffer.data(), 2 * blockSize);
+-            numFramesWritten += drwav_write_pcm_frames(&outputFile, blockSize, interleavedPcm.data());
++            numFramesWritten += drwav_write_pcm_frames(&outputFile, blockSize, interleavedBuffer.data());
+             writeLogLine();
+             averagePower = sfz::meanSquared<float>(interleavedBuffer);
+         }

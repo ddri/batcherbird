@@ -5,6 +5,10 @@ members = [
     "crates/batcherbird-vizia",
 ]
 resolver = "2"
+exclude = ["vendor/vizia_core"]
+
+[patch.crates-io]
+vizia_core = { path = "vendor/vizia_core" }
 
 [workspace.package]
 license = "AGPL-3.0-or-later"

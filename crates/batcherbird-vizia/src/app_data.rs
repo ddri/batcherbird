@@ -1519,6 +1519,7 @@ impl Model for AppData {
             }
             AppEvent::SessionSaved { path, revision } => {
                 self.session_busy = false;
+                self.error_message = None;
                 if *revision == self.settings_revision { self.has_unsaved_changes = false; }
                 self.session_status = path.file_name().unwrap_or_default().to_string_lossy().into();
                 self.info_message = Some(format!("Session saved to {}", path.display()));
@@ -1528,7 +1529,7 @@ impl Model for AppData {
             }
             AppEvent::ConfirmSessionReplacement => { self.resolve_session_replacement(true); }
             AppEvent::KeepCurrentSession => { self.resolve_session_replacement(false); }
-            AppEvent::SessionError(error) => { self.session_busy = false; self.error_message = Some(format!("Session: {error}")); }
+            AppEvent::SessionError(error) => { self.session_busy = false; self.info_message = None; self.error_message = Some(error.clone()); }
             AppEvent::SessionDialogCancelled => { self.session_busy = false; }
             AppEvent::RecoveryComplete(error) => {
                 self.session_busy = false;
@@ -2120,5 +2121,76 @@ mod tests {
         assert!(data.session_busy);
         data.resolve_session_replacement(true);
         assert!(data.session_busy);
+    }
+    fn dispatch_session_events(
+        data: AppData,
+        events: &[AppEvent],
+    ) -> vizia::backend::BackendContext {
+        let mut context = Context::default();
+        data.build(&mut context);
+        let mut backend = vizia::backend::BackendContext::new(context);
+        let mut manager = vizia::events::EventManager::new();
+        for event in events {
+            backend.send_event(Event::new(event.clone()));
+            manager.flush_events(&mut backend.0, |_| {});
+        }
+        backend
+    }
+
+    #[test]
+    fn failed_open_or_save_and_cancelled_dialog_preserve_the_edited_session() {
+        for event in [
+            AppEvent::SessionError(
+                "Cannot access missing audio; keep the sidecar folder together.".into(),
+            ),
+            AppEvent::SessionDialogCancelled,
+        ] {
+            let mut data = edited_confirmation_session();
+            data.session_busy = true;
+            data.info_message = Some("Previous save succeeded".into());
+            let settings = serde_json::to_value(data.session_settings()).unwrap();
+            let revision = data.settings_revision;
+            let backend = dispatch_session_events(data, std::slice::from_ref(&event));
+            let data = backend.0.data::<AppData>().unwrap();
+            assert!(!data.session_busy && !data.controls_busy);
+            assert_eq!(
+                serde_json::to_value(data.session_settings()).unwrap(),
+                settings
+            );
+            assert_eq!(data.settings_revision, revision);
+            assert!(data.has_unsaved_changes);
+            assert_eq!(data.session_status, "current.batcherbird");
+            assert_eq!(data.recorded_samples[0].audio_data, vec![0.25, -0.25]);
+            if matches!(event, AppEvent::SessionError(_)) {
+                assert!(data
+                    .error_message
+                    .as_ref()
+                    .unwrap()
+                    .contains("missing audio"));
+                assert!(data.info_message.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn failed_session_operation_can_be_retried_and_saved_without_stale_error() {
+        let mut data = edited_confirmation_session();
+        data.session_busy = true;
+        let revision = data.settings_revision;
+        let backend = dispatch_session_events(
+            data,
+            &[
+                AppEvent::SessionError("Disk full".into()),
+                AppEvent::SessionSaved {
+                    path: PathBuf::from("retry.batcherbird"),
+                    revision,
+                },
+            ],
+        );
+        let data = backend.0.data::<AppData>().unwrap();
+        assert!(!data.has_unsaved_changes && !data.controls_busy);
+        assert!(data.error_message.is_none());
+        assert_eq!(data.session_status, "retry.batcherbird");
+        assert_eq!(data.recorded_samples[0].audio_data, vec![0.25, -0.25]);
     }
 }

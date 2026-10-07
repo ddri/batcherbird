@@ -75,13 +75,21 @@ pub fn hit_test_note(
     None
 }
 
+#[derive(Lens)]
 pub struct KeyboardView {
     held_note: Option<u8>,
+    focus_note: u8,
+    has_focus: bool,
 }
 
 impl KeyboardView {
     pub fn new(cx: &mut Context) -> Handle<'_, Self> {
-        Self { held_note: None }.build(cx, |cx| {
+        Self {
+            held_note: None,
+            focus_note: 60,
+            has_focus: false,
+        }
+        .build(cx, |cx| {
             let id = cx.current();
             Binding::new(cx, AppData::app_state, move |cx, _| cx.needs_redraw(id));
             Binding::new(cx, AppData::start_note, move |cx, _| cx.needs_redraw(id));
@@ -90,13 +98,72 @@ impl KeyboardView {
             Binding::new(cx, AppData::current_note, move |cx, _| cx.needs_redraw(id));
             Binding::new(cx, AppData::audition_note, move |cx, _| cx.needs_redraw(id));
         })
+        .role(Role::Group)
+        .navigable(true)
+        .name("Synthesizer keyboard: arrow keys choose a note; hold Space to audition")
+        .text_value(Self::focus_note.map(|note| AppData::note_name(*note)))
+        .class("audition-keyboard")
     }
 }
 
 impl View for KeyboardView {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
-        event.map(|window_event: &WindowEvent, _| match window_event {
+        event.map(|window_event: &WindowEvent, meta| match window_event {
+            WindowEvent::KeyDown(code, _) if meta.target == cx.current() => {
+                let start = (AppData::start_note.get(cx) / 12) * 12;
+                let end = start
+                    .saturating_add(48)
+                    .max(AppData::end_note.get(cx))
+                    .min(127);
+                let selected = match code {
+                    Code::ArrowLeft => Some(self.focus_note.saturating_sub(1).clamp(start, end)),
+                    Code::ArrowRight => Some(self.focus_note.saturating_add(1).clamp(start, end)),
+                    Code::Home => Some(AppData::start_note.get(cx)),
+                    Code::End => Some(AppData::end_note.get(cx)),
+                    _ => None,
+                };
+                if let Some(note) = selected {
+                    if self.held_note.take().is_some() {
+                        cx.emit(AppEvent::AuditionNoteOff);
+                    }
+                    self.focus_note = note;
+                    cx.needs_redraw();
+                    meta.consume();
+                } else if *code == Code::Space {
+                    if self.held_note.is_none() && !cx.is_disabled() {
+                        self.held_note = Some(self.focus_note);
+                        cx.emit(AppEvent::AuditionNoteOn(self.focus_note));
+                    }
+                    meta.consume();
+                }
+            }
+            WindowEvent::KeyUp(Code::Space, _) => {
+                if self.held_note.take().is_some() {
+                    cx.emit(AppEvent::AuditionNoteOff);
+                }
+            }
+            WindowEvent::FocusIn => {
+                self.has_focus = true;
+                let start = (AppData::start_note.get(cx) / 12) * 12;
+                let end = start
+                    .saturating_add(48)
+                    .max(AppData::end_note.get(cx))
+                    .min(127);
+                self.focus_note = self.focus_note.clamp(start, end);
+                cx.needs_redraw();
+            }
+            WindowEvent::FocusOut => {
+                self.has_focus = false;
+                if self.held_note.take().is_some() {
+                    cx.emit(AppEvent::AuditionNoteOff);
+                }
+                cx.needs_redraw();
+            }
             WindowEvent::MouseDown(btn) => {
+                if cx.is_disabled() {
+                    return;
+                }
+                cx.focus();
                 let bounds = cx.bounds();
                 let start_note = AppData::start_note.get(cx);
                 let display_start = (start_note / 12) * 12;
@@ -117,6 +184,7 @@ impl View for KeyboardView {
                     cursor_x,
                     cursor_y,
                 ) {
+                    self.focus_note = note;
                     let is_shift = cx.modifiers().contains(Modifiers::SHIFT);
                     let is_right = *btn == MouseButton::Right;
 
@@ -218,6 +286,8 @@ impl View for KeyboardView {
                 vg::Color::from_rgb(0x00, 0xe5, 0xff) // Luminous cyan
             } else if is_current {
                 vg::Color::from_rgb(0x3b, 0x82, 0xf6) // Active blue
+            } else if self.has_focus && note == self.focus_note {
+                vg::Color::from_rgb(0x87, 0xcf, 0xdb) // Keyboard focus
             } else if in_range {
                 vg::Color::from_rgb(0xeb, 0xf0, 0xfa) // Subtle studio ivory
             } else {
@@ -302,6 +372,8 @@ impl View for KeyboardView {
                     vg::Color::from_rgb(0x00, 0xb4, 0xd8)
                 } else if is_current {
                     vg::Color::from_rgb(0x25, 0x63, 0xeb)
+                } else if self.has_focus && note == self.focus_note {
+                    vg::Color::from_rgb(0x38, 0x91, 0xa1)
                 } else if is_target {
                     vg::Color::from_rgb(0x18, 0x1c, 0x28)
                 } else if in_range {
@@ -366,7 +438,7 @@ pub fn keyboard(cx: &mut Context) {
         HStack::new(cx, |cx| {
             Label::new(
                 cx,
-                "Audition: Left-click  ·  Set Start: Right-click  ·  Set End: Shift-click",
+                "Audition: click or hold Space  ·  Arrow keys: choose note  ·  Start/end: right-click / Shift-click",
             )
             .font_size(12.0)
             .color(Color::from("#a2b0b8"))

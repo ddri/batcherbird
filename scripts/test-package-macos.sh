@@ -35,6 +35,27 @@ else
 fi
 TOOL
 chmod +x "${FIXTURE_DIR}/bin/cargo" "${FIXTURE_DIR}/bin/hdiutil" "${FIXTURE_DIR}/bin/mv" "${FIXTURE_DIR}/bin/otool"
+cat > "${FIXTURE_DIR}/bin/codesign" <<'TOOL'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'codesign %s\n' "$*" >> "${FIXTURE_COMMAND_LOG}"
+if [[ "${FIXTURE_FAIL_SIGN:-0}" == 1 ]]; then exit 20; fi
+TOOL
+cat > "${FIXTURE_DIR}/bin/ditto" <<'TOOL'
+#!/usr/bin/env bash
+printf 'fixture archive\n' > "${!#}"
+TOOL
+cat > "${FIXTURE_DIR}/bin/xcrun" <<'TOOL'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'xcrun %s\n' "$*" >> "${FIXTURE_COMMAND_LOG}"
+if [[ "${FIXTURE_FAIL_NOTARY:-0}" == 1 && "$1" == notarytool ]]; then exit 21; fi
+if [[ "${FIXTURE_FAIL_STAPLE:-0}" == 1 && "$1" == stapler && "$2" == staple ]]; then exit 22; fi
+TOOL
+chmod +x "${FIXTURE_DIR}/bin/codesign" "${FIXTURE_DIR}/bin/ditto" "${FIXTURE_DIR}/bin/xcrun"
+export FIXTURE_COMMAND_LOG="${FIXTURE_DIR}/commands.log"
+# Isolate fixture runs from any real developer-account configuration.
+unset BATCHERBIRD_SIGN_IDENTITY BATCHERBIRD_NOTARY_PROFILE
 export PATH="${FIXTURE_DIR}/bin:${PATH}"
 export CARGO_TARGET_DIR="${FIXTURE_DIR}/target"
 export BATCHERBIRD_DIST_DIR="${FIXTURE_DIR}/output"
@@ -53,12 +74,42 @@ for failure in FIXTURE_FAIL_BUILD FIXTURE_FAIL_DMG FIXTURE_EMPTY_DMG FIXTURE_FAI
     fi
     assert_original
 done
+for failure in FIXTURE_FAIL_SIGN FIXTURE_FAIL_NOTARY FIXTURE_FAIL_STAPLE; do
+    if env "${failure}=1" BATCHERBIRD_SIGN_IDENTITY='Developer ID Application: Fixture' \
+        BATCHERBIRD_NOTARY_PROFILE=fixture bash "${ROOT_DIR}/scripts/package-macos.sh" > "${FIXTURE_DIR}/log" 2>&1; then
+        echo "Expected signing/notarization failure: ${failure}" >&2; exit 1
+    fi
+    assert_original
+done
+if BATCHERBIRD_NOTARY_PROFILE=fixture bash "${ROOT_DIR}/scripts/package-macos.sh" > "${FIXTURE_DIR}/log" 2>&1; then
+    echo "Expected rejection for notarization without signing." >&2; exit 1
+fi
+assert_original
+if BATCHERBIRD_SIGN_IDENTITY=- BATCHERBIRD_NOTARY_PROFILE=fixture \
+    bash "${ROOT_DIR}/scripts/package-macos.sh" > "${FIXTURE_DIR}/log" 2>&1; then
+    echo "Expected rejection for ad hoc notarization." >&2; exit 1
+fi
+assert_original
+: > "${FIXTURE_COMMAND_LOG}"
 bash "${ROOT_DIR}/scripts/package-macos.sh" > "${FIXTURE_DIR}/log" 2>&1
 [[ "$(cat "${BATCHERBIRD_DIST_DIR}/Batcherbird.app/Contents/MacOS/Batcherbird")" == "fixture binary" ]]
 [[ "$(cat "${BATCHERBIRD_DIST_DIR}/Batcherbird.dmg")" == "fixture dmg" ]]
+cmp "${ROOT_DIR}/LICENSE" "${BATCHERBIRD_DIST_DIR}/Batcherbird.app/Contents/Resources/licenses/Batcherbird-AGPL.txt"
+cmp "${ROOT_DIR}/vendor/vizia_core/LICENSE" "${BATCHERBIRD_DIST_DIR}/Batcherbird.app/Contents/Resources/licenses/vizia_core-MIT.txt"
 [[ "$(cat "${BATCHERBIRD_DIST_DIR}/notes.txt")" == "unrelated" ]]
 [[ ! -e "${BATCHERBIRD_DIST_DIR}/Batcherbird.app/original.txt" ]]
 [[ -z "$(find "${BATCHERBIRD_DIST_DIR}" -maxdepth 1 -name '.batcherbird-package.*' -print)" ]]
+# The default local build must not invoke signing or upload services.
+[[ ! -s "${FIXTURE_COMMAND_LOG}" ]]
+BATCHERBIRD_SIGN_IDENTITY='Developer ID Application: Fixture' BATCHERBIRD_NOTARY_PROFILE=fixture \
+    bash "${ROOT_DIR}/scripts/package-macos.sh" > "${FIXTURE_DIR}/log" 2>&1
+[[ "$(grep -c 'notarytool submit' "${FIXTURE_COMMAND_LOG}")" == 2 ]]
+[[ "$(grep -c 'stapler staple' "${FIXTURE_COMMAND_LOG}")" == 2 ]]
+grep -q -- '--options runtime --timestamp --entitlements' "${FIXTURE_COMMAND_LOG}"
+# App ticket must be attached before DMG signing/submission begins.
+APP_STAPLE_LINE="$(grep -n 'stapler staple .*Batcherbird.app' "${FIXTURE_COMMAND_LOG}" | cut -d: -f1)"
+DMG_SUBMIT_LINE="$(grep -n 'notarytool submit .*Batcherbird.dmg' "${FIXTURE_COMMAND_LOG}" | cut -d: -f1)"
+[[ "${APP_STAPLE_LINE}" -lt "${DMG_SUBMIT_LINE}" ]]
 minimum_version() {
     awk '/<key>LSMinimumSystemVersion/ { getline; gsub(/.*<string>|<\/string>.*/, ""); print }' "${BATCHERBIRD_DIST_DIR}/Batcherbird.app/Contents/Info.plist"
 }
@@ -72,4 +123,4 @@ for invalid_output in / "${ROOT_DIR}" ""; do
         echo "Expected rejection for output root: ${invalid_output}" >&2; exit 1
     fi
 done
-echo "Packaging fixtures passed: success, build/DMG/installation failures, preservation, root guards, and Mach-O minimum OS metadata."
+echo "Packaging fixtures passed: success, build/DMG/installation failures, preservation, root guards, Mach-O minimum OS metadata, opt-in signing/notarization, and ticket order."
