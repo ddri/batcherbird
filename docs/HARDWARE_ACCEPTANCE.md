@@ -2,6 +2,13 @@
 
 Use the packaged local candidate with a real synth and interface. This is a test procedure, **not a record of a passed hardware test**. Keep automatic loops **off** for this first pass. Record failures and keep the affected session/WAVs; the full [release checklist](RELEASE_CHECKLIST.md) still applies.
 
+After selecting devices and settings, use **Export diagnostics…** at the bottom
+of the settings sidebar to save a baseline JSON report. If a check fails, export
+another report before changing the setup and record the visible error text
+separately: raw errors and audio are omitted from the report. Device names are
+included, so review them before attaching the report to the GitHub issue. Also
+record the tested commit and macOS version, which this report may leave unavailable.
+
 ## 1. Connect and check the signal — 5 minutes
 
 Connect Mac MIDI out → synth MIDI in, and synth audio out → interface input. Set the synth to receive **MIDI channel 1**, which the current desktop capture uses. Choose a patch with a clear attack and an audible release of roughly one second. Choose the intended MIDI output, audio input, input channels, and zero app input gain. Note the interface's actual sample rate.

@@ -164,3 +164,37 @@ changes consistent. The sample list is disabled during conflicting operations.
 Two production-stage event tests pass: repeated activation followed by next/previous,
 and initial/external selection followed by next/previous. Native keyboard and
 VoiceOver acceptance remain pending.
+
+## Acceptance attempt — October 8, 2026
+
+The desktop agent rebuilt the debug app from `5ef5ac2` at the start of the
+`codex/native-acceptance-diagnostics` work, on macOS 26.1 (25B78). An isolated
+bundle at `/private/tmp/Batcherbird Acceptance QA.app` enabled demo mode and the
+1040 × 720 minimum-size fixture through its environment. It does not restore
+normal preferences or recovery. This initial bundle predates the diagnostics and
+preview-failure changes made later on that branch.
+
+Finder's native accessibility tree verified selection of this bundle. The initial
+CUA app binding by bundle identifier then stalled for 1,287.6 seconds before it
+was interrupted. Retrying Finder's exposed **Open Finder item** action completed,
+and a separate process inspection confirmed the new Acceptance QA executable was
+running. A second CUA binding by full app path also stalled and was interrupted
+after 87.7 seconds. Neither binding returned the app's accessibility tree or
+screenshot. A running process establishes launch only; it does not establish
+native layout, activation, or acceptance behavior. No result from yesterday's
+still-running Compact QA app was counted as verification of the rebuilt app.
+
+Two new production-UI integration tests inspect the generated AccessKit tree and
+dispatch real Vizia events. Across setup, armed, recording, stopping, and review,
+they verify the expected primary action and that Open/Save disable during capture.
+Both confirmation buttons advertise Click; dispatching their Click requests either
+preserves the edited instrument and original audio or applies the validated
+replacement. These tests passed. They are implementation checks, not native
+AXPress, screen layout, VoiceOver speech, or operating-system dialog checks.
+
+Still pending on the rebuilt app: minimum-size visual checks for all five states,
+long errors and replacement filenames, native Keep/Open replacement activation,
+corrupt/missing-session Open and dialog cancellation, Tab/Shift+Tab and arrow focus,
+native AXPress, VoiceOver speech, and diagnostics Save-dialog behavior. The prepared
+bundle can be used for hands-on baseline review; rebuild it before checking changes
+added later on the branch.

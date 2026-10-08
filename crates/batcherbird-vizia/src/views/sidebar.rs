@@ -307,6 +307,12 @@ pub fn sidebar(cx: &mut Context) {
                 .disabled(AppData::recorded_count.map(|n| *n == 0));
             })
             .class("settings-group");
+            action(cx, "Export diagnostics…", AppEvent::ExportDiagnostics)
+                .width(Stretch(1.0));
+            Label::new(cx, "Device names and settings · saved locally")
+                .class("field-label")
+                .width(Stretch(1.0))
+                .text_wrap(true);
         })
         .class("inspector-content")
         .disabled(AppData::controls_busy);

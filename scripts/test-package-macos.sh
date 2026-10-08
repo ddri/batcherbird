@@ -43,6 +43,7 @@ if [[ "${FIXTURE_FAIL_SIGN:-0}" == 1 ]]; then exit 20; fi
 TOOL
 cat > "${FIXTURE_DIR}/bin/ditto" <<'TOOL'
 #!/usr/bin/env bash
+printf 'ditto %s\n' "$*" >> "${FIXTURE_COMMAND_LOG}"
 printf 'fixture archive\n' > "${!#}"
 TOOL
 cat > "${FIXTURE_DIR}/bin/xcrun" <<'TOOL'
@@ -68,7 +69,7 @@ assert_original() {
     [[ "$(cat "${BATCHERBIRD_DIST_DIR}/notes.txt")" == "unrelated" ]]
     [[ -z "$(find "${BATCHERBIRD_DIST_DIR}" -maxdepth 1 -name '.batcherbird-package.*' -print)" ]]
 }
-for failure in FIXTURE_FAIL_BUILD FIXTURE_FAIL_DMG FIXTURE_EMPTY_DMG FIXTURE_FAIL_INSTALL; do
+for failure in FIXTURE_FAIL_BUILD FIXTURE_FAIL_DMG FIXTURE_EMPTY_DMG FIXTURE_FAIL_INSTALL FIXTURE_FAIL_SIGN; do
     if env "${failure}=1" bash "${ROOT_DIR}/scripts/package-macos.sh" > "${FIXTURE_DIR}/log" 2>&1; then
         echo "Expected packaging failure: ${failure}" >&2; exit 1
     fi
@@ -99,8 +100,13 @@ cmp "${ROOT_DIR}/vendor/vizia_core/LICENSE" "${BATCHERBIRD_DIST_DIR}/Batcherbird
 [[ "$(cat "${BATCHERBIRD_DIST_DIR}/notes.txt")" == "unrelated" ]]
 [[ ! -e "${BATCHERBIRD_DIST_DIR}/Batcherbird.app/original.txt" ]]
 [[ -z "$(find "${BATCHERBIRD_DIST_DIR}" -maxdepth 1 -name '.batcherbird-package.*' -print)" ]]
-# The default local build must not invoke signing or upload services.
-[[ ! -s "${FIXTURE_COMMAND_LOG}" ]]
+# Local signatures seal resources without accounts, hardened runtime, or uploads.
+[[ "$(grep -c '^codesign ' "${FIXTURE_COMMAND_LOG}")" == 2 ]]
+grep -q -- '--force --sign - --timestamp=none' "${FIXTURE_COMMAND_LOG}"
+grep -q -- '--verify --deep --strict' "${FIXTURE_COMMAND_LOG}"
+if grep -qE 'xcrun|ditto|--options runtime|--entitlements|--timestamp ' "${FIXTURE_COMMAND_LOG}"; then
+    echo "Local packaging unexpectedly invoked developer-account signing or upload steps." >&2; exit 1
+fi
 BATCHERBIRD_SIGN_IDENTITY='Developer ID Application: Fixture' BATCHERBIRD_NOTARY_PROFILE=fixture \
     bash "${ROOT_DIR}/scripts/package-macos.sh" > "${FIXTURE_DIR}/log" 2>&1
 [[ "$(grep -c 'notarytool submit' "${FIXTURE_COMMAND_LOG}")" == 2 ]]

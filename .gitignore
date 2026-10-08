@@ -54,6 +54,10 @@ dist/
 dist_debug/
 build/
 
+# Python acceptance tooling
+__pycache__/
+*.py[cod]
+
 # Temporary files that might contain sensitive data
 *.tmp
 *.temp

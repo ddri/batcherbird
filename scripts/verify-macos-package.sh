@@ -14,6 +14,21 @@ MINIMUM_OS="$(plist_value LSMinimumSystemVersion)"
 EXECUTABLE="${APP_DIR}/Contents/MacOS/$(plist_value CFBundleExecutable)"
 [[ -x "${EXECUTABLE}" ]]
 file "${EXECUTABLE}" | grep -q 'Mach-O'
+BINARY_MINIMUM="$(otool -l "${EXECUTABLE}" | awk '
+    $1 == "cmd" { command = $2 }
+    (command == "LC_BUILD_VERSION" && $1 == "minos") ||
+    (command == "LC_VERSION_MIN_MACOSX" && $1 == "version") {
+        split($2, candidate, ".")
+        value = candidate[1] * 1000000 + candidate[2] * 1000 + candidate[3]
+        if (value > maximum) maximum = value
+    }
+    END { if (maximum) print maximum }
+')"
+DECLARED_MINIMUM="$(printf '%s\n' "${MINIMUM_OS}" | awk -F. '{ print $1 * 1000000 + $2 * 1000 + $3 }')"
+if [[ -z "${BINARY_MINIMUM}" || "${BINARY_MINIMUM}" != "${DECLARED_MINIMUM}" ]]; then
+    echo "Bundle minimum macOS does not match executable load commands." >&2
+    exit 1
+fi
 # The app statically embeds its UI stylesheet. Reject developer-machine dylibs;
 # this application currently has no bundled dynamic frameworks or @rpath entries.
 DEPENDENCIES="$(otool -L "${EXECUTABLE}")"
@@ -22,6 +37,7 @@ printf '%s\n' "${DEPENDENCIES}" | awk '/^[[:space:]]/ {
         print "Non-system dependency: " $1 > "/dev/stderr"; failed = 1
     }
 } END { exit failed }'
+codesign --verify --deep --strict "${APP_DIR}"
 if [[ -n "${2:-}" ]]; then hdiutil verify "$2"; fi
 if [[ "${BATCHERBIRD_REQUIRE_NOTARIZED:-0}" == 1 ]]; then
     codesign --verify --deep --strict "${APP_DIR}"

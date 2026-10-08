@@ -74,6 +74,7 @@ struct Shared {
     playing: AtomicBool,
     /// Explicit stop / output error bypasses the natural drain deadline.
     stopped: AtomicBool,
+    output_failed: AtomicBool,
     /// Monotonic wall-clock origin and estimated audible completion deadline.
     origin: Instant,
     finish_deadline_ns: AtomicU64,
@@ -120,6 +121,18 @@ impl PreviewPlayer {
                     .map(|c| c.with_sample_rate(cpal::SampleRate(sample_rate)))
             })
             .unwrap_or(default);
+        Self::play_configured(audio, sample_rate, channels, &device, supported)
+    }
+
+    // Private acceptance entry point: exercises the production preparation and
+    // callback on a named virtual device without changing system defaults.
+    fn play_configured(
+        audio: Arc<[f32]>,
+        sample_rate: u32,
+        channels: u16,
+        device: &cpal::Device,
+        supported: cpal::SupportedStreamConfig,
+    ) -> Result<Self> {
         let sample_format = supported.sample_format();
         let config: cpal::StreamConfig = supported.into();
         let dst_channels = config.channels as usize;
@@ -138,36 +151,37 @@ impl PreviewPlayer {
             cursor: AtomicUsize::new(0),
             playing: AtomicBool::new(true),
             stopped: AtomicBool::new(false),
+            output_failed: AtomicBool::new(false),
             origin: Instant::now(),
             finish_deadline_ns: AtomicU64::new(u64::MAX),
         });
 
         let stream = match sample_format {
             SampleFormat::F32 => {
-                build_stream::<f32>(&device, &config, dst_channels, shared.clone())?
+                build_stream::<f32>(device, &config, dst_channels, shared.clone())?
             }
             SampleFormat::F64 => {
-                build_stream::<f64>(&device, &config, dst_channels, shared.clone())?
+                build_stream::<f64>(device, &config, dst_channels, shared.clone())?
             }
-            SampleFormat::I8 => build_stream::<i8>(&device, &config, dst_channels, shared.clone())?,
+            SampleFormat::I8 => build_stream::<i8>(device, &config, dst_channels, shared.clone())?,
             SampleFormat::I16 => {
-                build_stream::<i16>(&device, &config, dst_channels, shared.clone())?
+                build_stream::<i16>(device, &config, dst_channels, shared.clone())?
             }
             SampleFormat::I32 => {
-                build_stream::<i32>(&device, &config, dst_channels, shared.clone())?
+                build_stream::<i32>(device, &config, dst_channels, shared.clone())?
             }
             SampleFormat::I64 => {
-                build_stream::<i64>(&device, &config, dst_channels, shared.clone())?
+                build_stream::<i64>(device, &config, dst_channels, shared.clone())?
             }
-            SampleFormat::U8 => build_stream::<u8>(&device, &config, dst_channels, shared.clone())?,
+            SampleFormat::U8 => build_stream::<u8>(device, &config, dst_channels, shared.clone())?,
             SampleFormat::U16 => {
-                build_stream::<u16>(&device, &config, dst_channels, shared.clone())?
+                build_stream::<u16>(device, &config, dst_channels, shared.clone())?
             }
             SampleFormat::U32 => {
-                build_stream::<u32>(&device, &config, dst_channels, shared.clone())?
+                build_stream::<u32>(device, &config, dst_channels, shared.clone())?
             }
             SampleFormat::U64 => {
-                build_stream::<u64>(&device, &config, dst_channels, shared.clone())?
+                build_stream::<u64>(device, &config, dst_channels, shared.clone())?
             }
             other => {
                 return Err(BatcherbirdError::Audio(format!(
@@ -189,6 +203,11 @@ impl PreviewPlayer {
     /// Stop playback. The callback then outputs silence on subsequent calls.
     pub fn stop(&self) {
         self.shared.stop();
+    }
+
+    /// A runtime output failure ends playback and can be surfaced by the UI.
+    pub fn has_output_error(&self) -> bool {
+        self.shared.output_failed.load(Ordering::Acquire)
     }
 
     /// Fraction of the take submitted to the audio device, clamped to 0..=1.
@@ -350,6 +369,7 @@ where
                 }
             },
             move |err| {
+                error_state.output_failed.store(true, Ordering::Release);
                 error_state.stop();
                 tracing::error!("Preview output stream error: {err}");
             },
@@ -371,6 +391,7 @@ mod tests {
             cursor: AtomicUsize::new(0),
             playing: AtomicBool::new(true),
             stopped: AtomicBool::new(false),
+            output_failed: AtomicBool::new(false),
             origin: Instant::now(),
             finish_deadline_ns: AtomicU64::new(u64::MAX),
         };
@@ -429,6 +450,7 @@ mod tests {
             cursor: AtomicUsize::new(0),
             playing: AtomicBool::new(true),
             stopped: AtomicBool::new(false),
+            output_failed: AtomicBool::new(false),
             origin: Instant::now(),
             finish_deadline_ns: AtomicU64::new(u64::MAX),
         };
@@ -490,6 +512,7 @@ mod tests {
             cursor: AtomicUsize::new(0),
             playing: AtomicBool::new(true),
             stopped: AtomicBool::new(false),
+            output_failed: AtomicBool::new(false),
             origin: Instant::now(),
             finish_deadline_ns: AtomicU64::new(u64::MAX),
         };
@@ -512,6 +535,7 @@ mod tests {
             cursor: AtomicUsize::new(0),
             playing: AtomicBool::new(true),
             stopped: AtomicBool::new(false),
+            output_failed: AtomicBool::new(false),
             origin: Instant::now(),
             finish_deadline_ns: AtomicU64::new(u64::MAX),
         };
@@ -570,5 +594,435 @@ mod tests {
         let mut dst = [0.0f32; 2];
         map_frame(&src, 4, 2, &mut dst);
         assert_eq!(dst, [0.1, 0.2]);
+    }
+}
+
+#[cfg(test)]
+mod driver_acceptance {
+    use super::*;
+    use rtrb::{Consumer, RingBuffer};
+    use std::fs;
+    use std::path::Path;
+
+    const RATE: u32 = 48_000;
+    const DEVICE: &str = "BlackHole 16ch";
+    const OFFSET: usize = 2; // Zero-based: reserved channels 3 and 4 only.
+
+    struct Capture {
+        _stream: cpal::Stream,
+        consumer: Consumer<f32>,
+        failed: Arc<AtomicBool>,
+        samples: Vec<f32>,
+    }
+    impl Capture {
+        fn start(device: &cpal::Device) -> Result<Self> {
+            let supported = device
+                .supported_input_configs()
+                .map_err(|e| BatcherbirdError::Audio(e.to_string()))?
+                .find(|c| {
+                    c.channels() == 16
+                        && c.sample_format() == SampleFormat::F32
+                        && c.min_sample_rate().0 <= RATE
+                        && c.max_sample_rate().0 >= RATE
+                })
+                .ok_or_else(|| {
+                    BatcherbirdError::Audio("BlackHole needs 16-channel F32 input at 48kHz".into())
+                })?
+                .with_sample_rate(cpal::SampleRate(RATE));
+            let (mut producer, consumer) = RingBuffer::new(RATE as usize * 8);
+            let failed = Arc::new(AtomicBool::new(false));
+            let overflow = Arc::clone(&failed);
+            let stream_error = Arc::clone(&failed);
+            let stream = device
+                .build_input_stream(
+                    &supported.config(),
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        for frame in data.as_chunks::<16>().0 {
+                            if producer.slots() < 2 {
+                                overflow.store(true, Ordering::Release);
+                                break;
+                            }
+                            let _ = producer.push(frame[OFFSET]);
+                            let _ = producer.push(frame[OFFSET + 1]);
+                        }
+                    },
+                    move |_err| {
+                        stream_error.store(true, Ordering::Release);
+                    },
+                    None,
+                )
+                .map_err(|e| BatcherbirdError::Audio(e.to_string()))?;
+            stream
+                .play()
+                .map_err(|e| BatcherbirdError::Audio(e.to_string()))?;
+            Ok(Self {
+                _stream: stream,
+                consumer,
+                failed,
+                samples: Vec::new(),
+            })
+        }
+        fn drain(&mut self) {
+            while let Ok(value) = self.consumer.pop() {
+                self.samples.push(value);
+            }
+            assert!(
+                !self.failed.load(Ordering::Acquire),
+                "virtual input failed or its ring overflowed"
+            );
+        }
+        fn collect_for(&mut self, duration: Duration) {
+            let deadline = Instant::now() + duration;
+            while Instant::now() < deadline {
+                self.drain();
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            self.drain();
+        }
+        fn assert_idle(&mut self) {
+            self.collect_for(Duration::from_millis(200));
+            assert!(
+                !self.samples.is_empty(),
+                "BlackHole must deliver input callbacks"
+            );
+            assert!(
+                self.samples.iter().all(|v| v.abs() < 0.000001),
+                "Reserved BlackHole channels 3/4 are active: refusing to capture another source"
+            );
+            self.samples.clear();
+        }
+        fn wait_finished(&mut self, player: &PreviewPlayer) {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !player.is_finished() && Instant::now() < deadline {
+                self.drain();
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            self.drain();
+            assert!(
+                !player.has_output_error(),
+                "actual preview output callback failed"
+            );
+            assert!(
+                player.is_finished(),
+                "preview failed to reach its drain deadline"
+            );
+            assert_eq!(player.playback_position(), 1.0);
+        }
+    }
+
+    fn source(rate: u32, channels: usize, frequency: f32, seconds: f32) -> Vec<f32> {
+        let frames = (seconds * rate as f32).round() as usize;
+        (0..frames)
+            .flat_map(|frame| {
+                let time = frame as f32 / rate as f32;
+                let amplitude = if time < 0.1 {
+                    0.003
+                } else if time < 0.25 {
+                    0.15
+                } else {
+                    0.15 * (-4.0 * (time - 0.25) / (seconds - 0.275)).exp()
+                };
+                let left = if time >= seconds - 0.025 {
+                    0.08 * (std::f32::consts::TAU * 880.0 * time).sin()
+                } else {
+                    amplitude * (std::f32::consts::TAU * frequency * time).sin()
+                };
+                if channels == 1 {
+                    vec![left]
+                } else {
+                    vec![left, -0.35 * left]
+                }
+            })
+            .collect()
+    }
+    fn configured_output(device: &cpal::Device) -> cpal::SupportedStreamConfig {
+        device
+            .supported_output_configs()
+            .unwrap()
+            .find(|c| {
+                c.channels() == 16
+                    && c.sample_format() == SampleFormat::F32
+                    && c.min_sample_rate().0 <= RATE
+                    && c.max_sample_rate().0 >= RATE
+            })
+            .expect("BlackHole needs 16-channel F32 output at 48kHz")
+            .with_sample_rate(cpal::SampleRate(RATE))
+    }
+    fn player(device: &cpal::Device, audio: &[f32], rate: u32, channels: u16) -> PreviewPlayer {
+        // Test-only fixture routing. Production playback has no acceptance-only
+        // channel branch: mono/stereo is mapped then padded to sixteen channels.
+        let mut routed = vec![0.0; audio.len() / channels as usize * 16];
+        for (source, destination) in audio
+            .chunks_exact(channels as usize)
+            .zip(routed.as_chunks_mut::<16>().0.iter_mut())
+        {
+            let mut stereo = [0.0; 2];
+            map_frame(source, channels as usize, 2, &mut stereo);
+            destination[OFFSET..OFFSET + 2].copy_from_slice(&stereo);
+        }
+        PreviewPlayer::play_configured(
+            Arc::from(routed),
+            rate,
+            16,
+            device,
+            configured_output(device),
+        )
+        .unwrap()
+    }
+    fn active_bounds(audio: &[f32]) -> (usize, usize) {
+        let active = |frame: &[f32; 2]| frame.iter().any(|v| v.abs() > 0.00001);
+        let first = audio
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .position(active)
+            .expect("generated signal was not captured");
+        let last = audio.as_chunks::<2>().0.iter().rposition(active).unwrap();
+        (first, last)
+    }
+    fn max_error(actual: &[f32], expected: &[f32]) -> f32 {
+        actual
+            .iter()
+            .zip(expected)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max)
+    }
+    fn correlation(actual: &[f32], expected: &[f32]) -> f64 {
+        let (mut dot, mut a2, mut b2) = (0.0_f64, 0.0_f64, 0.0_f64);
+        for (&a, &b) in actual.iter().zip(expected) {
+            dot += a as f64 * b as f64;
+            a2 += (a as f64).powi(2);
+            b2 += (b as f64).powi(2);
+        }
+        dot / (a2 * b2).sqrt()
+    }
+    fn pitch(audio: &[f32]) -> f64 {
+        let crossings: Vec<usize> = audio
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|f| f[0])
+            .collect::<Vec<_>>()
+            .windows(2)
+            .enumerate()
+            .filter(|(_, f)| f[0] <= 0.0 && f[1] > 0.0)
+            .map(|(i, _)| i)
+            .collect();
+        assert!(crossings.len() > 10);
+        RATE as f64 * (crossings.len() - 1) as f64
+            / (crossings.last().unwrap() - crossings[0]) as f64
+    }
+    fn write_wav(path: &Path, audio: &[f32]) {
+        let mut writer = hound::WavWriter::create(
+            path,
+            hound::WavSpec {
+                channels: 2,
+                sample_rate: RATE,
+                bits_per_sample: 32,
+                sample_format: hound::SampleFormat::Float,
+            },
+        )
+        .unwrap();
+        for &value in audio {
+            writer.write_sample(value).unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+    struct Measurement {
+        name: &'static str,
+        frames: usize,
+        error: f32,
+        correlation: f64,
+        frequency: f64,
+    }
+    impl Measurement {
+        fn json(&self) -> String {
+            format!("{{\"case\":\"{}\",\"pass\":true,\"signal_frames\":{},\"max_abs_error\":{},\"correlation\":{},\"measured_hz\":{}}}",
+                self.name, self.frames, self.error, self.correlation, self.frequency)
+        }
+    }
+    fn full_case(
+        name: &'static str,
+        input: &cpal::Device,
+        output: &cpal::Device,
+        rate: u32,
+        channels: u16,
+        directory: &Path,
+    ) -> Measurement {
+        let audio = source(rate, channels as usize, 440.0, 1.0);
+        let expected = prepare_preview_audio(&audio, channels as usize, rate, 2, RATE).unwrap();
+        let mut capture = Capture::start(input).unwrap();
+        capture.assert_idle();
+        let playback = player(output, &audio, rate, channels);
+        capture.wait_finished(&playback);
+        drop(playback); // Same cleanup as the GUI's completion Tick.
+        capture.collect_for(Duration::from_millis(120));
+        let (first, last) = active_bounds(&capture.samples);
+        let (expected_first, expected_last) = active_bounds(&expected);
+        let offset = first
+            .checked_sub(expected_first)
+            .expect("loopback starts before generated audio");
+        assert_eq!(
+            last - first,
+            expected_last - expected_first,
+            "{name}: tail must play before stream cleanup"
+        );
+        let aligned = &capture.samples[offset * 2..offset * 2 + expected.len()];
+        let error = max_error(aligned, &expected);
+        let similarity = correlation(aligned, &expected);
+        assert!(
+            error < 0.00001 && similarity > 0.99999,
+            "{name}: stereo/sample mismatch error={error} correlation={similarity}"
+        );
+        let quiet = aligned[..RATE as usize / 20 * 2]
+            .iter()
+            .map(|v| v.abs())
+            .fold(0.0, f32::max);
+        assert!(
+            quiet > 0.0025 && quiet < 0.0031,
+            "quiet attack must survive actual playback"
+        );
+        let tail = &aligned[aligned.len() - RATE as usize / 50 * 2..];
+        assert!(
+            tail.iter().any(|v| v.abs() > 0.07),
+            "terminal marker must survive completion/drop"
+        );
+        let frequency =
+            pitch(&aligned[(RATE as usize * 12 / 100) * 2..(RATE as usize * 23 / 100) * 2]);
+        assert!(
+            (frequency - 440.0).abs() < 2.0,
+            "{name}: pitch must stay440Hz, measured{frequency}"
+        );
+        write_wav(
+            &directory.join(format!("{name}_capture.wav")),
+            &capture.samples,
+        );
+        write_wav(&directory.join(format!("{name}_expected.wav")), &expected);
+        Measurement {
+            name,
+            frames: last - first + 1,
+            error,
+            correlation: similarity,
+            frequency,
+        }
+    }
+
+    #[test]
+    #[ignore = "requires explicit isolated BlackHole 16ch virtual loopback; never run on default/microphone devices"]
+    fn blackhole_preview_driver_acceptance() {
+        let directory = std::env::var_os("BATCHERBIRD_PLAYBACK_ACCEPTANCE_DIR")
+            .expect("Set BATCHERBIRD_PLAYBACK_ACCEPTANCE_DIR to an artifact directory before explicitly running this ignored test");
+        let directory = Path::new(&directory);
+        fs::create_dir_all(directory).unwrap();
+        let manager = AudioManager::new().unwrap();
+        let input = manager.find_input_device(Some(DEVICE)).unwrap();
+        let output = manager.find_output_device(Some(DEVICE)).unwrap();
+        assert_eq!(input.name().unwrap(), DEVICE);
+        assert_eq!(output.name().unwrap(), DEVICE);
+        // This is not a listener test. No default-device, microphone or speaker stream is opened.
+        let mut measurements = Vec::new();
+        for name in ["stereo48_first", "stereo48_repeat", "stereo48_third"] {
+            measurements.push(full_case(name, &input, &output, RATE, 2, directory));
+        }
+        measurements.push(full_case("mono48", &input, &output, RATE, 1, directory));
+        measurements.push(full_case(
+            "stereo441_resampled48",
+            &input,
+            &output,
+            44_100,
+            2,
+            directory,
+        ));
+
+        let mut stop_capture = Capture::start(&input).unwrap();
+        stop_capture.assert_idle();
+        let audio = source(RATE, 2, 440.0, 2.0);
+        let stopped = player(&output, &audio, RATE, 2);
+        stop_capture.collect_for(Duration::from_millis(150));
+        stopped.stop();
+        assert!(
+            stopped.is_finished(),
+            "explicit Stop bypasses natural drain"
+        );
+        assert!(!stopped.has_output_error());
+        drop(stopped);
+        stop_capture.collect_for(Duration::from_millis(250));
+        let (first, last) = active_bounds(&stop_capture.samples);
+        assert!(
+            last - first < RATE as usize * 35 / 100,
+            "Stop must not continue the two-second take"
+        );
+        assert!(
+            stop_capture.samples[stop_capture.samples.len() - RATE as usize / 20 * 2..]
+                .iter()
+                .all(|v| v.abs() < 0.000001),
+            "Stop must leave silent output"
+        );
+        write_wav(&directory.join("stop_capture.wav"), &stop_capture.samples);
+        let (expected_first, _) = active_bounds(&audio);
+        let actual_prefix = &stop_capture.samples[first * 2..(last + 1) * 2];
+        let expected_prefix = &audio[expected_first * 2..expected_first * 2 + actual_prefix.len()];
+        let stop_error = max_error(actual_prefix, expected_prefix);
+        let stop_similarity = correlation(actual_prefix, expected_prefix);
+        assert!(
+            stop_error < 0.00001 && stop_similarity > 0.99999,
+            "stopped prefix must match the generated take"
+        );
+        measurements.push(Measurement {
+            name: "stop",
+            frames: last - first + 1,
+            error: stop_error,
+            correlation: stop_similarity,
+            frequency: pitch(actual_prefix),
+        });
+        drop(stop_capture);
+
+        let mut switch_capture = Capture::start(&input).unwrap();
+        switch_capture.assert_idle();
+        let old_audio = source(RATE, 2, 330.0, 2.0);
+        let old = player(&output, &old_audio, RATE, 2);
+        switch_capture.collect_for(Duration::from_millis(150));
+        old.stop();
+        drop(old);
+        let new_audio = source(RATE, 2, 660.0, 1.0);
+        let new = player(&output, &new_audio, RATE, 2);
+        switch_capture.wait_finished(&new);
+        drop(new);
+        switch_capture.collect_for(Duration::from_millis(120));
+        let expected = prepare_preview_audio(&new_audio, 2, RATE, 2, RATE).unwrap();
+        let (_, last) = active_bounds(&switch_capture.samples);
+        let (_, expected_last) = active_bounds(&expected);
+        let offset = last - expected_last;
+        let aligned = &switch_capture.samples[offset * 2..offset * 2 + expected.len()];
+        // Allow one startup buffer, then prove no previous-note bleed remains.
+        let ignore = RATE as usize / 20 * 2;
+        let error = max_error(&aligned[ignore..], &expected[ignore..]);
+        let similarity = correlation(&aligned[ignore..], &expected[ignore..]);
+        assert!(
+            error < 0.00001 && similarity > 0.99999,
+            "switch left stale audio error={error} correlation={similarity}"
+        );
+        let frequency =
+            pitch(&aligned[(RATE as usize * 12 / 100) * 2..(RATE as usize * 23 / 100) * 2]);
+        assert!((frequency - 660.0).abs() < 2.0);
+        write_wav(
+            &directory.join("switch_capture.wav"),
+            &switch_capture.samples,
+        );
+        write_wav(&directory.join("switch_expected.wav"), &expected);
+        measurements.push(Measurement {
+            name: "switch",
+            frames: expected_last + 1,
+            error,
+            correlation: similarity,
+            frequency,
+        });
+        let cases = measurements
+            .iter()
+            .map(Measurement::json)
+            .collect::<Vec<_>>()
+            .join(",\n");
+        fs::write(directory.join("report.json"), format!("{{\"device\":\"BlackHole 16ch\",\"output_rate\":48000,\"channels\":[3,4],\"listener_verified\":false,\"cases\":[{cases}]}}\n")).unwrap();
+        println!("PASS: {} isolated virtual-driver cases. Artifacts: {}. Listener acceptance is pending.", measurements.len(), directory.display());
     }
 }

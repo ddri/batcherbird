@@ -12,7 +12,7 @@ jobs:
   # Builds the current Vizia application through scripts/package-macos.sh.
   # A v* tag publishes a DMG: complete docs/RELEASE_CHECKLIST.md before tagging.
   # Signing/notarization are opt-in local steps documented in DISTRIBUTION.md.
-  # This workflow has no developer credentials and publishes a local unsigned
+  # This workflow has no developer credentials and publishes a local ad hoc signed
   # candidate; an upload does not establish hardware or OS compatibility.
   build-macos:
     name: Build & Release macOS DMG

@@ -167,6 +167,109 @@ Local evidence (generated artifacts, excluded from Git):
 - Render SHA-256: `715c5f16f4c971c5a4f9e965c997bbafda5f4b1f396e569c5b22b4e1a9cdae88`
 - Renderer patch SHA-256: `3ce52a1b85b7ed5047ced66cea566e7ab41deb700b849a8331245ae4476272bb`
 
-**Not tested:** DecentSampler actual loading/rendering (no installed player
-was found), subjective listening, and experimental loops. These remain
-acceptance gates, rather than inferred passes from the SFZ result.
+At the October 7 baseline, DecentSampler rendering, subjective listening,
+and experimental loops were not tested. The October 8 follow-up below adds
+actual DecentSampler engine evidence without treating the SFZ pass as proof.
+
+## Actual DecentSampler VST3 follow-up — October 8, 2026
+
+The official [download page](https://store.decentsamples.com/downloads/decent-sampler/versions)
+provides DecentSampler **1.36.1** directly, without an account. Its macOS
+package was extracted into `/private/tmp`; nothing was installed into
+Applications or the system plug-in directories. Package verification
+reported Developer ID Installer **Decidedly, LLC (5K8EG37W74)** and trusted
+Apple notarization. The extracted VST3 passed strict code-signature checks.
+
+The player ran through Spotify's [Pedalboard MIDI instrument host](https://spotify.github.io/pedalboard/reference/pedalboard.html),
+version **0.9.26**, with Python 3.12 and Mido **1.3.3**. The new
+`scripts/render-decent-sampler.py` reads the actual generated MIDI file and
+restores the exported instrument's XML into the player's VST3 component
+state. It preserves musical mappings and sample attributes, adds the
+player's private sample-directory/library context, and preserves its JUCE
+wrapper/private data. This is **state restoration into the real player
+engine**, rather than a native preset-picker test or a byte-identical preset
+load. The tested state protocol is specific to this player/host combination;
+an unknown state format fails instead of silently substituting another player.
+
+The complete instrument folder was relocated to `moved Élan synth 你好`,
+covering spaces and non-ASCII directory names. Actual rendering resolved all
+six adjacent sample WAVs. The 45-probe run at **48kHz / 256-frame blocks**
+passed **31/45**; the remaining probes expose a reproducible compatibility
+discrepancy:
+
+| Probe | Expected | Observed in this VST3 host |
+| --- | --- | --- |
+| All seven in-range keys, velocity 1 | Low layer sounds | Silent |
+| All seven in-range keys, velocity 96 | High layer sounds | Low layer sounds |
+| Other 31 probes | Expected pitch/root/layer/stereo or outside-key silence | Pass |
+
+A separate sweep of **all velocities 1–127 at MIDI 60** reproduced silence
+only at velocity 1 and the high-layer transition at **97**, rather than 96.
+This is consistent with a floating-point velocity conversion/truncation at
+the host/player boundary, but the responsible layer is **not established**.
+The exporter still specifies the correct musical MIDI boundaries: low
+1–95, high 96–127. Do not shift export zones to compensate without comparing
+another host or the native player. This DecentSampler gate is **not passed**.
+
+An additional velocity-127 C4 note held for 3.5 seconds sounded normally
+(left peak approximately 0.179) and was exactly silent in both channels after
+2.1 seconds, demonstrating that this two-second, loops-off sample did not
+acquire an unexpected repeating sustain. This numerical check does not
+establish subjective click/release quality. Pedalboard exposes no player
+voice counter here, so audio alone cannot rule out duplicate identical zones.
+
+### Repeat the isolated player test
+
+Use a new temporary directory and fixture output. Verify the package/plugin
+signatures before loading it. The tested download's SHA-256 is
+`300ebf938d127bec0103009abd49e8eb62200230fae1e4cf54b88a6427edc026`.
+
+```sh
+mkdir -p /private/tmp/batcherbird-decent-1.36.1
+curl -fL https://cdn.decentsamples.com/production/builds/ds/1.36.1/Decent_Sampler-1.36.1-Mac.zip \
+  -o /private/tmp/batcherbird-decent-1.36.1/download.zip
+unzip /private/tmp/batcherbird-decent-1.36.1/download.zip \
+  -d /private/tmp/batcherbird-decent-1.36.1/archive
+pkgutil --check-signature /private/tmp/batcherbird-decent-1.36.1/archive/Decent_Sampler-1.36.1-Mac.pkg
+pkgutil --expand-full /private/tmp/batcherbird-decent-1.36.1/archive/Decent_Sampler-1.36.1-Mac.pkg \
+  /private/tmp/batcherbird-decent-1.36.1/expanded
+codesign --verify --strict --verbose=2 \
+  /private/tmp/batcherbird-decent-1.36.1/expanded/VST3.pkg/Payload/Library/Audio/Plug-Ins/VST3/DecentSampler.vst3
+python3.12 -m venv /private/tmp/batcherbird-decent-1.36.1/python312
+/private/tmp/batcherbird-decent-1.36.1/python312/bin/python -m pip install pedalboard==0.9.26 mido==1.3.3
+mkdir -p /private/tmp/batcherbird-decent-1.36.1/user
+```
+
+Generate/move a fresh fixture using the earlier section. Then run:
+
+```sh
+CFFIXED_USER_HOME=/private/tmp/batcherbird-decent-1.36.1/user \
+  /private/tmp/batcherbird-decent-1.36.1/python312/bin/python scripts/render-decent-sampler.py \
+  /private/tmp/batcherbird-decent-1.36.1/expanded/VST3.pkg/Payload/Library/Audio/Plug-Ins/VST3/DecentSampler.vst3 \
+  "target/sampler-acceptance/moved instrument with spaces/Acceptance.dspreset" \
+  target/sampler-acceptance/boundary-sweep.mid \
+  target/sampler-acceptance/decent-render.wav \
+  --tail-probe target/sampler-acceptance/held-note.wav \
+  --velocity-sweep target/sampler-acceptance/velocity-sweep.csv
+python3 scripts/check-sampler-render.py target/sampler-acceptance \
+  target/sampler-acceptance/decent-render.wav \
+  --report target/sampler-acceptance/decent-report.json
+python3 scripts/test-decent-render.py
+```
+
+`CFFIXED_USER_HOME` keeps this player's logs/database in the temporary user
+directory; it leaves the real home directory unchanged. The renderer refuses
+existing output paths, emits float WAV to preserve quiet probes, and records
+host/player versions and load method beside the render. The four-second
+held-note check requires actual early sound, rejecting an entirely silent
+render. The optional velocity sweep reports every observed layer in CSV.
+
+Local evidence, excluded from Git, is under
+`target/sampler-acceptance-20261008-decentsampler/`: `decent-confirm.wav`,
+`decent-confirm.metadata.json`, `decent-confirm-report.json`,
+`held-note-confirm.wav`, and `velocity-sweep-confirm.csv`.
+
+**Remaining gates:** compare the velocity discrepancies in a second/native
+host, native `.dspreset` picker loading, actual voice/zone count, subjective
+listening, and experimental sustain loops. No compatibility workaround has
+been applied to the exporter.

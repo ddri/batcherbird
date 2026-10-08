@@ -47,12 +47,15 @@ jobs:
         run: cargo test --workspace
 
       - name: Sampler audio analyzer regressions
-        run: python3 scripts/test-sampler-render.py
+        run: |
+          python3 scripts/test-sampler-render.py
+          python3 scripts/test-decent-render.py
 
       - name: Packaging rollback and metadata regressions
         run: |
           bash scripts/test-package-macos.sh
           bash scripts/test-verify-macos-package.sh
+          python3 scripts/test-package-manifest.py
 
   package-macos:
     name: Package macOS App & DMG
@@ -76,6 +79,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Capture source revision
+        id: candidate-source
+        run: |
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          test -z "$(git status --porcelain)"
+
       - name: Package macOS App and DMG
         run: ./scripts/package-macos.sh
 
@@ -85,6 +94,22 @@ jobs:
           trap 'rm -rf "$copied_package"' EXIT
           ditto dist/Batcherbird.app "$copied_package/Batcherbird.app"
           bash scripts/verify-macos-package.sh "$copied_package/Batcherbird.app" dist/Batcherbird.dmg
+
+      - name: Write candidate provenance
+        env:
+          SOURCE_REVISION: ${{ steps.candidate-source.outputs.revision }}
+        run: |
+          python3 scripts/package-manifest.py dist/Batcherbird.app dist/Batcherbird.dmg dist/Batcherbird-manifest.json --revision "$SOURCE_REVISION"
+
+      - name: Upload hardware acceptance candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: batcherbird-macos-candidate-${{ steps.candidate-source.outputs.revision }}
+          path: |
+            dist/Batcherbird.dmg
+            dist/Batcherbird-manifest.json
+          if-no-files-found: error
+          retention-days: 14
 
   rust-linux:
     name: Rust Linux Build (core + vizia)
