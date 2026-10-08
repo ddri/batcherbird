@@ -8,16 +8,14 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT_DIR}"
 
 APP_NAME="Batcherbird"
-# Signing is explicit: local builds need no developer account or credentials.
+# Local bundles use an ad hoc seal; Developer ID signing remains opt-in.
 SIGN_IDENTITY="${BATCHERBIRD_SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${BATCHERBIRD_NOTARY_PROFILE:-}"
 if [[ -n "${NOTARY_PROFILE}" && ( -z "${SIGN_IDENTITY}" || "${SIGN_IDENTITY}" == "-" ) ]]; then
     echo "Notarization requires a Developer ID signing identity." >&2
     exit 1
 fi
-if [[ -n "${SIGN_IDENTITY}" ]]; then
-    command -v codesign >/dev/null || { echo "Signing requires codesign." >&2; exit 1; }
-fi
+command -v codesign >/dev/null || { echo "macOS packaging requires codesign." >&2; exit 1; }
 if [[ -n "${NOTARY_PROFILE}" ]]; then
     for tool in xcrun ditto hdiutil; do
         command -v "${tool}" >/dev/null || { echo "Notarization requires ${tool}." >&2; exit 1; }
@@ -153,8 +151,11 @@ if [[ -n "${SIGN_IDENTITY}" ]]; then
     echo "==> Signing app with hardened runtime..."
     codesign --force --sign "${SIGN_IDENTITY}" --options runtime --timestamp \
         --entitlements "${SCRIPT_DIR}/macos-entitlements.plist" "${APP_DIR}"
-    codesign --verify --deep --strict "${APP_DIR}"
+else
+    echo "==> Sealing local app bundle with an ad hoc signature..."
+    codesign --force --sign - --timestamp=none "${APP_DIR}"
 fi
+codesign --verify --deep --strict "${APP_DIR}"
 
 # Staple the app before embedding it in the DMG so either distribution form can
 # carry its ticket offline. Credentials stay in the user's Keychain profile.

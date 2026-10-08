@@ -124,6 +124,7 @@ pub struct AppData {
     pub selected_sample_label: String,
     pub export_in_progress: bool,
     pub session_busy: bool,
+    pub diagnostics_busy: bool,
     pub pending_session_name: Option<String>,
     #[lens(ignore)]
     pub pending_session: Option<PendingSession>,
@@ -280,6 +281,7 @@ impl Default for AppData {
             selected_sample_label: "No sample selected".into(),
             export_in_progress: false,
             session_busy: false,
+            diagnostics_busy: false,
             pending_session_name: None,
             pending_session: None,
             controls_busy: false,
@@ -484,6 +486,7 @@ impl AppData {
         matches!(self.app_state, AppState::Recording | AppState::Stopping)
             || self.export_in_progress
             || self.session_busy
+            || self.diagnostics_busy
             || self.is_testing_note
     }
 
@@ -1468,6 +1471,10 @@ impl Model for AppData {
                 // player reaches the end (or there's no player), clear playing
                 // state so the Play/Stop button updates.
                 if let Some(player) = &self.preview_player { self.playback_position = player.playback_position() as f64; }
+                if self.preview_player.as_ref().is_some_and(|player| player.has_output_error()) {
+                    self.info_message = None;
+                    self.error_message = Some("Preview audio output failed. Check the output device and try playback again.".into());
+                }
                 if self.is_playing
                     && self
                         .preview_player
@@ -1484,6 +1491,33 @@ impl Model for AppData {
             AppEvent::SetTrimSilence(enabled) => { self.trim_silence = *enabled; }
             AppEvent::SetAutoLoop(enabled) => { self.auto_loop = *enabled; self.select_sample(self.selected_sample); }
             AppEvent::SelectSample(index) => { if !self.is_busy() { self.select_sample(*index); } }
+            AppEvent::ExportDiagnostics => {
+                if self.is_busy() { return; }
+                let report = crate::diagnostics::report(self);
+                self.diagnostics_busy = true;
+                let mut proxy = cx.get_proxy();
+                std::thread::spawn(move || {
+                    if let Some(path) = rfd::FileDialog::new().add_filter("Diagnostics JSON", &["json"]).set_file_name("Batcherbird-diagnostics.json").save_file() {
+                        match crate::diagnostics::save_report(&path, &report) {
+                            Ok(()) => { let _ = proxy.emit(AppEvent::DiagnosticsSaved); }
+                            Err(error) => { let _ = proxy.emit(AppEvent::DiagnosticsError(error)); }
+                        }
+                    } else { let _ = proxy.emit(AppEvent::DiagnosticsDialogCancelled); }
+                });
+            }
+            AppEvent::DiagnosticsSaved => {
+                self.diagnostics_busy = false;
+                if self.error_message.as_deref().is_some_and(|message| message.starts_with("Could not save diagnostics:")) {
+                    self.error_message = None;
+                }
+                self.info_message = Some("Diagnostics report saved. Review the JSON before sharing it.".into());
+            }
+            AppEvent::DiagnosticsError(error) => {
+                self.diagnostics_busy = false;
+                self.info_message = None;
+                self.error_message = Some(error.clone());
+            }
+            AppEvent::DiagnosticsDialogCancelled => { self.diagnostics_busy = false; }
             AppEvent::SaveSession => {
                 if self.is_busy() { return; }
                 self.session_busy = true;
@@ -2192,5 +2226,72 @@ mod tests {
         assert!(data.error_message.is_none());
         assert_eq!(data.session_status, "retry.batcherbird");
         assert_eq!(data.recorded_samples[0].audio_data, vec![0.25, -0.25]);
+    }
+    #[test]
+    fn diagnostic_completion_cancel_and_error_leave_current_session_unchanged() {
+        for event in [
+            AppEvent::DiagnosticsDialogCancelled,
+            AppEvent::DiagnosticsSaved,
+            AppEvent::DiagnosticsError("Could not save diagnostics: denied".into()),
+        ] {
+            let mut data = edited_confirmation_session();
+            data.diagnostics_busy = true;
+            let settings = serde_json::to_value(data.session_settings()).unwrap();
+            let revision = data.settings_revision;
+            let backend = dispatch_session_events(data, std::slice::from_ref(&event));
+            let data = backend.0.data::<AppData>().unwrap();
+            assert!(!data.diagnostics_busy && !data.controls_busy);
+            assert_eq!(
+                serde_json::to_value(data.session_settings()).unwrap(),
+                settings
+            );
+            assert_eq!(data.settings_revision, revision);
+            assert!(data.has_unsaved_changes);
+            assert_eq!(data.session_status, "current.batcherbird");
+            assert_eq!(data.recorded_samples[0].audio_data, vec![0.25, -0.25]);
+            assert_eq!(data.app_state, AppState::Review);
+        }
+    }
+
+    #[test]
+    fn diagnostic_export_is_guarded_during_other_operations_and_preserves_recent_error_on_cancel() {
+        let mut data = edited_confirmation_session();
+        data.session_busy = true;
+        data.error_message = Some("Existing recording error".into());
+        let backend = dispatch_session_events(data, &[AppEvent::ExportDiagnostics]);
+        let data = backend.0.data::<AppData>().unwrap();
+        assert!(data.session_busy);
+        assert!(!data.diagnostics_busy);
+        let mut data = edited_confirmation_session();
+        data.diagnostics_busy = true;
+        data.error_message = Some("Existing recording error".into());
+        let backend = dispatch_session_events(data, &[AppEvent::DiagnosticsDialogCancelled]);
+        let data = backend.0.data::<AppData>().unwrap();
+        assert_eq!(
+            data.error_message.as_deref(),
+            Some("Existing recording error")
+        );
+    }
+
+    #[test]
+    fn successful_diagnostic_retry_clears_only_the_previous_report_error() {
+        for (previous, expected) in [
+            ("Could not save diagnostics: permission denied", None),
+            ("Audio input disconnected", Some("Audio input disconnected")),
+        ] {
+            let mut data = edited_confirmation_session();
+            data.diagnostics_busy = true;
+            data.error_message = Some(previous.into());
+            let backend = dispatch_session_events(data, &[AppEvent::DiagnosticsSaved]);
+            assert_eq!(
+                backend
+                    .0
+                    .data::<AppData>()
+                    .unwrap()
+                    .error_message
+                    .as_deref(),
+                expected
+            );
+        }
     }
 }

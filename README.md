@@ -49,6 +49,11 @@ The [hardware acceptance procedure](docs/HARDWARE_ACCEPTANCE.md)
 provides a short test with six takes and explicit expected key/velocity boundaries
 for when your synth is available.
 
+Use **Export diagnostics…** in the settings sidebar to save a local JSON snapshot
+of selected devices, capture settings, session state, and error category. The
+[diagnostics guide](docs/DIAGNOSTICS.md) explains its contents and unavailable fields.
+No audio is included; review device names before sharing the report.
+
 ## Capture a patch
 
 1. Connect the Mac's MIDI output to the synth and the synth's audio output to your audio interface. Select the intended patch on the synth.
@@ -67,7 +72,7 @@ Preferences and the automatic recovery snapshot live in the platform configurati
 
 ## Packaging and validation
 
-The [macOS packaging script](scripts/package-macos.sh) builds `batcherbird-vizia`, stages an `.app`, and creates a DMG when `hdiutil` is available. It replaces only `Batcherbird.app` and `Batcherbird.dmg` after successful staging, preserves unrelated output files, and restores previous artifacts if installation fails. Local builds do not apply Developer ID signing or notarization by default. Optional signing and Keychain-profile notarization are described in the [distribution guide](docs/DISTRIBUTION.md); a linker-generated ad hoc signature is not Developer ID distribution signing. The bundle minimum macOS version follows the executable's Mach-O metadata. Tag pushes trigger the [release workflow](.github/workflows/release.yml), so complete the release checklist before pushing a release tag.
+The [macOS packaging script](scripts/package-macos.sh) builds `batcherbird-vizia`, stages an `.app`, and creates a DMG when `hdiutil` is available. It replaces only `Batcherbird.app` and `Batcherbird.dmg` after successful staging, preserves unrelated output files, and restores previous artifacts if installation fails. Local builds seal the assembled app with an ad hoc signature; Developer ID signing and notarization remain opt-in. Optional signing and Keychain-profile notarization are described in the [distribution guide](docs/DISTRIBUTION.md); an ad hoc bundle signature does not establish Developer ID distribution trust. The bundle minimum macOS version follows the executable's Mach-O metadata. Tag pushes trigger the [release workflow](.github/workflows/release.yml), so complete the release checklist before pushing a release tag.
 
 Choose a separate local candidate directory to review a build while preserving existing distribution artifacts:
 
