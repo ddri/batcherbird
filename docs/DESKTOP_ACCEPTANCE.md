@@ -198,3 +198,76 @@ corrupt/missing-session Open and dialog cancellation, Tab/Shift+Tab and arrow fo
 native AXPress, VoiceOver speech, and diagnostics Save-dialog behavior. The prepared
 bundle can be used for hands-on baseline review; rebuild it before checking changes
 added later on the branch.
+
+## Accessibility state follow-up — October 9, 2026
+
+Native review on `0578919` exposed a selected row changing on screen while the
+accessibility tree retained the previous checked row. A production-list regression
+reproduced the cause: checked-state changes requested CSS updates but did not mark
+the affected nodes dirty for accessibility. The focused Vizia patch now publishes
+these changes from both checked bindings and `EventContext::set_checked`.
+
+A related regression showed disabled bindings also omitted incremental updates.
+The patch now publishes direct and inherited disabled-state changes so assistive
+clients receive the current disabled flag and Click availability. Tests exercise
+both enable/disable transitions, real button dispatch, and selection changes through
+the production list. Both regressions failed before their fixes and pass afterward;
+the eight focused accessibility/navigation tests and strict Clippy pass. Fresh native
+verification of these changes remains separate from the implementation tests.
+
+An additional native observation of a blank instrument-name editor after session
+replacement could not yet be reproduced through a valid headless editing sequence.
+The textbox source binds external name changes, while replacing a session with the
+same model name does not necessarily change that binding. No speculative textbox
+fix was made; verify the displayed editor against the restored session name in the
+fresh native build. Automated text-input delivery was unreliable during the native
+attempt and does not establish that normal human typing is broken.
+
+## Native review and dialogs — October 9, 2026
+
+A fresh isolated demo app built from merged `0578919` was inspected at
+1040 × 720 logical content size on macOS 26.1 / Apple Silicon. Its initial CUA
+binding took 1,450.3 seconds despite a tool timeout and an internal timeout attempt;
+subsequent screenshots and dialog interactions completed in seconds. This baseline
+**predates the checked/disabled accessibility fix above**.
+
+Observed native checks:
+
+- Review layout, expanded export controls, diagnostics button, waveform and transport
+  fit at minimum size. The format menu text was readable when opened.
+- Export diagnostics opened a native Save panel and saved
+  `target/manual-qa/desktop-2026-10-09/native-diagnostics.json`. The parsed report
+  contained the expected 18-take demo snapshot and explicit privacy metadata,
+  without audio/waveforms/session/output paths. Success left the session Saved.
+- Native Open loaded the six-take `quiet-stereo.batcherbird`; the count and title
+  matched. Sample activation followed by Down visibly selected D#4 / velocity 64
+  and updated the waveform. The old accessibility checked state did not match.
+- Tab showed visible focus on the format control. Automated text insertion and
+  reverse-tab targeting were unreliable, so normal typing and complete keyboard
+  traversal are not accepted by this attempt.
+- A native export-folder chooser was canceled; controls returned and the six-take
+  modified session remained. Native diagnostics Save, session Save, and Open panels
+  were also canceled; Saved status and six takes survived and controls recovered.
+- A deliberately long replacement filename was ellipsized while both decisions
+  remained visible. Keep current session dismissed the banner and preserved the
+  modified session, selected sample and six takes. A second Open replacement
+  restored Saved status, the replacement title and six takes.
+- Opening corrupt JSON displayed its parsing error and explicit preservation
+  message; Modified status, selected sample and six takes survived. The long
+  error stayed bounded and transport remained visible. A missing-audio fixture
+  also displayed its missing-file error and keep-manifest/sidecar guidance without
+  replacing the saved six-take session.
+
+The instrument-name editor remained visibly blank after the editing attempt and
+replacement, while the header showed the restored name. This observation is
+retained for hands-on reproduction; unreliable synthetic text delivery prevents
+a conclusion about ordinary human typing. It is not marked fixed.
+
+Still pending: fresh native checks of the accessibility patch, normal input and
+full Tab/Shift+Tab traversal, static setup/armed/recording/stopping visual layouts,
+VoiceOver speech,
+physical playback listening, and fresh-account installation/TCC. No native launch
+result is claimed for the downloaded CI app: the exposed CUA runtime has no
+`computer.launch_app` implementation, and another long Vizia binding was avoided
+after the measured 24-minute stall. Its integrity and Gatekeeper results are in
+[DISTRIBUTION.md](DISTRIBUTION.md).

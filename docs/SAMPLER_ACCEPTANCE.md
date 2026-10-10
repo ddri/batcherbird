@@ -273,3 +273,142 @@ Local evidence, excluded from Git, is under
 host, native `.dspreset` picker loading, actual voice/zone count, subjective
 listening, and experimental sustain loops. No compatibility workaround has
 been applied to the exporter.
+
+## Independent VST3 SDK diagnosis — October 9, 2026
+
+The discrepancy was reproduced in a second host built directly against
+[Steinberg's official VST3 SDK](https://github.com/steinbergmedia/vst3sdk),
+revision `3cdf9ca5d1f5b1b21e0a86832aa4abe55607bd96` (SDK 3.8.1).
+`scripts/render-decent-vst3` uses the SDK's module loader, component/controller
+interfaces, event list, and float audio buffers. It sends normalized VST3
+note events directly to DecentSampler; no Pedalboard/JUCE host conversion,
+native editor, or audio device is involved. The SDK's
+[note-on interface](https://github.com/steinbergmedia/vst3_pluginterfaces/blob/4f547e8e102b47de4a8b8aaf343c73b700786372/vst/ivstevents.h)
+defines velocity as a float in the 0–1 range.
+
+The production export still passed **31/45** in this independent host,
+with the same fourteen failures as Pedalboard. The standard SDK render was
+byte-identical to the original Pedalboard render: SHA-256
+`6bc3efd7416f3f69398814296c4a3b6dbd9809d2d2ace0a33a889f18e50cae0c`.
+Per-event CSV traces record the exact float delivered to the player.
+
+| Controlled change | Result | Implication |
+| --- | --- | --- |
+| Standard float MIDI velocity / 127 | 31/45 | Failure reproduces outside Pedalboard |
+| Move incoming float one representable step upward | 31/45; identical audio | An incoming-float nudge alone does not fix it |
+| Restore minimal private path context, without factory settings | 31/45 | Inherited factory metadata is not required to reproduce it |
+| Set private velocity-preprocessor output minimum to 1 | 31/45 | That setting alone does not fix it |
+| Subtract 0.00001 from diagnostic group velocity thresholds, leaving upper 127 unchanged | 45/45 | Failure is sensitive to the player's velocity-zone boundary comparisons |
+
+These controls isolate the discrepancy to the **DecentSampler component's
+velocity-zone comparison/conversion path**, rather than a Pedalboard-only
+problem or incorrect integer export mapping. The proprietary player's exact
+internal implementation has not been inspected. The incoming-float trace
+alone is not proof of a particular truncation operation: the unsuccessful
+`nextafter` control is retained to make that limitation explicit.
+
+The fractional-threshold result is **diagnostic evidence, not a compatibility
+pass or an exporter workaround**. It alters the component's musical mapping
+for the control run, and fractional attributes are outside the documented
+integer mapping baseline. Production presets continue to use low 1–95 and
+high 96–127. The standard DecentSampler acceptance gate remains failed;
+native file-picker/another player API comparison and a vendor resolution
+remain follow-up work. Subjective listening and identical duplicate-voice
+detection are still untested.
+
+### Reproduce the independent host
+
+This small host is macOS-specific. Keep the SDK checkout/license files in
+an isolated directory; nothing is installed or added to the Rust dependency
+graph. Fetch the recorded SDK revision and its matching submodules:
+
+```sh
+git clone --no-checkout https://github.com/steinbergmedia/vst3sdk.git \
+  /private/tmp/batcherbird-vst3-sdk-20261009
+git -C /private/tmp/batcherbird-vst3-sdk-20261009 checkout --detach \
+  3cdf9ca5d1f5b1b21e0a86832aa4abe55607bd96
+git -C /private/tmp/batcherbird-vst3-sdk-20261009 submodule update --init --recursive
+cmake -S scripts/render-decent-vst3 -B /private/tmp/batcherbird-decent-vst3-build \
+  -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+  -DVST3_SDK_ROOT=/private/tmp/batcherbird-vst3-sdk-20261009
+cmake --build /private/tmp/batcherbird-decent-vst3-build \
+  --target batcherbird_decent_vst3 -j 4
+mkdir -p /private/tmp/batcherbird-decent-vst3-user
+```
+
+With the verified extracted DecentSampler package from the preceding section,
+generate its own initial component state. Use fresh output names for each
+run; both host and preparation script refuse existing output files:
+
+```sh
+CFFIXED_USER_HOME=/private/tmp/batcherbird-decent-vst3-user \
+  /private/tmp/batcherbird-decent-vst3-build/batcherbird_decent_vst3 \
+  /private/tmp/batcherbird-decent-1.36.1/expanded/VST3.pkg/Payload/Library/Audio/Plug-Ins/VST3/DecentSampler.vst3 \
+  --seed /private/tmp/batcherbird-decent-vst3-seed.bin
+python3 scripts/render-decent-vst3/prepare-state.py \
+  /private/tmp/batcherbird-decent-vst3-seed.bin \
+  "target/sampler-acceptance/moved instrument with spaces/Acceptance.dspreset" \
+  target/sampler-acceptance/component-state.bin
+CFFIXED_USER_HOME=/private/tmp/batcherbird-decent-vst3-user \
+  /private/tmp/batcherbird-decent-vst3-build/batcherbird_decent_vst3 \
+  /private/tmp/batcherbird-decent-1.36.1/expanded/VST3.pkg/Payload/Library/Audio/Plug-Ins/VST3/DecentSampler.vst3 \
+  target/sampler-acceptance/component-state.bin \
+  target/sampler-acceptance/probes.csv \
+  target/sampler-acceptance/sdk-standard.wav \
+  target/sampler-acceptance/sdk-events.csv
+python3 scripts/check-sampler-render.py target/sampler-acceptance \
+  target/sampler-acceptance/sdk-standard.wav \
+  --report target/sampler-acceptance/sdk-standard-report.json
+```
+
+The optional host `--nextafter` flag and preparation script
+`--diagnostic-fractional-thresholds` flag reproduce the respective controls.
+Use separate component-state/render/report paths, and keep those reports
+distinct from standard acceptance. The SDK host follows the generated
+`probes.csv` timings and holds each note for 500ms; it bypasses MIDI-file
+decoding to investigate the actual VST3 note-event interface.
+
+Local evidence is under `target/sampler-acceptance-20261009-sdk/`, including
+`standard-report.json`, `standard-events.csv`, `standard-confirm-report.json`,
+`nextafter-report.json`, `minimal-context-report.json`,
+`min-output-one-report.json`, and `fractional-threshold-report.json`.
+The fractional control render SHA-256 is
+`0c921d08dc6bad1e54d97ff1dce1bffd5112ec3cd89f030cf4b8e456e6ff579d`.
+
+The SDK host's CLI preflight rejects seed mode with extra arguments and refuses
+existing destinations in either mode. Render and event trace must resolve to
+distinct paths (including directory symlink aliases). Probe numbers must parse
+completely, be finite, and lie within the documented bounds: start 0–3600s,
+note 0–127, velocity 1–127. These checks run before loading the player; sample
+rate and block size are fixed at 48kHz and 256 frames.
+
+Run the plugin-free overwrite, path-collision, and numeric-input regressions
+against the compiled host:
+
+```sh
+python3 scripts/render-decent-vst3/test-cli.py \
+  /private/tmp/batcherbird-decent-vst3-build/batcherbird_decent_vst3
+```
+
+All ten CLI tests passed on October 9, including the previously reproduced
+extra-argument seed overwrite and case-insensitive destination collision. Both
+outputs are reserved before loading the player with atomic exclusive creation
+and written through those original file descriptors. Failure removes only
+reservations whose paths still identify the owned inode. Seed output uses the
+same exclusive creation. Four state-format and ten audio-analyzer tests
+also passed using the isolated Python 3.12 environment. After the CLI fixes,
+`exclusive-buffered-fix.wav` and `exclusive-buffered-fix-report.json` repeat the standard 31/45
+result; the WAV SHA-256 remains
+`6bc3efd7416f3f69398814296c4a3b6dbd9809d2d2ace0a33a889f18e50cae0c`.
+
+### Native standalone attempt — October 9, 2026
+
+The extracted official DecentSampler 1.36.1 standalone app passed complete
+code-signature verification and launched via CUA. App binding took 252.7 seconds.
+The welcome UI initially offered store-account setup; no account was created and
+no credentials or agreements were entered. After dismissing the welcome overlay,
+the main keyboard and FILE button were visible. Native button, coordinate and
+keyboard attempts did not expose the local preset menu or a file picker, so
+**native `.dspreset` loading was not verified**. This automation limitation does
+not establish a player defect. The second-host evidence above uses the actual
+component engine and state restoration, with its stated limits.

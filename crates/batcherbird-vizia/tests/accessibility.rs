@@ -150,3 +150,96 @@ fn keyboard_audition_pairs_note_off_on_release_and_focus_loss() {
         vec![Some(61), None, Some(61), None]
     );
 }
+
+#[test]
+fn event_context_checked_change_publishes_incremental_toggle_update() {
+    let mut cx = Context::default();
+    let button = Button::new(&mut cx, |cx| Label::new(cx, "Enable"))
+        .name("Enable option")
+        .checked(false)
+        .on_press(|cx| cx.set_checked(true))
+        .entity();
+    let mut backend = BackendContext::new(cx);
+    backend.init_accessibility_tree();
+    backend.process_tree_updates();
+    backend.0.tree_updates.clear();
+    backend.send_event(
+        Event::new(WindowEvent::ActionRequest(ActionRequest {
+            action: Action::Click,
+            target: button.accesskit_id(),
+            data: None,
+        }))
+        .direct(button),
+    );
+    EventManager::new().flush_events(&mut backend.0, |_| {});
+    backend.process_tree_updates();
+    let node = backend
+        .0
+        .tree_updates
+        .iter()
+        .filter_map(Option::as_ref)
+        .flat_map(|update| update.nodes.iter())
+        .find(|(id, _)| *id == button.accesskit_id())
+        .map(|(_, node)| node)
+        .expect("event-context checked changes must publish an accessibility update");
+    assert_eq!(node.toggled(), Some(accesskit::Toggled::True));
+}
+
+#[test]
+fn disabled_binding_publishes_updated_accessibility_actions() {
+    #[derive(Lens)]
+    struct BusyState {
+        busy: bool,
+    }
+    impl Model for BusyState {
+        fn event(&mut self, _: &mut EventContext, event: &mut Event) {
+            event.map(|busy: &bool, _| self.busy = *busy);
+        }
+    }
+    for inherited in [false, true] {
+        let mut cx = Context::default();
+        BusyState { busy: false }.build(&mut cx);
+        let mut button = Entity::root();
+        let parent = VStack::new(&mut cx, |cx| {
+            let handle = Button::new(cx, |cx| Label::new(cx, "Export"))
+                .name("Export")
+                .on_press(|_| {});
+            button = if inherited {
+                handle.entity()
+            } else {
+                handle.disabled(BusyState::busy).entity()
+            };
+        });
+        if inherited {
+            parent.disabled(BusyState::busy);
+        }
+        let mut backend = BackendContext::new(cx);
+        backend.process_style_updates();
+        backend.init_accessibility_tree();
+        backend.process_tree_updates();
+        backend.0.tree_updates.clear();
+        let mut events = EventManager::new();
+        for disabled in [true, false] {
+            backend.send_event(Event::new(disabled));
+            events.flush_events(&mut backend.0, |_| {});
+            backend.process_style_updates();
+            backend.process_tree_updates();
+            let node = backend
+                .0
+                .tree_updates
+                .iter()
+                .filter_map(Option::as_ref)
+                .flat_map(|update| update.nodes.iter())
+                .find(|(id, _)| *id == button.accesskit_id())
+                .map(|(_, node)| node)
+                .expect("disabled changes must publish an accessibility update");
+            assert_eq!(node.is_disabled(), disabled, "inherited={inherited}");
+            assert_eq!(
+                node.supports_action(Action::Click),
+                !disabled,
+                "inherited={inherited}"
+            );
+            backend.0.tree_updates.clear();
+        }
+    }
+}

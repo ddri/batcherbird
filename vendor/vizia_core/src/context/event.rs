@@ -892,6 +892,7 @@ impl<'a> EventContext<'a> {
             pseudo_classes.set(PseudoClassFlags::CHECKED, flag);
         }
 
+        self.style.needs_access_update(current);
         self.needs_restyle();
     }
 

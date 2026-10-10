@@ -97,3 +97,47 @@ fn navigation_starts_from_current_sample_and_tracks_external_selection() {
         assert_eq!(backend.0.data::<AppData>().unwrap().selected_sample, 8);
     }
 }
+
+#[test]
+fn sample_selection_publishes_updated_checked_states_to_accessibility() {
+    let mut cx = Context::default();
+    let data = AppData::demo();
+    let labels = data.sample_labels.clone();
+    data.build(&mut cx);
+    stage(&mut cx);
+    let mut backend = BackendContext::new(cx);
+    let initial = backend.init_accessibility_tree();
+    let row_id = |index: usize| {
+        initial
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some(labels[index].as_str()))
+            .unwrap()
+            .0
+    };
+    let first = row_id(0);
+    let next = row_id(3);
+    backend.process_tree_updates();
+    backend.0.tree_updates.clear();
+    let mut events = EventManager::new();
+    backend.send_event(Event::new(AppEvent::SelectSample(3)));
+    events.flush_events(&mut backend.0, |_| {});
+    backend.process_tree_updates();
+    for (target, expected) in [
+        (first, accesskit::Toggled::False),
+        (next, accesskit::Toggled::True),
+    ] {
+        let node = backend
+            .0
+            .tree_updates
+            .iter()
+            .filter_map(Option::as_ref)
+            .flat_map(|update| update.nodes.iter())
+            .find(|(id, _)| *id == target)
+            .map(|(_, node)| node)
+            .expect(
+                "selection must publish an incremental accessibility update for each changed row",
+            );
+        assert_eq!(node.toggled(), Some(expected));
+    }
+}

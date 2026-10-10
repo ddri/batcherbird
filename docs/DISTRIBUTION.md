@@ -82,7 +82,8 @@ quarantine or disable Gatekeeper to claim this acceptance passed.
 Packaging fixtures passed unsigned success and build/DMG/install/sign/notary/
 staple failures, preserving previous artifacts. They verify Developer ID signing is absent by
 default and the app is stapled before DMG submission. These use fake tools and
-prove transaction behavior, not Apple's acceptance of a signature.
+prove transaction behavior, not Apple's acceptance of a signature. That October 7
+fixture baseline predates the default ad hoc bundle seal added on October 8.
 
 A previously built local candidate copied to `/private/tmp` passed metadata,
 system-dependency, and DMG integrity inspection. Native launch from a clean
@@ -153,3 +154,48 @@ generated DMG nor copied app had a quarantine attribute. This inspection cannot
 validate Developer ID trust, downloaded-app Gatekeeper behavior, notarization,
 microphone grants, or fresh-account installation. Native launch from this
 outside-checkout copy was not verified. Those manual gates remain open.
+
+## Downloaded merged CI candidate inspection (October 9, 2026)
+
+[Main CI run 37762296314](https://github.com/ddri/batcherbird/actions/runs/37762296314)
+passed for merged commit `0578919f66e5c8950a7ad0051877eb78c6e3fed4`.
+Its [acceptance artifact 11542757910](https://github.com/ddri/batcherbird/actions/runs/37762296314/artifacts/11542757910)
+was downloaded using GitHub CLI into a temporary directory outside the checkout.
+The manifest records clean source (`source_dirty: false`), version 0.1.0,
+arm64, and minimum macOS 11.0. Both supplied hashes matched the downloaded DMG
+and the executable copied from its read-only mount:
+
+- Executable SHA-256: `e86b907f961594605feb4e58a120109ea64bbb2c263dd2c70ae898af0807f928`
+- DMG SHA-256: `bb666dff3bf501cfa8be792c63fa8aba9852cc4d502b133e3c36544082fb4212`
+
+The image checksum, Applications shortcut, copied app metadata, executable
+minimum OS, system-library dependencies, and complete ad hoc bundle signature
+passed inspection. The mount was detached after copying. This checks the actual
+CI-distributed candidate rather than substituting a local build.
+
+Read-only Gatekeeper assessment was then performed on macOS 26.1 (25B78),
+arm64, with assessments enabled:
+
+| Check | Observed result |
+| --- | --- |
+| `spctl --assess --type execute` on copied app | Rejected, exit 3 |
+| `spctl --assess --type open --context context:primary-signature` on DMG | Rejected, exit 3, `source=no usable signature` |
+| `xcrun stapler validate` on copied app | No stapled ticket, exit 65 |
+| `com.apple.quarantine` on CLI-downloaded DMG and copied app | Absent |
+
+Ad hoc signing supplies a valid integrity seal, not Developer ID trust or
+notarization. The rejection is therefore an established distribution limitation
+of this candidate. No quarantine, security settings, user accounts, signing
+credentials, or permissions were changed during these checks. CLI downloading
+without quarantine does not exercise the normal browser-download/Finder
+Gatekeeper flow, even if the app subsequently launches successfully.
+
+The next distribution check is a Developer ID signed and notarized candidate
+using the existing opt-in packaging path, followed by a browser download and
+normal Finder installation in a fresh account. Record the resulting Gatekeeper
+assessment and microphone grant/deny behavior against that candidate's manifest.
+This needs the owner's Developer ID certificate/notary profile and an appropriate
+fresh-account test environment. Until those are available, native interaction
+with the exact staged CI app can establish outside-checkout runtime behavior,
+while downloaded-app trust, fresh-account permission prompts, and hardware
+capture remain separate open gates.
