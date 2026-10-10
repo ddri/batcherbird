@@ -103,6 +103,8 @@ pub trait StyleModifiers: internal::Modifiable {
                 if let Some(pseudo_classes) = cx.style.pseudo_classes.get_mut(entity) {
                     pseudo_classes.set(PseudoClassFlags::CHECKED, val);
                 }
+                // A checked change affects both CSS and the accessible toggle state.
+                cx.style.needs_access_update(entity);
                 cx.needs_restyle(entity);
             });
         });
@@ -214,14 +216,25 @@ pub trait StyleModifiers: internal::Modifiable {
         self
     }
 
-    modifier!(
-        /// Sets the view to be disabled.
-        ///
-        /// This property is inherited by the descendants of the view.
-        disabled,
-        bool,
-        SystemFlags::RESTYLE
-    );
+    /// Sets the view to be disabled.
+    ///
+    /// This property is inherited by the descendants of the view.
+    fn disabled<U: Into<bool>>(mut self, value: impl Res<U>) -> Self {
+        let entity = self.entity();
+        let current = self.current();
+        value.set_or_bind(self.context(), current, move |cx, value| {
+            cx.style.disabled.insert(entity, value.get(cx).into());
+            cx.style.system_flags |= SystemFlags::RESTYLE;
+            cx.set_system_flags(entity, SystemFlags::RESTYLE);
+            // Descendants inherit this property during the style pass. Their
+            // disabled state and advertised actions need the same update.
+            let descendants = entity.branch_iter(&cx.tree).collect::<Vec<_>>();
+            for descendant in descendants {
+                cx.style.needs_access_update(descendant);
+            }
+        });
+        self
+    }
 
     modifier!(
         /// Sets whether the view should be positioned and rendered.

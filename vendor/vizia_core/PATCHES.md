@@ -8,13 +8,17 @@ Upstream VCS commit: `35171576875d7c3721301f1a5bbe7255605fe9bc`, directory
 `crates/vizia_core`. Text line endings are normalized to LF and trailing
 whitespace removed for repository checks; other source content is preserved.
 
-Changes are confined to three upstream source files:
+Changes are confined to five upstream source files:
 
 - `src/systems/accessibility.rs`: forward `.name()` to AccessKit's `label`
   property; advertise the existing Click handlers of the built-in button,
   toggle button, checkbox, and radio button views when enabled.
 - `src/events/event_manager.rs`: reject Click requests for disabled targets
   before dispatch, including requests made against stale accessibility nodes.
+- `src/modifiers/style.rs` and `src/context/event.rs`: mark checked-state
+  changes dirty for accessibility as well as CSS; publish direct and inherited
+  disabled-state changes so advertised actions stay current. Without this, selected rows
+  can update visually while assistive clients retain their previous toggle state.
 - `src/views/list.rs`: replace, rather than accumulate, a bound selection and
   its focused index. This keeps keyboard navigation aligned with the application's
   current sample when entering review or when selection changes externally.
@@ -26,7 +30,7 @@ and test membership; it still builds as the patched application dependency.
 
 Remove the Cargo patch and this directory after adopting an upstream release
 that forwards labels, advertises button activation, guards disabled clicks, and
-replaces bound list selections.
+replaces bound list selections, and publishes checked- and disabled-state changes.
 Native VoiceOver testing remains a separate acceptance check.
 
 The vendored manifest also allows only `mismatched_lifetime_syntaxes`, restoring

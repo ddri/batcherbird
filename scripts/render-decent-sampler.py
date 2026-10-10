@@ -58,15 +58,9 @@ def pack_xml(element):
     return b"VC2!" + struct.pack("<I", len(data)) + data + b"\0"
 
 
-def restore_export(plugin, preset):
-    # Pedalboard exposes VST3 state, not a .dspreset file-picker API. Preserve
-    # its wrapper/private data, replace only the instrument XML with the
-    # production export, and set the same directory context a file load uses.
-    wrapper, _ = unpack_xml(plugin.raw_state)
-    component = wrapper.find("IComponent")
-    if wrapper.tag != "VST3PluginState" or component is None:
-        raise ValueError("Player state has no expected VST3 component")
-    initial, private_data = unpack_xml(decode_memory_block(component.text))
+def build_component_state(initial_state, preset):
+    """Prepare the player's own component state for either independent host."""
+    initial, private_data = unpack_xml(initial_state)
     exported = ET.parse(preset).getroot()
     if initial.tag != "DecentSampler" or exported.tag != "DecentSampler":
         raise ValueError("Expected DecentSampler preset/state XML")
@@ -77,7 +71,18 @@ def restore_export(plugin, preset):
     exported.set("_libraryUrl", str(preset))
     exported.set("_libraryCanonicalUrl", str(preset))
     exported.set("_presetName", preset.stem)
-    component.text = encode_memory_block(pack_xml(exported) + private_data)
+    return pack_xml(exported) + private_data
+
+
+def restore_export(plugin, preset):
+    # Pedalboard exposes VST3 state, not a .dspreset file-picker API. Preserve
+    # its wrapper/private data, replace only the instrument XML with the
+    # production export, and set the same directory context a file load uses.
+    wrapper, _ = unpack_xml(plugin.raw_state)
+    component = wrapper.find("IComponent")
+    if wrapper.tag != "VST3PluginState" or component is None:
+        raise ValueError("Player state has no expected VST3 component")
+    component.text = encode_memory_block(build_component_state(decode_memory_block(component.text), preset))
     plugin.raw_state = pack_xml(wrapper)
 
 
