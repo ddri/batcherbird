@@ -14,7 +14,7 @@ jobs:
     name: Desktop Workflow and Rust Checks
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -22,7 +22,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/
@@ -61,13 +61,13 @@ jobs:
     name: Package macOS App & DMG
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/
@@ -102,7 +102,7 @@ jobs:
           python3 scripts/package-manifest.py dist/Batcherbird.app dist/Batcherbird.dmg dist/Batcherbird-manifest.json --revision "$SOURCE_REVISION"
 
       - name: Upload hardware acceptance candidate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: batcherbird-macos-candidate-${{ steps.candidate-source.outputs.revision }}
           path: |
@@ -116,7 +116,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true  # Linux support is experimental
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -124,7 +124,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/

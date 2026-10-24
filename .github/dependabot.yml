@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # vizia_core is vendored and patched (see vendor/vizia_core/PATCHES.md);
+      # upgrade vizia/accesskit manually alongside the vendored copy.
+      - dependency-name: vizia
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: vizia_core
+      - dependency-name: accesskit
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
