@@ -22,12 +22,6 @@ pub enum BatcherbirdError {
     #[error("Configuration error: {0}")]
     Config(String),
 
-    #[error("Configuration parse error: {0}")]
-    ConfigParse(#[from] toml::de::Error),
-
-    #[error("Configuration serialize error: {0}")]
-    ConfigSerialize(#[from] toml::ser::Error),
-
     #[error("Session error: {0}")]
     Session(String),
 }

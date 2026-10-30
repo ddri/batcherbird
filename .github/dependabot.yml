@@ -6,8 +6,10 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      cargo-minor-patch:
-        update-types: [minor, patch]
+      # Patch-only: for 0.x crates (cpal, midir, rfd, rtrb, wide) a "minor"
+      # bump is semver-breaking, so minor updates arrive as separate PRs.
+      cargo-patch:
+        update-types: [patch]
     ignore:
       # vizia_core is vendored and patched (see vendor/vizia_core/PATCHES.md);
       # upgrade vizia/accesskit manually alongside the vendored copy.

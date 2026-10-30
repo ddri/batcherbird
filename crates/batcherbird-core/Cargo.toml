@@ -13,7 +13,6 @@ cpal = { workspace = true }
 hound = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
-toml = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }

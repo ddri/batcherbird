@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -35,16 +38,16 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Check
-        run: cargo check --workspace
+        run: cargo check --locked --workspace
 
       - name: Check formatting
         run: cargo fmt --check --all
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
 
       - name: Sampler audio analyzer regressions
         run: |
@@ -149,10 +152,10 @@ jobs:
             libasound2-dev
 
       - name: Check (core + vizia)
-        run: cargo check -p batcherbird-core -p batcherbird-vizia
+        run: cargo check --locked -p batcherbird-core -p batcherbird-vizia
 
       - name: Clippy (core + vizia)
-        run: cargo clippy -p batcherbird-core -p batcherbird-vizia --all-targets
+        run: cargo clippy --locked -p batcherbird-core -p batcherbird-vizia --all-targets
 
       - name: Test (core + vizia)
-        run: cargo test -p batcherbird-core -p batcherbird-vizia
+        run: cargo test --locked -p batcherbird-core -p batcherbird-vizia
