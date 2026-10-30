@@ -17,7 +17,7 @@ authors = ["David Ryan"]
 
 [workspace.dependencies]
 # Audio/MIDI core dependencies
-midir = "0.10.1"
+midir = "0.11.1"
 cpal = "0.16.0"
 hound = "3.5"
 
