@@ -79,7 +79,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 echo "==> Building ${APP_NAME} v${VERSION} (release mode)..."
-cargo build --release -p batcherbird-vizia
+cargo build --locked --release -p batcherbird-vizia
 
 echo "==> Assembling ${APP_NAME}.app bundle..."
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"

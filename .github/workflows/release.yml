@@ -18,13 +18,13 @@ jobs:
     name: Build & Release macOS DMG
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/
@@ -43,7 +43,7 @@ jobs:
         run: bash scripts/verify-macos-package.sh dist/Batcherbird.app dist/Batcherbird.dmg
 
       - name: Upload DMG to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/Batcherbird.dmg
         env:
