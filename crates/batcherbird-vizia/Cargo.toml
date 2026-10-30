@@ -18,7 +18,7 @@ path = "src/lib.rs"
 [dependencies]
 batcherbird-core = { path = "../batcherbird-core" }
 vizia = "0.3"
-rtrb = "0.3"
+rtrb = "0.4"
 cpal = { workspace = true }
 midir = { workspace = true }
 serde = { workspace = true }

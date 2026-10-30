@@ -16,7 +16,7 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
-rtrb = "0.3"
+rtrb = "0.4"
 wide = "0.7"  # SIMD optimization for professional meter calculations
 
 [features]
