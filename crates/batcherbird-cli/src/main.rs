@@ -26,7 +26,7 @@ enum Commands {
     /// Sample a single note
     SampleNote {
         /// MIDI note number (0-127)
-        #[arg(short, long)]
+        #[arg(short, long, value_parser = clap::value_parser!(u8).range(0..=127))]
         note: u8,
         /// Audio input device name (default: system default). See `list-audio`.
         #[arg(long)]
@@ -38,10 +38,10 @@ enum Commands {
     /// Sample a range of notes
     SampleRange {
         /// Starting MIDI note number
-        #[arg(short, long)]
+        #[arg(short, long, value_parser = clap::value_parser!(u8).range(0..=127))]
         start: u8,
         /// Ending MIDI note number
-        #[arg(short, long)]
+        #[arg(short, long, value_parser = clap::value_parser!(u8).range(0..=127))]
         end: u8,
         /// Audio input device name (default: system default). See `list-audio`.
         #[arg(long)]
@@ -53,7 +53,7 @@ enum Commands {
     /// Sample a single note and export to WAV
     SampleExport {
         /// MIDI note number (0-127)
-        #[arg(short, long)]
+        #[arg(short, long, value_parser = clap::value_parser!(u8).range(0..=127))]
         note: u8,
         /// Output directory for WAV files
         #[arg(short, long, default_value = "./samples")]
@@ -220,8 +220,7 @@ async fn test_midi() -> anyhow::Result<()> {
     let output_devices = midi_manager.list_output_devices()?;
 
     if output_devices.is_empty() {
-        println!("❌ No MIDI output devices found. Connect a MIDI device or enable IAC Driver.");
-        return Ok(());
+        anyhow::bail!("No MIDI output devices found. Connect a MIDI device or enable IAC Driver.");
     }
 
     println!("Available MIDI outputs:");
@@ -269,9 +268,9 @@ async fn monitor_midi() -> anyhow::Result<()> {
     let input_devices = midi_manager.list_input_devices()?;
 
     if input_devices.is_empty() {
-        println!("❌ No MIDI input devices found.");
-        println!("   Connect a MIDI device or enable IAC Driver in Audio MIDI Setup");
-        return Ok(());
+        anyhow::bail!(
+            "No MIDI input devices found. Connect a MIDI device or enable IAC Driver in Audio MIDI Setup."
+        );
     }
 
     println!("Available MIDI inputs:");
@@ -309,8 +308,7 @@ async fn test_audio() -> anyhow::Result<()> {
     }
 
     if input_devices.is_empty() {
-        println!("❌ No audio input devices found.");
-        return Ok(());
+        anyhow::bail!("No audio input devices found.");
     }
 
     println!("\n🎤 Testing audio recording (3 seconds)...");
@@ -354,8 +352,7 @@ fn sample_single_note(
     };
 
     if note > 127 {
-        println!("❌ Invalid note number: {}. Must be 0-127.", note);
-        return Ok(());
+        anyhow::bail!("Invalid note number: {note}. Must be 0-127.");
     }
 
     println!("🎵 Single note sampling starting...");
@@ -365,8 +362,7 @@ fn sample_single_note(
     let output_devices = midi_manager.list_output_devices()?;
 
     if output_devices.is_empty() {
-        println!("❌ No MIDI output devices found. Connect a MIDI device or enable IAC Driver.");
-        return Ok(());
+        anyhow::bail!("No MIDI output devices found. Connect a MIDI device or enable IAC Driver.");
     }
 
     let device_index = resolve_midi_output_index(&output_devices, midi_device.as_deref())?;
@@ -429,11 +425,7 @@ fn sample_note_range(
     };
 
     if start > 127 || end > 127 || start > end {
-        println!(
-            "❌ Invalid note range: {}-{}. Notes must be 0-127 and start <= end.",
-            start, end
-        );
-        return Ok(());
+        anyhow::bail!("Invalid note range: {start}-{end}. Notes must be 0-127 and start <= end.");
     }
 
     let note_count = end - start + 1;
@@ -447,8 +439,7 @@ fn sample_note_range(
     let output_devices = midi_manager.list_output_devices()?;
 
     if output_devices.is_empty() {
-        println!("❌ No MIDI output devices found. Connect a MIDI device or enable IAC Driver.");
-        return Ok(());
+        anyhow::bail!("No MIDI output devices found. Connect a MIDI device or enable IAC Driver.");
     }
 
     let device_index = resolve_midi_output_index(&output_devices, midi_device.as_deref())?;
@@ -522,8 +513,7 @@ fn sample_and_export(
     use std::path::PathBuf;
 
     if note > 127 {
-        println!("❌ Invalid note number: {}. Must be 0-127.", note);
-        return Ok(());
+        anyhow::bail!("Invalid note number: {note}. Must be 0-127.");
     }
 
     println!("🎵 Sampling and exporting note {}...", note);
@@ -533,8 +523,7 @@ fn sample_and_export(
     let output_devices = midi_manager.list_output_devices()?;
 
     if output_devices.is_empty() {
-        println!("❌ No MIDI output devices found. Connect a MIDI device or enable IAC Driver.");
-        return Ok(());
+        anyhow::bail!("No MIDI output devices found. Connect a MIDI device or enable IAC Driver.");
     }
 
     let device_index = resolve_midi_output_index(&output_devices, midi_device.as_deref())?;

@@ -205,6 +205,38 @@ impl LoopDetector {
         crossings
     }
 
+    /// First frame after the attack settles.
+    ///
+    /// Uses a 100 ms RMS envelope (longer than one cycle of even the lowest
+    /// notes, so a window never lands on a quiet part of a cycle): after its
+    /// peak, the attack ends at the first
+    /// window within 10% of the median level of the rest of the note. For a
+    /// steady tone that is the peak itself; for a decaying sound it is partway
+    /// through the decay.
+    fn sustain_start(audio_data: &[f32], sample_rate: u32) -> usize {
+        let window = (sample_rate as usize / 10).max(1);
+        let envelope: Vec<f32> = audio_data
+            .chunks(window)
+            .map(|chunk| (chunk.iter().map(|v| v * v).sum::<f32>() / chunk.len() as f32).sqrt())
+            .collect();
+        let Some(peak) = envelope
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .map(|(index, _)| index)
+        else {
+            return 0;
+        };
+        let mut after_peak = envelope[peak..].to_vec();
+        after_peak.sort_by(f32::total_cmp);
+        let median = after_peak[after_peak.len() / 2];
+        let settled = envelope[peak..]
+            .iter()
+            .position(|&level| level <= median * 1.1)
+            .unwrap_or(0);
+        (peak + settled) * window
+    }
+
     /// Generate potential loop candidates from zero crossings
     fn generate_loop_candidates(
         &self,
@@ -215,6 +247,16 @@ impl LoopDetector {
         let mut candidates = Vec::new();
         let min_samples = (self.config.min_loop_length_sec * sample_rate as f32) as usize;
         let max_samples = (self.config.max_loop_length_sec * sample_rate as f32) as usize;
+
+        // Loop only the sustained part of the note: a loop that starts inside
+        // the attack replays the attack transient on every pass.
+        let sustain = Self::sustain_start(audio_data, sample_rate);
+        let first = zero_crossings.partition_point(|&crossing| crossing < sustain);
+        let zero_crossings = if zero_crossings.len() - first >= 4 {
+            &zero_crossings[first..]
+        } else {
+            zero_crossings
+        };
 
         // Try different combinations of zero crossings as loop points
         // Use step size to create more diverse candidates
@@ -404,14 +446,9 @@ impl LoopDetector {
         score.clamp(0.0, 1.0)
     }
 
-    /// Apply equal-power crossfading at the detected loop points across all channels.
-    ///
-    /// Uses equal-power sine/cosine gain curves:
-    /// - gain_in(t) = sin(pi/2 * t)
-    /// - gain_out(t) = cos(pi/2 * t)
-    ///
-    /// Preserves total acoustic energy (gain_in^2 + gain_out^2 == 1.0) and eliminates
-    /// volume dips and clicks at the loop boundary.
+    /// Crossfade the end of the loop into the audio before the loop start, across
+    /// all channels, so the loop wraps without a click. Skipped when the loop is
+    /// too short or starts too close to the beginning for the fade length.
     pub fn apply_loop_with_crossfade_channels(
         &self,
         audio_data: &mut [f32],
@@ -435,29 +472,30 @@ impl LoopDetector {
             return Ok(());
         }
 
-        use std::f32::consts::FRAC_PI_2;
+        // The material just before the loop start is what the end must turn
+        // into, so the fade needs that many frames of pre-roll.
+        if start < crossfade_frames {
+            return Ok(());
+        }
 
+        // Fade the end of the loop into the audio that precedes the loop start.
+        // The last looped frame then equals the frame before `start`, so the
+        // wrap end-1 -> start is as smooth as the recording at start-1 -> start.
+        // Nothing before the fade region changes, so the first pass into the
+        // loop plays exactly as recorded.
+        //
+        // Loop points are chosen for strong correlation, so a linear
+        // (equal-gain) blend keeps the level steady; an equal-power blend would
+        // raise matching material by up to 3 dB mid-fade.
         for i in 0..crossfade_frames {
-            let t = i as f32 / crossfade_frames as f32;
-            let angle = FRAC_PI_2 * t;
-            let gain_in = angle.sin();
-            let gain_out = angle.cos();
-
-            let start_frame = start + i;
-            let end_frame = end - crossfade_frames + i;
-
-            if start_frame < total_frames && end_frame < total_frames {
-                for c in 0..num_channels {
-                    let start_idx = start_frame * num_channels + c;
-                    let end_idx = end_frame * num_channels + c;
-
-                    let start_val = audio_data[start_idx];
-                    let end_val = audio_data[end_idx];
-
-                    // Equal-power crossfade blend
-                    let blended = start_val * gain_in + end_val * gain_out;
-                    audio_data[start_idx] = blended;
-                }
+            let into_start = (i + 1) as f32 / crossfade_frames as f32;
+            let tail_frame = end - crossfade_frames + i;
+            let source_frame = start - crossfade_frames + i;
+            for c in 0..num_channels {
+                let tail = tail_frame * num_channels + c;
+                let source = source_frame * num_channels + c;
+                audio_data[tail] =
+                    audio_data[tail] * (1.0 - into_start) + audio_data[source] * into_start;
             }
         }
 
@@ -521,70 +559,110 @@ mod tests {
         assert!((correlation - 1.0).abs() < 0.001);
     }
 
-    #[test]
-    fn test_equal_power_crossfade_smoothing_mono() {
-        let detector = LoopDetector::new(LoopDetectionConfig {
-            crossfade_ms: 10.0,
-            ..Default::default()
-        });
-
-        // 1000 samples buffer (mono)
-        let mut audio = vec![0.5f32; 1000];
-        let candidate = LoopCandidate {
-            start_sample: 100,
-            end_sample: 600,
-            length_samples: 500,
-            quality_score: 0.9,
-            zero_crossing_aligned: true,
-            correlation: 0.95,
-        };
-
-        let res = detector.apply_loop_with_crossfade(&mut audio, &candidate, 10000);
-        assert!(res.is_ok());
-
-        // Crossfade frames = (10ms * 10000 / 1000) = 100 frames
-        // At start + 0: gain_in = 0, gain_out = 1.0 => 0.5 * 0 + 0.5 * 1.0 = 0.5
-        assert!((audio[100] - 0.5).abs() < 1e-4);
-        // At start + 50 (midpoint): gain_in = sin(pi/4) = sqrt(2)/2, gain_out = sqrt(2)/2
-        // sum = 0.5 * sqrt(2) approx 0.7071 (coherent gain), energy = 0.5^2*(sin^2+cos^2) = 0.25 (exact energy preservation)
-        let mid_val = audio[150];
-        let energy = (mid_val / 2.0_f32.sqrt()).powi(2);
-        assert!((energy - 0.25).abs() < 1e-3);
+    /// One second of loud attack (with an extra partial) that drops to a
+    /// steady, quieter tone for the remaining five seconds.
+    fn attack_then_sustain(sample_rate: usize) -> Vec<f32> {
+        (0..sample_rate * 6)
+            .map(|frame| {
+                let t = frame as f32 / sample_rate as f32;
+                let tone = (std::f32::consts::TAU * 10.0 * t).sin();
+                if frame < sample_rate {
+                    tone + 0.5 * (std::f32::consts::TAU * 37.0 * t).sin()
+                } else {
+                    0.3 * tone
+                }
+            })
+            .collect()
     }
 
     #[test]
-    fn test_equal_power_crossfade_stereo_channels() {
+    fn loop_starts_after_the_attack() {
+        let audio = attack_then_sustain(1000);
+        let result = LoopDetector::new(Default::default()).detect_loop_points(&audio, 1000);
+        let best = result.best_candidate.expect("steady tone loops");
+        assert!(
+            best.start_sample >= 1000,
+            "loop starts at frame {} inside the attack",
+            best.start_sample
+        );
+        for candidate in &result.all_candidates {
+            assert!(candidate.start_sample >= 1000, "{candidate:?}");
+        }
+    }
+
+    fn loop_at(start: usize, end: usize) -> LoopCandidate {
+        LoopCandidate {
+            start_sample: start,
+            end_sample: end,
+            length_samples: end - start,
+            quality_score: 0.9,
+            zero_crossing_aligned: true,
+            correlation: 0.95,
+        }
+    }
+
+    #[test]
+    fn crossfade_does_not_change_a_steady_level() {
+        // Loop boundaries are chosen for strong correlation, so the blend must
+        // not raise the level of matching material.
         let detector = LoopDetector::new(LoopDetectionConfig {
             crossfade_ms: 10.0,
             ..Default::default()
         });
-
-        // Interleaved stereo: Left = 0.4, Right = -0.8
-        let mut stereo_audio = Vec::new();
-        for _ in 0..1000 {
-            stereo_audio.push(0.4f32);
-            stereo_audio.push(-0.8f32);
+        let mut audio = vec![0.5f32; 1000];
+        detector
+            .apply_loop_with_crossfade(&mut audio, &loop_at(200, 700), 10_000)
+            .unwrap();
+        for (frame, value) in audio.iter().enumerate() {
+            assert!((value - 0.5).abs() < 1e-6, "frame {frame} is {value}");
         }
+    }
 
-        let candidate = LoopCandidate {
-            start_sample: 100,
-            end_sample: 600,
-            length_samples: 500,
-            quality_score: 0.9,
-            zero_crossing_aligned: true,
-            correlation: 0.95,
-        };
+    #[test]
+    fn crossfade_makes_the_loop_wrap_continuous_without_touching_the_first_pass() {
+        let detector = LoopDetector::new(LoopDetectionConfig {
+            crossfade_ms: 10.0,
+            ..Default::default()
+        });
+        // A ramp makes any jump obvious: the wrap from frame 699 to 200 would
+        // otherwise drop by ~0.5.
+        let original: Vec<f32> = (0..1000).map(|frame| frame as f32 / 1000.0).collect();
+        let mut audio = original.clone();
+        let (start, end, fade) = (200, 700, 100);
+        detector
+            .apply_loop_with_crossfade(&mut audio, &loop_at(start, end), 10_000)
+            .unwrap();
 
-        let res =
-            detector.apply_loop_with_crossfade_channels(&mut stereo_audio, &candidate, 10000, 2);
-        assert!(res.is_ok());
+        // Everything up to the fade region plays exactly as recorded, including
+        // the loop start, so the first pass into the loop has no jump.
+        assert_eq!(audio[..end - fade], original[..end - fade]);
+        assert_eq!(audio[end..], original[end..]);
+        // The last looped frame now leads into the start the way the frame
+        // before the start does.
+        assert!((audio[end - 1] - original[start - 1]).abs() < 1e-6);
+        // No step inside the fade is larger than a normal step plus the blend.
+        let normal_step = 1.0 / 1000.0;
+        for frame in end - fade..end {
+            let step = (audio[frame] - audio[frame - 1]).abs();
+            assert!(
+                step < normal_step + 0.5 / fade as f32 + 1e-4,
+                "jump at {frame}"
+            );
+        }
+    }
 
-        // Verify Left channel remains positive and Right channel remains negative without crosstalk
-        for frame in 100..200 {
-            let left = stereo_audio[frame * 2];
-            let right = stereo_audio[frame * 2 + 1];
-            assert!(left > 0.0, "Left channel corrupted at frame {}", frame);
-            assert!(right < 0.0, "Right channel corrupted at frame {}", frame);
+    #[test]
+    fn crossfade_keeps_stereo_channels_separate() {
+        let detector = LoopDetector::new(LoopDetectionConfig {
+            crossfade_ms: 10.0,
+            ..Default::default()
+        });
+        let mut stereo: Vec<f32> = (0..1000).flat_map(|_| [0.4f32, -0.8]).collect();
+        detector
+            .apply_loop_with_crossfade_channels(&mut stereo, &loop_at(200, 700), 10_000, 2)
+            .unwrap();
+        for frame in stereo.chunks_exact(2) {
+            assert!((frame[0] - 0.4).abs() < 1e-6 && (frame[1] + 0.8).abs() < 1e-6);
         }
     }
 }

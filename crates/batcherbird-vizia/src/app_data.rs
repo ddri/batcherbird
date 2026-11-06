@@ -125,6 +125,9 @@ pub struct AppData {
     pub export_in_progress: bool,
     pub session_busy: bool,
     pub diagnostics_busy: bool,
+    /// The export-folder picker is open. Recording, export and session work
+    /// wait until it closes so its result never arrives mid-operation.
+    pub folder_dialog_open: bool,
     pub pending_session_name: Option<String>,
     #[lens(ignore)]
     pub pending_session: Option<PendingSession>,
@@ -286,6 +289,7 @@ impl Default for AppData {
             export_in_progress: false,
             session_busy: false,
             diagnostics_busy: false,
+            folder_dialog_open: false,
             pending_session_name: None,
             pending_session: None,
             pending_takes_replacement: None,
@@ -517,6 +521,7 @@ impl AppData {
             || self.export_in_progress
             || self.session_busy
             || self.diagnostics_busy
+            || self.folder_dialog_open
             || self.is_testing_note
     }
 
@@ -1684,6 +1689,12 @@ impl Model for AppData {
                 self.export_format = fmt.clone();
             }
             AppEvent::SetOutputDirectory(path) => self.output_directory = path.clone(),
+            AppEvent::OutputDirectoryChosen(path) => {
+                self.folder_dialog_open = false;
+                if let Some(path) = path {
+                    self.output_directory = path.clone();
+                }
+            }
 
             AppEvent::SelectNoteStepByIndex(idx) => {
                 let steps = [1, 3, 12];
@@ -1918,7 +1929,7 @@ impl Model for AppData {
                     let result = (|| {
                         let mut manager = batcherbird_core::midi::MidiManager::new()?;
                         let mut connection = manager.connect_output(self.selected_midi_device)?;
-                        batcherbird_core::midi::MidiManager::send_midi_panic(&mut connection)
+                        batcherbird_core::midi::MidiManager::send_midi_panic(&mut connection, 0)
                     })();
                     if let Err(error) = result { self.error_message = Some(format!("MIDI panic: {error}")); }
                 }
@@ -2085,16 +2096,14 @@ impl Model for AppData {
 
             AppEvent::SelectOutputDirectory => {
                 if self.is_busy() { return; }
+                self.folder_dialog_open = true;
                 let current_dir = self.output_directory.clone();
                 let mut proxy = cx.get_proxy();
 
                 std::thread::spawn(move || {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .set_directory(&current_dir)
-                        .pick_folder()
-                    {
-                        let _ = proxy.emit(AppEvent::SetOutputDirectory(path));
-                    }
+                    // Always report back, including on cancel, so the busy flag clears.
+                    let path = rfd::FileDialog::new().set_directory(&current_dir).pick_folder();
+                    let _ = proxy.emit(AppEvent::OutputDirectoryChosen(path));
                 });
             }
             }
@@ -2356,6 +2365,40 @@ mod tests {
             assert_eq!(data.recorded_samples[0].audio_data, vec![0.25, -0.25]);
             assert_eq!(data.app_state, AppState::Review);
         }
+    }
+
+    #[test]
+    fn open_folder_picker_blocks_other_operations_until_it_closes() {
+        let mut data = edited_confirmation_session();
+        data.folder_dialog_open = true;
+        assert!(data.is_busy());
+        // Another operation that would open its own dialog is refused.
+        let backend = dispatch_session_events(data, &[AppEvent::ExportDiagnostics]);
+        let data = backend.0.data::<AppData>().unwrap();
+        assert!(data.folder_dialog_open);
+        assert!(!data.diagnostics_busy);
+    }
+
+    #[test]
+    fn folder_picker_result_is_applied_and_cancel_keeps_the_folder() {
+        let chosen = PathBuf::from("/tmp/batcherbird-chosen-folder");
+        let mut data = edited_confirmation_session();
+        let before = data.output_directory.clone();
+        data.folder_dialog_open = true;
+        let backend = dispatch_session_events(
+            data,
+            &[AppEvent::OutputDirectoryChosen(Some(chosen.clone()))],
+        );
+        let data = backend.0.data::<AppData>().unwrap();
+        assert!(!data.folder_dialog_open && !data.controls_busy);
+        assert_eq!(data.output_directory, chosen);
+
+        let mut data = edited_confirmation_session();
+        data.folder_dialog_open = true;
+        let backend = dispatch_session_events(data, &[AppEvent::OutputDirectoryChosen(None)]);
+        let data = backend.0.data::<AppData>().unwrap();
+        assert!(!data.folder_dialog_open && !data.controls_busy);
+        assert_eq!(data.output_directory, before);
     }
 
     #[test]

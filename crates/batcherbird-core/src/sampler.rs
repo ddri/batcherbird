@@ -504,17 +504,18 @@ pub struct RecordingProgress {
 /// Map a desired velocity-layer count to concrete MIDI velocity values.
 ///
 /// Behavior:
-/// - `0` or `1` -> `vec![100]`, preserving the historical single-layer default
-///   (0 is treated as 1).
-/// - `n >= 2` -> `n` velocities evenly distributed across the inclusive musical
-///   range `[20, 127]`. The endpoints are always exactly hit, and intermediate
-///   layers are placed using integer interpolation:
+/// - `0` or `1` -> `[127]` (0 is treated as 1).
+/// - `2`, `3` and `4` use fixed, evenly spaced layers that top out at 127:
+///   `[64, 127]`, `[48, 96, 127]` and `[32, 64, 96, 127]`.
+/// - `n >= 5` -> `n` velocities evenly distributed across the inclusive range
+///   `[20, 127]`. Both endpoints are hit exactly, and intermediate layers use
+///   rounded integer interpolation:
 ///
 ///   ```text
 ///   velocity[i] = round(20 + (127 - 20) * i / (n - 1))   for i in 0..n
 ///   ```
 ///
-///   Examples: 2 -> [20, 127]; 3 -> [20, 74, 127]; 4 -> [20, 56, 91, 127].
+///   Example: 5 -> [20, 47, 74, 100, 127].
 ///
 /// The count is capped at 16 layers (a generous practical ceiling) so the
 /// interpolation always yields strictly ascending values within `1..=127`.
@@ -992,28 +993,31 @@ impl SamplingEngine {
         recording_active: Arc<AtomicBool>,
         capture_failed: Arc<AtomicBool>,
     ) -> Result<cpal::Stream> {
+        // Interfaces commonly default to 24-in-32-bit integer (I32) or F64, not
+        // just F32/I16/U16; every integer and float width cpal reports converts
+        // to f32 through `FromSample`.
+        macro_rules! capture {
+            ($sample:ty) => {
+                self.build_capture_stream::<$sample>(
+                    device,
+                    config,
+                    producer,
+                    recording_active,
+                    capture_failed,
+                )
+            };
+        }
         match config.sample_format() {
-            cpal::SampleFormat::F32 => self.build_capture_stream::<f32>(
-                device,
-                config,
-                producer,
-                recording_active,
-                capture_failed,
-            ),
-            cpal::SampleFormat::I16 => self.build_capture_stream::<i16>(
-                device,
-                config,
-                producer,
-                recording_active,
-                capture_failed,
-            ),
-            cpal::SampleFormat::U16 => self.build_capture_stream::<u16>(
-                device,
-                config,
-                producer,
-                recording_active,
-                capture_failed,
-            ),
+            cpal::SampleFormat::F32 => capture!(f32),
+            cpal::SampleFormat::F64 => capture!(f64),
+            cpal::SampleFormat::I8 => capture!(i8),
+            cpal::SampleFormat::I16 => capture!(i16),
+            cpal::SampleFormat::I32 => capture!(i32),
+            cpal::SampleFormat::I64 => capture!(i64),
+            cpal::SampleFormat::U8 => capture!(u8),
+            cpal::SampleFormat::U16 => capture!(u16),
+            cpal::SampleFormat::U32 => capture!(u32),
+            cpal::SampleFormat::U64 => capture!(u64),
             format => Err(BatcherbirdError::Audio(format!(
                 "Unsupported sample format: {format:?}"
             ))),
@@ -1162,6 +1166,9 @@ impl SamplingEngine {
         while consumer.pop().is_ok() {}
         recording_active.store(true, Ordering::Release);
         let start_time = Instant::now();
+        // Set once note-on is sent and cleared by the normal note-off, so any
+        // early exit in between knows the key is still held.
+        let mut note_held = false;
         let result: Result<Option<Duration>> = async {
             if !wait_for_capture(self.config.pre_delay_ms, cancel, capture_failed).await? {
                 return Ok(None);
@@ -1171,11 +1178,13 @@ impl SamplingEngine {
                 return Ok(None);
             }
             let midi_start = Instant::now();
+            note_held = true;
             MidiManager::send_note_on(midi_conn, self.config.midi_channel, note, velocity)?;
             if !wait_for_capture(self.config.note_duration_ms, cancel, capture_failed).await? {
                 return Ok(None);
             }
             MidiManager::send_note_off(midi_conn, self.config.midi_channel, note, velocity)?;
+            note_held = false;
             let midi_timing = midi_start.elapsed();
             if !wait_for_capture(self.config.release_time_ms, cancel, capture_failed).await?
                 || !wait_for_capture(self.config.post_delay_ms, cancel, capture_failed).await?
@@ -1186,6 +1195,10 @@ impl SamplingEngine {
         }
         .await;
         recording_active.store(false, Ordering::Release);
+        if note_held {
+            // Release the exact key first: some synths ignore All Notes Off.
+            let _ = MidiManager::send_note_off(midi_conn, self.config.midi_channel, note, 0);
+        }
         if !matches!(&result, Ok(Some(_))) {
             // Best effort cleanup must also happen when a MIDI send or capture fails.
             let _ = MidiManager::send_channel_panic(midi_conn, self.config.midi_channel);
@@ -1337,7 +1350,7 @@ impl SamplingEngine {
         }
 
         // Safety: Clear any stuck notes before starting range recording session
-        MidiManager::send_midi_panic(midi_conn)?;
+        MidiManager::send_midi_panic(midi_conn, self.config.midi_channel)?;
         tokio::time::sleep(Duration::from_millis(100)).await; // Give hardware time to process
 
         let device = self
@@ -1388,7 +1401,8 @@ impl SamplingEngine {
                         Ok(false) => break 'outer,
                         Err(error) => {
                             let _ = stream.pause();
-                            let _ = MidiManager::send_midi_panic(midi_conn);
+                            let _ =
+                                MidiManager::send_midi_panic(midi_conn, self.config.midi_channel);
                             return Err(error);
                         }
                     }
@@ -1422,7 +1436,7 @@ impl SamplingEngine {
                     Err(error) => {
                         recording_active.store(false, Ordering::Release);
                         let _ = stream.pause();
-                        let _ = MidiManager::send_midi_panic(midi_conn);
+                        let _ = MidiManager::send_midi_panic(midi_conn, self.config.midi_channel);
                         return Err(error);
                     }
                 };
@@ -1443,7 +1457,7 @@ impl SamplingEngine {
         // Clean shutdown of persistent stream
         let pause_result = stream.pause();
         drop(stream);
-        let panic_result = MidiManager::send_midi_panic(midi_conn);
+        let panic_result = MidiManager::send_midi_panic(midi_conn, self.config.midi_channel);
         panic_result?;
         pause_result.map_err(|e| {
             BatcherbirdError::Audio(format!("Failed to stop persistent stream: {e}"))
@@ -1628,6 +1642,111 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    #[cfg(target_os = "macos")]
+    type Received = Arc<std::sync::Mutex<Vec<Vec<u8>>>>;
+
+    /// A virtual CoreMIDI destination that records every message sent to it,
+    /// plus an output connection to it. Stands in for a hardware synth.
+    #[cfg(target_os = "macos")]
+    fn capture_port(
+        name: &str,
+    ) -> (
+        midir::MidiInputConnection<()>,
+        MidiOutputConnection,
+        Received,
+    ) {
+        use midir::os::unix::VirtualInput;
+        let received = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = Arc::clone(&received);
+        let input = midir::MidiInput::new("batcherbird-capture").unwrap();
+        let input_conn = input
+            .create_virtual(
+                name,
+                move |_, message, _| sink.lock().unwrap().push(message.to_vec()),
+                (),
+            )
+            .unwrap();
+        let output = midir::MidiOutput::new("batcherbird-sender").unwrap();
+        let port = output
+            .ports()
+            .into_iter()
+            .find(|port| output.port_name(port).is_ok_and(|n| n == name))
+            .expect("virtual capture port is visible");
+        let output_conn = output.connect(&port, "batcherbird-sender").unwrap();
+        (input_conn, output_conn, received)
+    }
+
+    // A synth that ignores All Notes Off (CC 123) would otherwise keep sounding
+    // when a take is cancelled mid-note.
+    #[cfg(target_os = "macos")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancelling_mid_note_sends_an_explicit_note_off() {
+        let (_input, mut conn, received) = capture_port("batcherbird-cancel-note");
+        let engine = SamplingEngine::new(SamplingConfig {
+            pre_delay_ms: 0,
+            note_duration_ms: 10_000,
+            midi_channel: 2,
+            ..Default::default()
+        })
+        .unwrap();
+        let (_producer, mut consumer) = RingBuffer::<f32>::new(1024);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let trigger = Arc::clone(&cancel);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            trigger.store(true, Ordering::Release);
+        });
+
+        let result = engine
+            .record_one_on_stream(
+                &mut conn,
+                &mut consumer,
+                &AtomicBool::new(false),
+                64,
+                100,
+                48_000,
+                1,
+                &cancel,
+                &AtomicBool::new(false),
+            )
+            .await;
+        assert!(matches!(result, Ok(None)), "{result:?}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let messages = received.lock().unwrap().clone();
+        let note_on = messages
+            .iter()
+            .position(|m| m.as_slice() == [0x92, 64, 100])
+            .expect("note-on was sent");
+        assert!(
+            messages[note_on..]
+                .iter()
+                .any(|m| m.as_slice() == [0x82, 64, 0] || m.as_slice() == [0x92, 64, 0]),
+            "no note-off for the cancelled note: {messages:?}"
+        );
+    }
+
+    // DIN MIDI runs at 31,250 baud (~1 ms per 3-byte message). Thousands of
+    // messages sent in a burst overflow interface buffers and stall the synth.
+    #[test]
+    fn midi_panic_stays_within_din_bandwidth() {
+        let messages = MidiManager::panic_messages(3);
+        assert!(
+            messages.len() <= 200,
+            "panic sends {} messages",
+            messages.len()
+        );
+        // The configured channel still gets an explicit note-off for every key,
+        // for synths that ignore All Notes Off.
+        for note in 0..128u8 {
+            assert!(messages.contains(&[0x83, note, 0]), "missing note {note}");
+        }
+        // Every channel still receives All Notes Off.
+        for channel in 0..16u8 {
+            assert!(messages.contains(&[0xB0 | channel, 123, 0]));
+        }
+    }
+
     #[test]
     fn test_note_range_validation() {
         // Valid ranges
@@ -1650,6 +1769,8 @@ mod tests {
         assert_eq!(velocity_layers(2), vec![64, 127]);
         assert_eq!(velocity_layers(3), vec![48, 96, 127]);
         assert_eq!(velocity_layers(4), vec![32, 64, 96, 127]);
+        // The example given in the function's documentation.
+        assert_eq!(velocity_layers(5), vec![20, 47, 74, 100, 127]);
     }
 
     #[test]

@@ -3,7 +3,6 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     Host, SampleFormat, SampleRate, StreamConfig,
 };
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub struct AudioManager {
@@ -156,111 +155,51 @@ impl AudioManager {
             .default_input_config()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to get input config: {}", e)))?;
 
-        let sample_rate = config.sample_rate().0;
-        let channels = config.channels() as usize;
-        let expected_samples = (duration_secs * sample_rate as u64 * channels as u64) as usize;
+        // Preallocate the whole recording so the audio callback never locks or
+        // allocates; it only pushes into this lock-free ring buffer.
+        let capacity = duration_secs
+            .checked_mul(config.sample_rate().0 as u64)
+            .and_then(|frames| frames.checked_mul(config.channels() as u64))
+            .and_then(|values| usize::try_from(values).ok())
+            .filter(|&values| values > 0)
+            .ok_or_else(|| BatcherbirdError::Config("Invalid test recording length".into()))?;
+        let (producer, mut consumer) = rtrb::RingBuffer::<f32>::new(capacity);
 
-        let recorded_samples = Arc::new(Mutex::new(Vec::with_capacity(expected_samples)));
-        let samples_clone = recorded_samples.clone();
-        let recording_complete = Arc::new(Mutex::new(false));
-        let complete_clone = recording_complete.clone();
-
+        // Open the stream with the device's own configuration, so the sample
+        // format and channel count match what the callback receives.
+        let stream_config = config.config();
+        macro_rules! open {
+            ($sample:ty) => {
+                build_test_capture_stream::<$sample>(&device, &stream_config, producer)
+            };
+        }
         let stream = match config.sample_format() {
-            SampleFormat::F32 => {
-                let stream_config = Self::get_standard_stream_config();
+            SampleFormat::F32 => open!(f32),
+            SampleFormat::F64 => open!(f64),
+            SampleFormat::I8 => open!(i8),
+            SampleFormat::I16 => open!(i16),
+            SampleFormat::I32 => open!(i32),
+            SampleFormat::I64 => open!(i64),
+            SampleFormat::U8 => open!(u8),
+            SampleFormat::U16 => open!(u16),
+            SampleFormat::U32 => open!(u32),
+            SampleFormat::U64 => open!(u64),
+            format => Err(BatcherbirdError::Audio(format!(
+                "Unsupported sample format: {format:?}"
+            ))),
+        }?;
 
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                            let mut samples = samples_clone.lock().unwrap();
-                            let complete = complete_clone.lock().unwrap();
-
-                            if !*complete {
-                                samples.extend_from_slice(data);
-                            }
-                        },
-                        |err| tracing::error!("Audio input error: {}", err),
-                        None,
-                    )
-                    .map_err(|e| {
-                        BatcherbirdError::Audio(format!("Failed to build input stream: {}", e))
-                    })?
-            }
-            SampleFormat::I16 => {
-                let stream_config = Self::get_standard_stream_config();
-
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                            let mut samples = samples_clone.lock().unwrap();
-                            let complete = complete_clone.lock().unwrap();
-
-                            if !*complete {
-                                for &sample in data {
-                                    samples.push(sample as f32 / i16::MAX as f32);
-                                }
-                            }
-                        },
-                        |err| tracing::error!("Audio input error: {}", err),
-                        None,
-                    )
-                    .map_err(|e| {
-                        BatcherbirdError::Audio(format!("Failed to build input stream: {}", e))
-                    })?
-            }
-            SampleFormat::U16 => {
-                let stream_config = Self::get_standard_stream_config();
-
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                            let mut samples = samples_clone.lock().unwrap();
-                            let complete = complete_clone.lock().unwrap();
-
-                            if !*complete {
-                                for &sample in data {
-                                    samples.push((sample as f32 - 32768.0) / 32768.0);
-                                }
-                            }
-                        },
-                        |err| tracing::error!("Audio input error: {}", err),
-                        None,
-                    )
-                    .map_err(|e| {
-                        BatcherbirdError::Audio(format!("Failed to build input stream: {}", e))
-                    })?
-            }
-            _ => {
-                return Err(BatcherbirdError::Audio(format!(
-                    "Unsupported sample format: {:?}",
-                    config.sample_format()
-                )));
-            }
-        };
-
-        // Start recording
         stream
             .play()
             .map_err(|e| BatcherbirdError::Audio(format!("Failed to start stream: {}", e)))?;
-
-        // Record for specified duration
         std::thread::sleep(Duration::from_secs(duration_secs));
+        // Dropping the stream stops the callback before the buffer is drained.
+        drop(stream);
 
-        // Stop recording
-        {
-            let mut complete = recording_complete.lock().unwrap();
-            *complete = true;
+        let mut samples = Vec::with_capacity(capacity);
+        while let Ok(value) = consumer.pop() {
+            samples.push(value);
         }
-
-        stream
-            .pause()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to stop stream: {}", e)))?;
-
-        let samples = recorded_samples.lock().unwrap().clone();
-
         Ok(samples)
     }
 
@@ -358,9 +297,67 @@ pub(crate) fn not_found_message(kind: &str, requested: &str, available: &[String
     }
 }
 
+/// Audio-thread body of the test recording: convert to f32 and push without
+/// locking or allocating. Values that do not fit are dropped.
+fn push_test_capture<T>(producer: &mut rtrb::Producer<f32>, data: &[T])
+where
+    T: cpal::Sample,
+    f32: cpal::FromSample<T>,
+{
+    for &value in data {
+        if producer
+            .push(<f32 as cpal::FromSample<T>>::from_sample_(value))
+            .is_err()
+        {
+            break;
+        }
+    }
+}
+
+fn build_test_capture_stream<T>(
+    device: &cpal::Device,
+    config: &StreamConfig,
+    mut producer: rtrb::Producer<f32>,
+) -> Result<cpal::Stream>
+where
+    T: cpal::SizedSample,
+    f32: cpal::FromSample<T>,
+{
+    device
+        .build_input_stream(
+            config,
+            move |data: &[T], _: &cpal::InputCallbackInfo| push_test_capture(&mut producer, data),
+            |err| tracing::error!("Audio input error: {}", err),
+            None,
+        )
+        .map_err(|e| BatcherbirdError::Audio(format!("Failed to build input stream: {}", e)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_capture_converts_integer_formats_to_full_scale_floats() {
+        let (mut producer, mut consumer) = rtrb::RingBuffer::<f32>::new(16);
+        push_test_capture(&mut producer, &[i16::MIN, 0, i16::MAX]);
+        push_test_capture(&mut producer, &[i32::MIN, i32::MAX]);
+        push_test_capture(&mut producer, &[0u16, 32768, u16::MAX]);
+        let values: Vec<f32> = std::iter::from_fn(|| consumer.pop().ok()).collect();
+        let expected = [-1.0, 0.0, 1.0, -1.0, 1.0, -1.0, 0.0, 1.0];
+        assert_eq!(values.len(), expected.len());
+        for (value, expected) in values.iter().zip(expected) {
+            assert!((value - expected).abs() < 1e-3, "{values:?}");
+        }
+    }
+
+    #[test]
+    fn test_capture_drops_overflow_instead_of_growing() {
+        // The callback runs on the audio thread, so it must never allocate.
+        let (mut producer, mut consumer) = rtrb::RingBuffer::<f32>::new(4);
+        push_test_capture(&mut producer, &[0.1f32; 10]);
+        assert_eq!(std::iter::from_fn(|| consumer.pop().ok()).count(), 4);
+    }
 
     fn names(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
