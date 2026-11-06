@@ -18,6 +18,63 @@ pub(crate) fn sanitize_filename(name: &str) -> String {
         .to_string()
 }
 
+/// Whether `dir` already holds files, so exporting a pack there would replace them.
+pub fn pack_exists(dir: &Path) -> bool {
+    pack_contents(dir).map_or(true, |entries| !entries.is_empty())
+}
+
+/// Entries of an existing pack folder; empty when the folder does not exist.
+fn pack_contents(dir: &Path) -> Result<Vec<PathBuf>> {
+    match fs::read_dir(dir) {
+        Ok(entries) => entries
+            .map(|entry| {
+                entry
+                    .map(|entry| entry.path())
+                    .map_err(BatcherbirdError::Export)
+            })
+            .collect(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(BatcherbirdError::Export(error)),
+    }
+}
+
+/// Regular files a pack export writes (plus Finder metadata), which a replace may remove.
+fn is_pack_file(path: &Path) -> bool {
+    let is_regular = fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file());
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let extension = path
+        .extension()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_ascii_lowercase();
+    is_regular && (name == ".DS_Store" || matches!(extension.as_str(), "wav" | "sfz" | "dspreset"))
+}
+
+/// Move a fully written staging folder over `target`, restoring the old pack on failure.
+fn swap_into_place(
+    staging: &Path,
+    target: &Path,
+    parent: &Path,
+    label: &str,
+    unique: &str,
+) -> Result<()> {
+    let previous = parent.join(format!(".{label}.previous-{unique}"));
+    let had_target = target.exists();
+    if had_target {
+        fs::rename(target, &previous).map_err(BatcherbirdError::Export)?;
+    }
+    if let Err(error) = fs::rename(staging, target) {
+        if had_target {
+            let _ = fs::rename(&previous, target);
+        }
+        return Err(BatcherbirdError::Export(error));
+    }
+    if had_target {
+        let _ = fs::remove_dir_all(&previous);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct ExportConfig {
     pub output_directory: PathBuf,
@@ -101,6 +158,14 @@ pub struct WavMetadata {
 
 pub struct SampleExporter {
     config: ExportConfig,
+}
+
+/// Result of [`SampleExporter::export_pack`].
+#[derive(Debug, Clone, Default)]
+pub struct ExportReport {
+    pub files: Vec<PathBuf>,
+    /// (note, velocity) of takes clamped at full scale in integer WAV output.
+    pub clipped: Vec<(u8, u8)>,
 }
 
 /// Escape a string for safe interpolation into XML content
@@ -248,7 +313,89 @@ impl SampleExporter {
         Ok(filepath)
     }
 
+    /// Export a complete pack into `output_directory`, which must be dedicated to this pack.
+    ///
+    /// The pack is written to a staging folder beside `output_directory` and moved into
+    /// place only after every file succeeds, so a failure never leaves a mixed pack.
+    /// An existing non-empty pack is replaced only when `replace` is true, and only if
+    /// it holds nothing but files a pack export writes.
+    pub fn export_pack(&self, samples: &[Sample], replace: bool) -> Result<ExportReport> {
+        let target = &self.config.output_directory;
+        let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
+            return Err(BatcherbirdError::Config(format!(
+                "Cannot export a pack directly into {}",
+                target.display()
+            )));
+        };
+        let existing = pack_contents(target)?;
+        if !existing.is_empty() {
+            if !replace {
+                return Err(BatcherbirdError::PackExists(target.clone()));
+            }
+            if let Some(foreign) = existing.iter().find(|path| !is_pack_file(path)) {
+                return Err(BatcherbirdError::Config(format!(
+                    "{} contains {}, which Batcherbird did not export. Choose another instrument name or export folder.",
+                    target.display(),
+                    foreign.file_name().unwrap_or_default().to_string_lossy()
+                )));
+            }
+        }
+
+        let processed = self.prepare_samples(samples)?;
+        let clipped = if matches!(self.config.sample_format, AudioFormat::Wav32BitFloat) {
+            Vec::new()
+        } else {
+            processed
+                .iter()
+                .filter(|sample| sample.audio_data.iter().any(|value| value.abs() > 1.0))
+                .map(|sample| (sample.note, sample.velocity))
+                .collect()
+        };
+
+        let unique = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+        let label = name.to_string_lossy();
+        let staging = parent.join(format!(".{label}.staging-{unique}"));
+        fs::create_dir(&staging).map_err(BatcherbirdError::Export)?;
+        let staged = SampleExporter {
+            config: ExportConfig {
+                output_directory: staging.clone(),
+                ..self.config.clone()
+            },
+        }
+        .write_prepared(&processed);
+        let staged = match staged {
+            Ok(files) => files,
+            Err(error) => {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(error);
+            }
+        };
+
+        if let Err(error) = swap_into_place(&staging, target, parent, &label, &unique) {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error);
+        }
+        let files = staged
+            .iter()
+            .map(|path| target.join(path.file_name().unwrap_or_default()))
+            .collect();
+        Ok(ExportReport { files, clipped })
+    }
+
     pub fn export_samples(&self, samples: &[Sample]) -> Result<Vec<PathBuf>> {
+        let processed = self.prepare_samples(samples)?;
+        self.write_prepared(&processed)
+    }
+
+    /// Validate names and prepare every sample before any file is written.
+    fn prepare_samples(&self, samples: &[Sample]) -> Result<Vec<Sample>> {
         let mut filenames = std::collections::HashSet::new();
         for sample in samples {
             if !filenames.insert(self.generate_filename(sample)) {
@@ -258,10 +405,13 @@ impl SampleExporter {
                 ));
             }
         }
-        let processed: Vec<Sample> = samples
+        samples
             .iter()
             .map(|sample| self.prepare_sample(sample))
-            .collect::<Result<_>>()?;
+            .collect()
+    }
+
+    fn write_prepared(&self, processed: &[Sample]) -> Result<Vec<PathBuf>> {
         let mut exported_files = processed
             .iter()
             .map(|sample| self.export_processed_sample(sample))
@@ -270,14 +420,13 @@ impl SampleExporter {
             self.config.sample_format,
             AudioFormat::DecentSampler | AudioFormat::DecentSamplerAndSfz | AudioFormat::All
         ) {
-            exported_files
-                .push(self.generate_processed_dspreset_file(&processed, &exported_files)?);
+            exported_files.push(self.generate_processed_dspreset_file(processed, &exported_files)?);
         }
         if matches!(
             self.config.sample_format,
             AudioFormat::SFZ | AudioFormat::DecentSamplerAndSfz | AudioFormat::All
         ) {
-            exported_files.push(self.generate_processed_sfz_file(&processed, &exported_files)?);
+            exported_files.push(self.generate_processed_sfz_file(processed, &exported_files)?);
         }
         Ok(exported_files)
     }
@@ -325,8 +474,9 @@ impl SampleExporter {
             .map(|&sample| sample.abs())
             .fold(0.0f32, f32::max);
 
-        if peak > 0.0 && peak < 1.0 {
-            let gain = 0.95 / peak; // Normalize to 95% to avoid clipping
+        // Scale both quiet and over-full-scale takes to 95%, leaving headroom.
+        if peak > 0.0 {
+            let gain = 0.95 / peak;
             for sample in audio_data.iter_mut() {
                 *sample *= gain;
             }
@@ -382,7 +532,7 @@ impl SampleExporter {
         match self.config.sample_format {
             AudioFormat::Wav16Bit => {
                 for &sample in audio_data.iter() {
-                    let sample_i16 = (sample * i16::MAX as f32) as i16;
+                    let sample_i16 = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
                     writer
                         .write_sample(sample_i16)
                         .map_err(|e| BatcherbirdError::Export(std::io::Error::other(e)))?;
@@ -390,7 +540,8 @@ impl SampleExporter {
             }
             AudioFormat::Wav24Bit => {
                 for &sample in audio_data.iter() {
-                    let sample_i32 = (sample * 8_388_607.0) as i32; // 24-bit max value
+                    // Clamp: hound rejects values outside the 24-bit range.
+                    let sample_i32 = (sample.clamp(-1.0, 1.0) * 8_388_607.0) as i32;
                     writer
                         .write_sample(sample_i32)
                         .map_err(|e| BatcherbirdError::Export(std::io::Error::other(e)))?;

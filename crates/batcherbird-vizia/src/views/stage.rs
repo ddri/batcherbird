@@ -60,6 +60,32 @@ pub fn stage(cx: &mut Context) {
                 }).class("banner-error").vertical_gap(Pixels(8.0));
             }
         });
+        Binding::new(cx, AppData::pending_takes_replacement, |cx, pending| {
+            if let Some(count) = pending.get(cx) {
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "Replace your unsaved takes?").text_value("Replace your unsaved takes?").font_weight(FontWeightKeyword::Bold);
+                    let detail = format!("A new capture replaces the {count} take(s) in Review, which have not been saved as a session.");
+                    Label::new(cx, &detail).text_value(detail.clone()).width(Stretch(1.0));
+                    HStack::new(cx, |cx| {
+                        action(cx, "Keep takes", AppEvent::KeepCurrentTakes).class("primary");
+                        action(cx, "Replace takes", AppEvent::ConfirmTakesReplacement);
+                    }).class("control-row");
+                }).class("banner-error").vertical_gap(Pixels(8.0));
+            }
+        });
+        Binding::new(cx, AppData::pending_export_replacement, |cx, pending| {
+            if let Some(folder) = pending.get(cx) {
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "Replace the existing pack?").text_value("Replace the existing pack?").font_weight(FontWeightKeyword::Bold);
+                    Label::new(cx, "This folder already holds an export. Replacing it removes those files and writes this pack in their place.").width(Stretch(1.0));
+                    Label::new(cx, &folder).text_value(folder.clone()).width(Stretch(1.0)).text_wrap(false).text_overflow(TextOverflow::Ellipsis);
+                    HStack::new(cx, |cx| {
+                        action(cx, "Keep existing pack", AppEvent::KeepExistingExport).class("primary");
+                        action(cx, "Replace pack", AppEvent::ConfirmExportReplacement);
+                    }).class("control-row");
+                }).class("banner-error").vertical_gap(Pixels(8.0));
+            }
+        });
         Binding::new(cx, AppData::error_message, |cx, msg| {
             if let Some(text) = msg.get(cx) {
                 HStack::new(cx, |cx| {

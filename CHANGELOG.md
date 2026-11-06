@@ -24,6 +24,13 @@ Release candidate work; hardware, target-sampler, and installer validation remai
 - WAVs and presets use the same trimmed/faded export audio timeline, with frame-aware stereo trimming and fades.
 - SFZ paths resolve to adjacent WAVs; alternate WAV depths no longer overwrite shared preset WAVs; duplicate filename patterns fail before writing audio.
 - Automatic loop suggestions check correlation across channels; DecentSampler crossfade lengths use frames, while SFZ uses seconds.
+- The command-line `sample-note`, `sample-range` and `sample-export` commands no longer crash when a MIDI output is connected.
+- Recordings louder than full scale (possible with high input gain) now export instead of failing; they are held at full scale and the export names the clipped takes so they can be re-recorded.
+- Exporting over an existing pack asks first, and the new pack replaces the old one only once every file is written, so a failed export never leaves a mix of old and new files. A folder containing other files is never replaced.
+- Starting a new capture while Review holds unsaved takes asks before replacing them.
+- Closing the window keeps unsaved takes, including a capture in progress, and offers them again at next launch.
+- The recovered-capture notice no longer reappears after the takes have been saved as a session, exported, or replaced by opening another session.
+- Opening a session no longer changes your export folder; an old relative export folder in preferences falls back to Documents instead of the drive root.
 
 ### Changed
 

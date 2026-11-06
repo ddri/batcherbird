@@ -451,6 +451,27 @@ pub struct Sample {
     pub audio_timing: Duration,
 }
 
+/// Drive a sampling future to completion from synchronous code.
+///
+/// Callers may already be inside a Tokio runtime (the CLI runs under
+/// `#[tokio::main]`), where starting a nested runtime panics. A multi-thread
+/// runtime is reused via `block_in_place`; a current-thread runtime cannot
+/// block safely, so that case is reported as an error instead of panicking.
+fn run_blocking<T>(future: impl std::future::Future<Output = Result<T>>) -> Result<T> {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    match Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(|| handle.block_on(future))
+        }
+        Ok(_) => Err(BatcherbirdError::Config(
+            "Blocking sampling calls cannot run inside a current-thread Tokio runtime; use the async API".into(),
+        )),
+        Err(_) => tokio::runtime::Runtime::new()
+            .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {e}")))?
+            .block_on(future),
+    }
+}
+
 pub struct SamplingEngine {
     audio_manager: AudioManager,
     config: SamplingConfig,
@@ -823,12 +844,8 @@ impl SamplingEngine {
         midi_conn: &mut MidiOutputConnection,
         note: u8,
     ) -> Result<Sample> {
-        // Create dedicated runtime for this blocking operation
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {}", e)))?;
-
         // Execute the professional lock-free method in blocking context
-        rt.block_on(async {
+        run_blocking(async {
             let (sample, _performance) = self
                 .sample_single_note_lock_free(midi_conn, note, self.config.velocity)
                 .await?;
@@ -851,9 +868,7 @@ impl SamplingEngine {
                 "Velocity must be in 1..=127".into(),
             ));
         }
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {e}")))?;
-        rt.block_on(async {
+        run_blocking(async {
             if cancel.load(Ordering::Acquire) {
                 return Ok(None);
             }
@@ -927,12 +942,8 @@ impl SamplingEngine {
         midi_conn: &mut MidiOutputConnection,
         note: u8,
     ) -> Result<(Sample, Consumer<VizChunk>)> {
-        // Create dedicated runtime for this blocking operation
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {}", e)))?;
-
         // Execute the lock-free method and create visualization from audio data
-        rt.block_on(async {
+        run_blocking(async {
             let (sample, _performance) = self
                 .sample_single_note_lock_free(midi_conn, note, self.config.velocity)
                 .await?;
@@ -1085,12 +1096,8 @@ impl SamplingEngine {
         start_note: u8,
         end_note: u8,
     ) -> Result<Vec<Sample>> {
-        // Create dedicated runtime for this blocking operation
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {}", e)))?;
-
         // Execute the async operation in blocking context
-        rt.block_on(self.sample_note_range_async(midi_conn, start_note, end_note))
+        run_blocking(self.sample_note_range_async(midi_conn, start_note, end_note))
     }
 
     /// Validate a MIDI note range for range sampling
@@ -1281,9 +1288,7 @@ impl SamplingEngine {
         progress: impl FnMut(RecordingProgress),
         captured: impl FnMut(&Sample),
     ) -> Result<Vec<Sample>> {
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| BatcherbirdError::Audio(format!("Failed to create runtime: {e}")))?;
-        rt.block_on(self.sample_note_range_stepped_with_progress_async(
+        run_blocking(self.sample_note_range_stepped_with_progress_async(
             midi_conn,
             start_note,
             end_note,
@@ -1598,6 +1603,27 @@ impl Sample {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn timed_value() -> Result<u8> {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        Ok(7)
+    }
+
+    #[test]
+    fn run_blocking_works_without_a_runtime() {
+        assert_eq!(run_blocking(timed_value()).unwrap(), 7);
+    }
+
+    // The CLI calls the *_blocking API from inside #[tokio::main].
+    #[tokio::test(flavor = "multi_thread")]
+    async fn run_blocking_works_inside_a_multi_thread_runtime() {
+        assert_eq!(run_blocking(timed_value()).unwrap(), 7);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_blocking_reports_an_error_inside_a_current_thread_runtime() {
+        assert!(run_blocking(timed_value()).is_err());
+    }
     use rtrb::RingBuffer;
     use std::thread;
     use std::time::Duration;
