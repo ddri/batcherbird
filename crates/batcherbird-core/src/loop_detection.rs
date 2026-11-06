@@ -661,8 +661,8 @@ mod tests {
         detector
             .apply_loop_with_crossfade_channels(&mut stereo, &loop_at(200, 700), 10_000, 2)
             .unwrap();
-        for frame in stereo.chunks_exact(2) {
-            assert!((frame[0] - 0.4).abs() < 1e-6 && (frame[1] + 0.8).abs() < 1e-6);
+        for [left, right] in stereo.as_chunks::<2>().0 {
+            assert!((left - 0.4).abs() < 1e-6 && (right + 0.8).abs() < 1e-6);
         }
     }
 }
