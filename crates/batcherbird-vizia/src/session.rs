@@ -411,6 +411,21 @@ pub fn save_session(
     })
 }
 
+/// Delete a session manifest and the audio sidecar it exclusively owns.
+pub fn remove_session(path: &Path) -> Result<(), String> {
+    // Identify the owned sidecar before the manifest that proves ownership is gone.
+    let sidecar = superseded_sidecar(path).filter(|sidecar| !sidecar_is_shared(path, sidecar));
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("Cannot remove {}: {error}", path.display())),
+    }
+    if let Some(sidecar) = sidecar {
+        clean_superseded_sidecar(&sidecar);
+    }
+    Ok(())
+}
+
 pub fn load_session(path: &Path) -> Result<(SessionSettings, Vec<Sample>), String> {
     load_session_inner(path).map_err(|error| {
         format!(
@@ -549,6 +564,38 @@ mod tests {
         assert_eq!(samples[0].midi_timing, sample.midi_timing);
         fs::remove_dir_all(moved).unwrap();
     }
+    #[test]
+    fn removing_a_session_deletes_its_manifest_and_owned_audio_only() {
+        let dir = test_dir();
+        let path = dir.join("recovery.batcherbird");
+        let sample = Sample {
+            note: 60,
+            velocity: 100,
+            audio_data: vec![0.25, -0.25],
+            sample_rate: 48000,
+            channels: 1,
+            recorded_at: UNIX_EPOCH,
+            midi_timing: Duration::ZERO,
+            audio_timing: Duration::ZERO,
+        };
+        save_session(&path, &SessionSettings::default(), &[sample]).unwrap();
+        fs::write(dir.join("unrelated.txt"), "keep").unwrap();
+
+        remove_session(&path).unwrap();
+
+        let mut left: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left, vec!["unrelated.txt"]);
+        assert!(
+            remove_session(&path).is_ok(),
+            "missing checkpoint is not an error"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn failed_save_does_not_replace_existing_manifest() {
         let dir = test_dir();

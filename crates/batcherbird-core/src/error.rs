@@ -22,6 +22,9 @@ pub enum BatcherbirdError {
     #[error("Configuration error: {0}")]
     Config(String),
 
+    #[error("An export already exists at {}", .0.display())]
+    PackExists(std::path::PathBuf),
+
     #[error("Session error: {0}")]
     Session(String),
 }

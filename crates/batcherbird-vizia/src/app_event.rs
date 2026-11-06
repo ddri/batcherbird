@@ -40,6 +40,10 @@ pub enum AppEvent {
     OpenSession,
     ConfirmSessionReplacement,
     KeepCurrentSession,
+    ConfirmTakesReplacement,
+    KeepCurrentTakes,
+    ConfirmExportReplacement,
+    KeepExistingExport,
     SessionSaved {
         path: PathBuf,
         revision: u64,
@@ -137,6 +141,9 @@ pub enum AppEvent {
     ExportComplete {
         count: usize,
         directory: PathBuf,
+        revision: u64,
+        /// (note, velocity) of takes clamped at full scale.
+        clipped: Vec<(u8, u8)>,
     },
     ExportError(String),
 

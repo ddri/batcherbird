@@ -2,7 +2,7 @@ use crate::app_event::{AppEvent, InstrumentPreset};
 use crate::session::{self, SessionSettings};
 use batcherbird_core::channel_routing::ChannelRouting;
 use batcherbird_core::export::AudioFormat;
-use batcherbird_core::export::{ExportConfig, SampleExporter};
+use batcherbird_core::export::{self, ExportConfig, SampleExporter};
 use batcherbird_core::lock_free_recording::RealtimeMeterData;
 use batcherbird_core::preview_player::PreviewPlayer;
 use batcherbird_core::sampler::{Sample, SamplingConfig, SamplingEngine, VizChunk};
@@ -128,6 +128,10 @@ pub struct AppData {
     pub pending_session_name: Option<String>,
     #[lens(ignore)]
     pub pending_session: Option<PendingSession>,
+    /// Unsaved take count awaiting confirmation before a new batch replaces them.
+    pub pending_takes_replacement: Option<usize>,
+    /// Existing pack folder awaiting confirmation before an export replaces it.
+    pub pending_export_replacement: Option<String>,
     pub controls_busy: bool,
     pub session_status: String,
     pub has_unsaved_changes: bool,
@@ -284,6 +288,8 @@ impl Default for AppData {
             diagnostics_busy: false,
             pending_session_name: None,
             pending_session: None,
+            pending_takes_replacement: None,
+            pending_export_replacement: None,
             controls_busy: false,
             session_status: "New session".into(),
             has_unsaved_changes: false,
@@ -396,13 +402,37 @@ impl Default for AppData {
 }
 
 impl AppData {
+    /// Called as the window closes: keep unsaved takes, including an interrupted batch.
+    /// The window cannot be kept open (vizia 0.3 closes unconditionally), so write the
+    /// recovery checkpoint synchronously; it is restored at next launch.
+    pub fn preserve_work_on_close(&mut self) {
+        // Dropping the worker cancels the batch and waits for it to finish.
+        let worker = self.recording_worker.take();
+        let was_recording = worker.is_some();
+        drop(worker);
+        if was_recording {
+            let captured = self
+                .recorded_slot
+                .lock()
+                .map(|mut slot| std::mem::take(&mut *slot))
+                .unwrap_or_default();
+            self.accept_captured_samples(captured);
+        }
+        if !self.has_unsaved_changes || self.recorded_samples.is_empty() {
+            return;
+        }
+        if let Some(path) = self.recovery_path() {
+            let _ = session::save_session(&path, &self.session_settings(), &self.recorded_samples);
+        }
+    }
+
     pub fn load_preferences() -> Self {
         let mut data = Self::default();
         if let Some(root) = dirs::config_dir() {
             let path = root.join("batcherbird/settings.json");
             if path.exists() {
                 match session::load_settings(&path) {
-                    Ok(settings) => data.apply_session_settings(settings),
+                    Ok(settings) => data.apply_preferences(settings),
                     Err(e) => data.error_message = Some(format!("Could not restore settings: {e}")),
                 }
             }
@@ -520,6 +550,16 @@ impl AppData {
         }
     }
 
+    /// Apply settings.json, the only source allowed to choose the export folder.
+    pub fn apply_preferences(&mut self, settings: SessionSettings) {
+        // A relative folder (the old "." default) would resolve against the launch
+        // directory, which is / for a Finder-launched app.
+        if settings.output_directory.is_absolute() {
+            self.output_directory = settings.output_directory.clone();
+        }
+        self.apply_session_settings(settings);
+    }
+
     pub fn apply_session_settings(&mut self, settings: SessionSettings) {
         self.instrument_name = settings.instrument_name.chars().take(120).collect();
         if self.instrument_name.trim().is_empty() {
@@ -549,7 +589,6 @@ impl AppData {
         self.selected_format_index = settings.export_format.min(6);
         self.export_format = Self::format_at_index(self.selected_format_index);
         self.export_format_display = Self::format_display(&self.export_format).into();
-        self.output_directory = settings.output_directory;
         self.preferred_midi_device = settings.midi_device;
         self.preferred_audio_device = settings.audio_device;
         self.auto_loop = settings.auto_loop;
@@ -715,6 +754,7 @@ impl AppData {
         self.sampling_engine = None;
         self.silence_audition();
         self.apply_session_settings(settings);
+        self.discard_recovery();
         self.restore_device_selections();
         self.set_recorded_samples(samples);
         self.app_state = if self.recorded_samples.is_empty() {
@@ -870,13 +910,56 @@ impl AppData {
         });
     }
 
-    fn save_recovery(&mut self, cx: &mut EventContext) {
-        let Some(path) = self
-            .preferences_path
+    fn recovery_path(&self) -> Option<PathBuf> {
+        self.preferences_path
             .as_ref()
             .and_then(|path| path.parent())
             .map(|parent| parent.join("recovery.batcherbird"))
-        else {
+    }
+
+    /// Forget the checkpoint once its takes are kept elsewhere (saved, exported or replaced).
+    fn discard_recovery(&mut self) {
+        if let Some(path) = self.recovery_path() {
+            if let Err(error) = session::remove_session(&path) {
+                self.error_message = Some(format!(
+                    "Could not remove the recovery checkpoint ({error}); it will be offered again at next launch."
+                ));
+            }
+        }
+    }
+
+    /// Export the takes on a worker thread; `replace` allows overwriting an existing pack.
+    fn start_export(&mut self, cx: &mut EventContext, replace: bool) {
+        self.error_message = None;
+        self.info_message = None;
+        self.export_in_progress = true;
+        let cfg = self.build_export_config();
+        // Cloning the samples once into the worker is acceptable; export
+        // does file IO + detection and must not block the UI thread.
+        let revision = self.settings_revision;
+        let samples = self.recorded_samples.clone();
+        let mut proxy = cx.get_proxy();
+        std::thread::spawn(move || {
+            let result = SampleExporter::new(cfg.clone())
+                .and_then(|exporter| exporter.export_pack(&samples, replace));
+            match result {
+                Ok(report) => {
+                    let _ = proxy.emit(AppEvent::ExportComplete {
+                        count: report.files.len(),
+                        directory: cfg.output_directory,
+                        revision,
+                        clipped: report.clipped,
+                    });
+                }
+                Err(e) => {
+                    let _ = proxy.emit(AppEvent::ExportError(e.to_string()));
+                }
+            }
+        });
+    }
+
+    fn save_recovery(&mut self, cx: &mut EventContext) {
+        let Some(path) = self.recovery_path() else {
             return;
         };
         if self.recorded_samples.is_empty() {
@@ -1374,6 +1457,11 @@ impl AppData {
 
 impl Model for AppData {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
+        event.map(|window_event: &WindowEvent, _| {
+            if matches!(window_event, WindowEvent::WindowClose) {
+                self.preserve_work_on_close();
+            }
+        });
         event.map(|app_event: &AppEvent, _| {
             let configuration_change = matches!(app_event,
                 AppEvent::SetStartNote(_) | AppEvent::SetEndNote(_) | AppEvent::SetVelocityLayers(_)
@@ -1396,6 +1484,8 @@ impl Model for AppData {
                 }
                 if matches!(app_event, AppEvent::SelectMidiDevice(_) | AppEvent::CycleNextMidiDevice | AppEvent::CyclePrevMidiDevice) { self.silence_audition(); }
                 self.mark_changed();
+                // The prompt named a folder that these settings may no longer export to.
+                self.pending_export_replacement = None;
             }
             match app_event {
             AppEvent::RefreshDevices => {
@@ -1554,7 +1644,7 @@ impl Model for AppData {
             AppEvent::SessionSaved { path, revision } => {
                 self.session_busy = false;
                 self.error_message = None;
-                if *revision == self.settings_revision { self.has_unsaved_changes = false; }
+                if *revision == self.settings_revision { self.has_unsaved_changes = false; self.discard_recovery(); }
                 self.session_status = path.file_name().unwrap_or_default().to_string_lossy().into();
                 self.info_message = Some(format!("Session saved to {}", path.display()));
             }
@@ -1563,6 +1653,12 @@ impl Model for AppData {
             }
             AppEvent::ConfirmSessionReplacement => { self.resolve_session_replacement(true); }
             AppEvent::KeepCurrentSession => { self.resolve_session_replacement(false); }
+            AppEvent::ConfirmTakesReplacement => {
+                if self.pending_takes_replacement.take().is_some() {
+                    self.begin_recording(cx, None);
+                }
+            }
+            AppEvent::KeepCurrentTakes => { self.pending_takes_replacement = None; }
             AppEvent::SessionError(error) => { self.session_busy = false; self.info_message = None; self.error_message = Some(error.clone()); }
             AppEvent::SessionDialogCancelled => { self.session_busy = false; }
             AppEvent::RecoveryComplete(error) => {
@@ -1844,7 +1940,13 @@ impl Model for AppData {
                 self.gain_check_message = Some(message.clone());
                 self.gain_check_status_color = "#ff4444".to_string();
             }
-            AppEvent::StartRecording => { self.begin_recording(cx, None); }
+            AppEvent::StartRecording => {
+                if self.has_unsaved_changes && !self.recorded_samples.is_empty() && !self.is_busy() {
+                    self.pending_takes_replacement = Some(self.recorded_samples.len());
+                } else {
+                    self.begin_recording(cx, None);
+                }
+            }
             AppEvent::RecordSelectedSample => { self.begin_recording(cx, Some(self.selected_sample)); }
             AppEvent::PushVizChunk(chunk) => {
                 self.viz_peaks.push(chunk.peak);
@@ -1933,40 +2035,43 @@ impl Model for AppData {
                         Some("No recorded samples to export.".to_string());
                     return;
                 }
-                self.error_message = None;
-                self.info_message = None;
-
-                self.export_in_progress = true;
-                let cfg = self.build_export_config();
-                // Cloning the samples once into the worker is acceptable; export
-                // does file IO + detection and must not block the UI thread.
-                let samples = self.recorded_samples.clone();
-                let mut proxy = cx.get_proxy();
-
-                std::thread::spawn(move || {
-                    let result = SampleExporter::new(cfg.clone())
-                        .and_then(|exporter| exporter.export_samples(&samples));
-                    match result {
-                        Ok(paths) => {
-                            let _ = proxy.emit(AppEvent::ExportComplete {
-                                count: paths.len(),
-                                directory: cfg.output_directory,
-                            });
-                        }
-                        Err(e) => {
-                            let _ = proxy.emit(AppEvent::ExportError(e.to_string()));
-                        }
-                    }
-                });
+                let pack = self.build_export_config().output_directory;
+                if export::pack_exists(&pack) {
+                    self.pending_export_replacement = Some(pack.display().to_string());
+                } else {
+                    self.start_export(cx, false);
+                }
             }
-            AppEvent::ExportComplete { count, directory } => {
+            AppEvent::ConfirmExportReplacement => {
+                if self.pending_export_replacement.take().is_some() && !self.is_busy() {
+                    self.start_export(cx, true);
+                }
+            }
+            AppEvent::KeepExistingExport => { self.pending_export_replacement = None; }
+            AppEvent::ExportComplete { count, directory, revision, clipped } => {
                 self.export_in_progress = false;
                 self.error_message = None;
+                if *revision == self.settings_revision {
+                    self.discard_recovery();
+                }
                 self.info_message = Some(format!(
                     "Exported {} file(s) to {}",
                     count,
                     directory.display()
                 ));
+                if !clipped.is_empty() {
+                    let takes = clipped
+                        .iter()
+                        .map(|(note, velocity)| {
+                            format!("{} vel {velocity}", SampleExporter::note_to_name(*note))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.error_message = Some(format!(
+                        "{} take(s) were louder than full scale and were clipped: {takes}. Lower the input gain and re-record them.",
+                        clipped.len()
+                    ));
+                }
             }
             AppEvent::ExportError(msg) => {
                 self.export_in_progress = false;
@@ -2293,5 +2398,321 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn opening_a_session_keeps_the_current_export_folder() {
+        let mut data = AppData {
+            output_directory: PathBuf::from("/Users/me/Exports"),
+            ..AppData::default()
+        };
+        let settings = SessionSettings {
+            output_directory: PathBuf::from("/Users/someone-else/Packs"),
+            ..SessionSettings::default()
+        };
+        data.receive_loaded_session(
+            PathBuf::from("shared.batcherbird"),
+            settings,
+            vec![confirmation_sample(60, 0.25)],
+        );
+        assert_eq!(data.recorded_samples.len(), 1, "session was applied");
+        assert_eq!(data.output_directory, PathBuf::from("/Users/me/Exports"));
+    }
+
+    #[test]
+    fn relative_export_folder_in_preferences_falls_back_to_the_default() {
+        let mut data = AppData::default();
+        data.apply_preferences(SessionSettings {
+            output_directory: PathBuf::from("."),
+            ..SessionSettings::default()
+        });
+        assert_eq!(data.output_directory, AppData::default().output_directory);
+
+        data.apply_preferences(SessionSettings {
+            output_directory: PathBuf::from("/Volumes/Samples"),
+            ..SessionSettings::default()
+        });
+        assert_eq!(data.output_directory, PathBuf::from("/Volumes/Samples"));
+    }
+
+    /// AppData whose preferences live in a fresh folder holding a recovery checkpoint.
+    fn session_with_recovery_checkpoint(name: &str) -> (AppData, PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "batcherbird_recovery_{}_{name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let recovery = dir.join("recovery.batcherbird");
+        std::fs::write(&recovery, "checkpoint").unwrap();
+        let mut data = edited_confirmation_session();
+        data.preferences_path = Some(dir.join("settings.json"));
+        (data, recovery)
+    }
+
+    #[test]
+    fn saving_the_current_session_discards_the_recovery_checkpoint() {
+        let (data, recovery) = session_with_recovery_checkpoint("saved");
+        let revision = data.settings_revision;
+        dispatch_session_events(
+            data,
+            &[AppEvent::SessionSaved {
+                path: PathBuf::from("kept.batcherbird"),
+                revision,
+            }],
+        );
+        assert!(!recovery.exists());
+    }
+
+    #[test]
+    fn saving_an_older_revision_keeps_the_recovery_checkpoint() {
+        let (data, recovery) = session_with_recovery_checkpoint("stale_save");
+        let revision = data.settings_revision - 1;
+        dispatch_session_events(
+            data,
+            &[AppEvent::SessionSaved {
+                path: PathBuf::from("older.batcherbird"),
+                revision,
+            }],
+        );
+        assert!(recovery.exists());
+    }
+
+    #[test]
+    fn opening_another_session_discards_the_recovery_checkpoint() {
+        let (mut data, recovery) = session_with_recovery_checkpoint("opened");
+        data.has_unsaved_changes = false;
+        data.receive_loaded_session(
+            PathBuf::from("other.batcherbird"),
+            SessionSettings::default(),
+            vec![confirmation_sample(72, 0.5)],
+        );
+        assert!(!recovery.exists());
+    }
+
+    #[test]
+    fn exporting_the_current_takes_discards_the_recovery_checkpoint() {
+        let (mut data, recovery) = session_with_recovery_checkpoint("exported");
+        data.export_in_progress = true;
+        let revision = data.settings_revision;
+        dispatch_session_events(
+            data,
+            &[AppEvent::ExportComplete {
+                count: 1,
+                directory: PathBuf::from("pack"),
+                revision,
+                clipped: Vec::new(),
+            }],
+        );
+        assert!(!recovery.exists());
+    }
+
+    fn armed_with_unsaved_takes() -> AppData {
+        let mut data = edited_confirmation_session();
+        data.app_state = AppState::Armed;
+        data
+    }
+
+    #[test]
+    fn starting_a_batch_over_unsaved_takes_asks_first() {
+        let backend =
+            dispatch_session_events(armed_with_unsaved_takes(), &[AppEvent::StartRecording]);
+        let data = backend.0.data::<AppData>().unwrap();
+        assert_eq!(data.pending_takes_replacement, Some(1));
+        assert_eq!(data.app_state, AppState::Armed, "recording did not start");
+        assert_eq!(data.recorded_samples[0].audio_data, vec![0.25, -0.25]);
+    }
+
+    #[test]
+    fn keeping_takes_cancels_the_new_batch() {
+        let backend = dispatch_session_events(
+            armed_with_unsaved_takes(),
+            &[AppEvent::StartRecording, AppEvent::KeepCurrentTakes],
+        );
+        let data = backend.0.data::<AppData>().unwrap();
+        assert_eq!(data.pending_takes_replacement, None);
+        assert_eq!(data.app_state, AppState::Armed);
+        assert_eq!(data.recorded_samples.len(), 1);
+    }
+
+    #[test]
+    fn confirming_replacement_starts_the_batch() {
+        let backend = dispatch_session_events(
+            armed_with_unsaved_takes(),
+            &[AppEvent::StartRecording, AppEvent::ConfirmTakesReplacement],
+        );
+        let data = backend.0.data::<AppData>().unwrap();
+        assert_eq!(data.pending_takes_replacement, None);
+        // No devices in tests, so the confirmed start reaches the device check.
+        assert!(data
+            .error_message
+            .as_deref()
+            .is_some_and(|message| message.contains("Connect an audio input")));
+    }
+
+    #[test]
+    fn saved_takes_start_a_batch_without_asking() {
+        let mut data = armed_with_unsaved_takes();
+        data.has_unsaved_changes = false;
+        let backend = dispatch_session_events(data, &[AppEvent::StartRecording]);
+        let data = backend.0.data::<AppData>().unwrap();
+        assert_eq!(data.pending_takes_replacement, None);
+        assert!(
+            data.error_message.is_some(),
+            "went straight to the device check"
+        );
+    }
+
+    /// Edited takes set to export into a fresh folder, optionally holding an earlier pack.
+    fn exportable_session(name: &str, existing_pack: bool) -> (AppData, PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "batcherbird_export_ui_{}_{name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let mut data = edited_confirmation_session();
+        data.instrument_name = "Pack".into();
+        data.output_directory = root.clone();
+        let pack = root.join("Pack");
+        if existing_pack {
+            std::fs::create_dir_all(&pack).unwrap();
+            std::fs::write(pack.join("Pack_C4_60_vel096.wav"), "earlier export").unwrap();
+        }
+        (data, pack)
+    }
+
+    #[test]
+    fn exporting_over_an_existing_pack_asks_first() {
+        let (data, pack) = exportable_session("asks", true);
+        let backend = dispatch_session_events(data, &[AppEvent::ExportAll]);
+        let data = backend.0.data::<AppData>().unwrap();
+        assert_eq!(
+            data.pending_export_replacement.as_deref(),
+            Some(pack.display().to_string().as_str())
+        );
+        assert!(!data.export_in_progress);
+        assert_eq!(
+            std::fs::read_to_string(pack.join("Pack_C4_60_vel096.wav")).unwrap(),
+            "earlier export"
+        );
+    }
+
+    #[test]
+    fn keeping_the_existing_pack_cancels_the_export() {
+        let (data, _) = exportable_session("keeps", true);
+        let backend =
+            dispatch_session_events(data, &[AppEvent::ExportAll, AppEvent::KeepExistingExport]);
+        let data = backend.0.data::<AppData>().unwrap();
+        assert!(data.pending_export_replacement.is_none());
+        assert!(!data.export_in_progress);
+    }
+
+    #[test]
+    fn confirming_replacement_starts_the_export() {
+        let (data, _) = exportable_session("confirms", true);
+        let backend = dispatch_session_events(
+            data,
+            &[AppEvent::ExportAll, AppEvent::ConfirmExportReplacement],
+        );
+        let data = backend.0.data::<AppData>().unwrap();
+        assert!(data.pending_export_replacement.is_none());
+        assert!(data.export_in_progress);
+    }
+
+    #[test]
+    fn exporting_a_new_pack_starts_without_asking() {
+        let (data, _) = exportable_session("fresh", false);
+        let backend = dispatch_session_events(data, &[AppEvent::ExportAll]);
+        let data = backend.0.data::<AppData>().unwrap();
+        assert!(data.pending_export_replacement.is_none());
+        assert!(data.export_in_progress);
+    }
+
+    #[test]
+    fn clipped_takes_are_named_after_export() {
+        let mut data = edited_confirmation_session();
+        data.export_in_progress = true;
+        let revision = data.settings_revision;
+        let backend = dispatch_session_events(
+            data,
+            &[AppEvent::ExportComplete {
+                count: 3,
+                directory: PathBuf::from("pack"),
+                revision,
+                clipped: vec![(60, 96), (62, 127)],
+            }],
+        );
+        let data = backend.0.data::<AppData>().unwrap();
+        let warning = data.error_message.as_deref().unwrap_or_default();
+        assert!(warning.contains("2 take(s)"), "{warning}");
+        assert!(
+            warning.contains("C4 vel 96") && warning.contains("D4 vel 127"),
+            "{warning}"
+        );
+    }
+
+    fn close_window(data: AppData) -> vizia::backend::BackendContext {
+        let mut context = Context::default();
+        data.build(&mut context);
+        let mut backend = vizia::backend::BackendContext::new(context);
+        backend.send_event(Event::new(WindowEvent::WindowClose));
+        vizia::events::EventManager::new().flush_events(&mut backend.0, |_| {});
+        backend
+    }
+
+    #[test]
+    fn closing_with_unsaved_takes_writes_the_recovery_checkpoint() {
+        let (data, recovery) = session_with_recovery_checkpoint("close_unsaved");
+        std::fs::remove_file(&recovery).unwrap();
+        close_window(data);
+        let (_, samples) = session::load_session(&recovery).unwrap();
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].audio_data, vec![0.25, -0.25]);
+    }
+
+    #[test]
+    fn closing_with_saved_takes_writes_no_checkpoint() {
+        let (mut data, recovery) = session_with_recovery_checkpoint("close_saved");
+        std::fs::remove_file(&recovery).unwrap();
+        data.has_unsaved_changes = false;
+        close_window(data);
+        assert!(!recovery.exists());
+    }
+
+    #[test]
+    fn closing_mid_batch_keeps_the_takes_already_captured() {
+        let (mut data, recovery) = session_with_recovery_checkpoint("close_recording");
+        std::fs::remove_file(&recovery).unwrap();
+        data.has_unsaved_changes = false;
+        data.app_state = AppState::Recording;
+        data.recorded_slot = Arc::new(Mutex::new(vec![confirmation_sample(72, 0.5)]));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
+        data.recording_worker = Some(RecordingWorker {
+            cancel,
+            handle: Some(std::thread::spawn(move || {
+                while !worker_cancel.load(Ordering::Acquire) {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            })),
+        });
+        close_window(data);
+        let (_, samples) = session::load_session(&recovery).unwrap();
+        assert_eq!(samples.iter().map(|s| s.note).collect::<Vec<_>>(), vec![72]);
+    }
+
+    #[test]
+    fn changing_settings_cancels_a_pending_pack_replacement() {
+        let (data, _) = exportable_session("settings_change", true);
+        let backend = dispatch_session_events(
+            data,
+            &[
+                AppEvent::ExportAll,
+                AppEvent::SetInstrumentName("Other".into()),
+            ],
+        );
+        let data = backend.0.data::<AppData>().unwrap();
+        assert!(data.pending_export_replacement.is_none());
     }
 }
