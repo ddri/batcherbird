@@ -59,7 +59,7 @@ The current `scripts/package-macos.sh` builds `batcherbird-vizia` in release mod
 - [ ] On a clean user account/Mac, install via the DMG, launch, verify microphone permission prompt, deny then grant access, and capture a real sample.
 - [ ] Confirm signing/notarization status and document the actual installation experience. Decide whether distribution without Developer ID signing/notarization is acceptable before public release.
 - [ ] Check the DMG mounts, contains the current app and Applications link, and installs/launches correctly. Inspect the actual artifact version and architecture.
-- [ ] Record all remaining limitations and failed checks. Do not push the release tag until required gates pass: `.github/workflows/release.yml` uploads `dist/Batcherbird.dmg` on a `v*` tag.
+- [ ] Record all remaining limitations and failed checks. Do not push the release tag until required gates pass: `.github/workflows/release.yml` publishes `Batcherbird.dmg`, `Batcherbird-manifest.json` and `SHA256SUMS` on a `v*` tag. It refuses tags that do not match the crate version (for example `v0.1.0`) or are not on `main`, and it reruns formatting, Clippy, tests and packaging regressions before building.
 
 ## Evidence log
 

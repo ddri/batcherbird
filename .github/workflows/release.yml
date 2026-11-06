@@ -5,8 +5,17 @@ on:
     tags:
       - 'v*'
 
+# Read-only by default. Only the publish job, which never checks out or runs
+# repository code, gets write access.
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   # Builds the current Vizia application through scripts/package-macos.sh.
@@ -14,27 +23,78 @@ jobs:
   # Signing/notarization are opt-in local steps documented in DISTRIBUTION.md.
   # This workflow has no developer credentials and publishes a local ad hoc signed
   # candidate; an upload does not establish hardware or OS compatibility.
-  build-macos:
-    name: Build & Release macOS DMG
+
+  verify:
+    name: Verify tag and run checks
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Tag must match crate versions and be on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          versions="$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; print("\n".join(sorted({p["version"] for p in json.load(sys.stdin)["packages"]})))')"
+          if [ "$(printf '%s\n' "$versions" | wc -l | tr -d ' ')" != "1" ]; then
+            echo "::error::Workspace crates have different versions: $(printf "%s " "$versions")"
+            exit 1
+          fi
+          if [ "$TAG" != "v$versions" ]; then
+            echo "::error::Tag $TAG does not match crate version v$versions"
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $TAG points at $GITHUB_SHA, which is not on main"
+            exit 1
+          fi
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: actions/cache@v6
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-release-
+          components: clippy, rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --check --all
+
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --workspace
+
+      - name: Sampler and packaging regressions
+        run: |
+          python3 scripts/test-sampler-render.py
+          python3 scripts/test-decent-render.py
+          bash scripts/test-package-macos.sh
+          bash scripts/test-verify-macos-package.sh
+          python3 scripts/test-package-manifest.py
+
+  build:
+    name: Build macOS DMG
+    needs: verify
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # No cargo cache: release artifacts are built from a clean toolchain and
+      # registry so a poisoned cache cannot reach a published binary.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Capture source revision
+        id: source
+        run: |
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          test -z "$(git status --porcelain)"
 
       - name: Package macOS App & DMG
         run: ./scripts/package-macos.sh
@@ -42,9 +102,51 @@ jobs:
       - name: Audit package
         run: bash scripts/verify-macos-package.sh dist/Batcherbird.app dist/Batcherbird.dmg
 
-      - name: Upload DMG to GitHub Release
+      - name: Write manifest and checksums
+        env:
+          SOURCE_REVISION: ${{ steps.source.outputs.revision }}
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          python3 scripts/package-manifest.py dist/Batcherbird.app dist/Batcherbird.dmg \
+            dist/Batcherbird-manifest.json --revision "$SOURCE_REVISION"
+          cd dist
+          shasum -a 256 Batcherbird.dmg Batcherbird-manifest.json > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload release files
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-files
+          path: |
+            dist/Batcherbird.dmg
+            dist/Batcherbird-manifest.json
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release files
+        uses: actions/download-artifact@v7
+        with:
+          name: release-files
+          path: release
+
+      - name: Check downloaded files against checksums
+        working-directory: release
+        run: sha256sum --check SHA256SUMS
+
+      - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/Batcherbird.dmg
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true
+          files: |
+            release/Batcherbird.dmg
+            release/Batcherbird-manifest.json
+            release/SHA256SUMS

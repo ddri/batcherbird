@@ -36,6 +36,7 @@ Release candidate work; hardware, target-sampler, and installer validation remai
 
 - Automatic looping is explicitly experimental and off by default, independently of silence trimming.
 - Documentation reflects the Vizia application and separates automated checks from hardware and release claims.
+- Release builds check more before publishing. The tag must match the app version and be on main; formatting, Clippy and the full test suite must pass; the DMG is built without cached files; and each release includes the manifest and a SHA256SUMS file. Only the final publish step can write to the repository.
 
 Historical entries below describe earlier development. Their feature and performance claims are not a validation record for the current application.
 
