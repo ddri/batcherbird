@@ -25,7 +25,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 hound = { workspace = true }
 crossbeam-channel = "0.5"
-rfd = "0.15"
+rfd = "0.17"
 dirs = "7.0"
 
 [dev-dependencies]
