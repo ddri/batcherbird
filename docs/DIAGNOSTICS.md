@@ -25,8 +25,9 @@ remembered device labels are omitted.
 Unknown values are explicit `null` with an explanation. The current build does
 not embed a verified Git revision or expose the active stream rate/channel/buffer
 configuration or OS version to the UI. Recorded rate metadata is not a live
-stream configuration. The engine's performance counters are not populated by the
-current callback paths, so zero observations do not claim healthy performance.
+stream configuration. Batcherbird does not measure audio callback timing, so
+the report makes no claim about real-time performance (`performance.available`
+is always `false`).
 Stream handle presence also does not establish that hardware capture is working.
 
 Reports use an atomic destination replacement: an unsuccessful write/commit keeps

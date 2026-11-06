@@ -3,7 +3,6 @@
 //! Core library for hardware synthesizer sampling automation.
 
 pub mod audio;
-pub mod audio_diagnostics;
 pub mod channel_routing;
 pub mod detection;
 pub mod error;
@@ -15,9 +14,6 @@ pub mod preview_player;
 pub mod professional_meters;
 pub mod sampler;
 
-pub use audio_diagnostics::{
-    AudioDiagnostics, AudioPerformanceReport, CallbackTimer, LockTimer, PerformanceStatus,
-};
 pub use channel_routing::ChannelRouting;
 pub use error::{BatcherbirdError, Result};
 pub use export::{

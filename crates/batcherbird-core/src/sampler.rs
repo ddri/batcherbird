@@ -1,5 +1,4 @@
 use crate::audio::AudioManager;
-use crate::audio_diagnostics::{AudioDiagnostics, AudioPerformanceReport};
 use crate::channel_routing::ChannelRouting;
 use crate::detection::{DetectionConfig, DetectionResult, SampleDetector};
 use crate::lock_free_recording::{LockFreeRecorder, LockFreeRecordingConfig};
@@ -476,7 +475,6 @@ pub struct SamplingEngine {
     audio_manager: AudioManager,
     config: SamplingConfig,
     level_meter_state: Arc<LevelMeterState>,
-    audio_diagnostics: Arc<AudioDiagnostics>,
     playthrough_active: Arc<AtomicBool>,
     channel_routing: Arc<AtomicU8>,
     input_gain_factor: Arc<AtomicU32>,
@@ -552,10 +550,6 @@ impl SamplingEngine {
     pub fn new(config: SamplingConfig) -> Result<Self> {
         let audio_manager = AudioManager::new()?;
 
-        // Initialize diagnostics with professional audio standards
-        // 128 samples at 44.1kHz = ~2.9ms budget per callback
-        let diagnostics = Arc::new(AudioDiagnostics::new(44100, 128));
-
         let routing = config.channel_routing;
         let initial_db = config.input_gain_db.clamp(-12.0, 12.0);
         let initial_factor = 10.0f32.powf(initial_db / 20.0);
@@ -563,7 +557,6 @@ impl SamplingEngine {
             audio_manager,
             config,
             level_meter_state: Arc::new(LevelMeterState::new()),
-            audio_diagnostics: diagnostics,
             playthrough_active: Arc::new(AtomicBool::new(false)),
             channel_routing: Arc::new(AtomicU8::new(routing.to_u8())),
             input_gain_factor: Arc::new(AtomicU32::new(initial_factor.to_bits())),
@@ -633,16 +626,6 @@ impl SamplingEngine {
     /// Get shared level meter state for monitoring and level testing (thread-safe)
     pub fn get_level_meter_state(&self) -> Arc<LevelMeterState> {
         Arc::clone(&self.level_meter_state)
-    }
-
-    /// Get comprehensive audio performance diagnostics
-    pub fn get_performance_diagnostics(&self) -> AudioPerformanceReport {
-        self.audio_diagnostics.get_performance_report()
-    }
-
-    /// Reset audio diagnostics (for testing)
-    pub fn reset_diagnostics(&self) {
-        self.audio_diagnostics.reset()
     }
 
     /// Start persistent audio monitoring stream with optional playthrough
@@ -847,7 +830,7 @@ impl SamplingEngine {
     ) -> Result<Sample> {
         // Execute the professional lock-free method in blocking context
         run_blocking(async {
-            let (sample, _performance) = self
+            let sample = self
                 .sample_single_note_lock_free(midi_conn, note, self.config.velocity)
                 .await?;
             Ok(sample)
@@ -945,7 +928,7 @@ impl SamplingEngine {
     ) -> Result<(Sample, Consumer<VizChunk>)> {
         // Execute the lock-free method and create visualization from audio data
         run_blocking(async {
-            let (sample, _performance) = self
+            let sample = self
                 .sample_single_note_lock_free(midi_conn, note, self.config.velocity)
                 .await?;
 
@@ -1478,13 +1461,12 @@ impl SamplingEngine {
     /// - Zero mutex contention in audio thread
     /// - No memory allocation during recording
     /// - Sample-accurate timing precision
-    /// - Professional-grade performance monitoring
     pub async fn sample_single_note_lock_free(
         &self,
         midi_output: &mut MidiOutputConnection,
         note: u8,
         velocity: u8,
-    ) -> Result<(Sample, AudioPerformanceReport)> {
+    ) -> Result<Sample> {
         // Get audio device and configuration first so the recorder (and the
         // exported sample metadata) match the device that actually captures
         let device = self
@@ -1552,9 +1534,6 @@ impl SamplingEngine {
 
         let end_time = tokio::time::Instant::now();
 
-        // Get performance diagnostics
-        let performance_report = self.get_performance_diagnostics();
-
         // Create sample with metadata matching the device config used for capture
         let sample = Sample {
             note,
@@ -1567,7 +1546,7 @@ impl SamplingEngine {
             audio_timing: end_time.duration_since(start_time),
         };
 
-        Ok((sample, performance_report))
+        Ok(sample)
     }
 }
 
