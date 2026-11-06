@@ -31,6 +31,16 @@ Release candidate work; hardware, target-sampler, and installer validation remai
 - Closing the window keeps unsaved takes, including a capture in progress, and offers them again at next launch.
 - The recovered-capture notice no longer reappears after the takes have been saved as a session, exported, or replaced by opening another session.
 - Opening a session no longer changes your export folder; an old relative export folder in preferences falls back to Documents instead of the drive root.
+- Opening a damaged or tampered session can no longer freeze the app or use huge amounts of memory. Sessions must point at ordinary audio files, each used once.
+- Stopping a take partway through a note now releases that exact key, so synths that ignore "all notes off" don't keep sounding.
+- The MIDI panic no longer floods older synths with thousands of messages. It now sends under 200, at a pace a standard 5-pin MIDI cable can carry.
+- Audio interfaces that deliver 24-bit, 32-bit or other less common sample formats can now be recorded from.
+- Automatic loop points start after the note's attack instead of at the very beginning, and the loop crossfade no longer causes a click or a jump in volume.
+- Exporting with automatic loops is faster: each take's loop points are now worked out once instead of once per file type.
+- Preset files keep the underscores in your instrument name (Warm_Pad.dspreset instead of WarmPad.dspreset).
+- While the export-folder picker is open, recording, exporting and session actions wait for it, so the folder you pick is never lost.
+- The command-line tool now reports a failure (non-zero exit status) for invalid notes or ranges and when no MIDI or audio device is found.
+- The command-line audio test records using the interface's own settings and no longer risks dropouts while recording.
 
 ### Changed
 

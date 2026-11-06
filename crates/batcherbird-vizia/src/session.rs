@@ -110,8 +110,32 @@ pub fn save_settings(path: &Path, settings: &SessionSettings) -> Result<(), Stri
     atomic_json(path, settings)
 }
 
+const SETTINGS_LIMIT: u64 = 1024 * 1024;
+const MANIFEST_LIMIT: u64 = 16 * 1024 * 1024;
+
+/// Open a file for reading only if it is a regular file no larger than `limit`.
+///
+/// Checking before opening matters: opening a FIFO blocks until a writer
+/// appears, and a device can return endless data, so neither may reach a reader.
+fn open_regular(path: &Path, limit: u64) -> Result<fs::File, String> {
+    let metadata = fs::metadata(path).map_err(err)?;
+    if !metadata.is_file() {
+        return Err(format!("'{}' is not a regular file.", path.display()));
+    }
+    if metadata.len() > limit {
+        return Err(format!("'{}' is too large.", path.display()));
+    }
+    let file = fs::File::open(path).map_err(err)?;
+    // Recheck the opened handle in case the path was swapped after the first check.
+    let opened = file.metadata().map_err(err)?;
+    if !opened.is_file() || opened.len() > limit {
+        return Err(format!("'{}' is not a regular file.", path.display()));
+    }
+    Ok(file)
+}
+
 pub fn load_settings(path: &Path) -> Result<SessionSettings, String> {
-    let reader = fs::File::open(path).map_err(err)?.take(1_048_576);
+    let reader = open_regular(path, SETTINGS_LIMIT)?.take(SETTINGS_LIMIT);
     serde_json::from_reader(reader).map_err(err)
 }
 
@@ -141,11 +165,8 @@ fn superseded_sidecar(path: &Path) -> Option<OwnedSidecar> {
     if fs::symlink_metadata(path).ok()?.file_type().is_symlink() {
         return None;
     }
-    let file = fs::File::open(path).ok()?;
-    if file.metadata().ok()?.len() > 16 * 1024 * 1024 {
-        return None;
-    }
-    let manifest: Manifest = serde_json::from_reader(file).ok()?;
+    let file = open_regular(path, MANIFEST_LIMIT).ok()?;
+    let manifest: Manifest = serde_json::from_reader(file.take(MANIFEST_LIMIT)).ok()?;
     if manifest.version != 1 || manifest.samples.is_empty() {
         return None;
     }
@@ -436,11 +457,14 @@ pub fn load_session(path: &Path) -> Result<(SessionSettings, Vec<Sample>), Strin
 }
 
 fn load_session_inner(path: &Path) -> Result<(SessionSettings, Vec<Sample>), String> {
-    let file = fs::File::open(path).map_err(err)?;
-    if file.metadata().map_err(err)?.len() > 16 * 1024 * 1024 {
-        return Err("Session manifest is too large.".into());
-    }
-    let manifest: Manifest = serde_json::from_reader(file)
+    let file = open_regular(path, MANIFEST_LIMIT).map_err(|error| {
+        if error.ends_with("too large.") {
+            "Session manifest is too large.".to_string()
+        } else {
+            error
+        }
+    })?;
+    let manifest: Manifest = serde_json::from_reader(file.take(MANIFEST_LIMIT))
         .map_err(|error| format!("The session manifest is invalid: {error}"))?;
     if manifest.version != 1 {
         return Err(format!(
@@ -454,6 +478,7 @@ fn load_session_inner(path: &Path) -> Result<(SessionSettings, Vec<Sample>), Str
         .unwrap_or(Path::new("."));
     let root = parent.canonicalize().map_err(err)?;
     let mut samples = Vec::with_capacity(manifest.samples.len());
+    let mut seen_audio = std::collections::HashSet::new();
     for stored in manifest.samples {
         if stored.note > 127
             || stored.velocity == 0
@@ -471,8 +496,18 @@ fn load_session_inner(path: &Path) -> Result<(SessionSettings, Vec<Sample>), Str
         if !audio_path.starts_with(&root) {
             return Err("Session audio must stay inside its session folder.".into());
         }
-        let file_bytes = fs::metadata(&audio_path).map_err(err)?.len();
-        let mut reader = hound::WavReader::open(&audio_path)
+        // Each take owns its WAV. Repeated references would multiply memory use
+        // far beyond the session's size on disk.
+        if !seen_audio.insert(audio_path.clone()) {
+            return Err(format!(
+                "Session audio '{}' is used more than once.",
+                stored.file.display()
+            ));
+        }
+        let audio_file = open_regular(&audio_path, u64::MAX)
+            .map_err(|error| format!("Cannot read audio '{}': {error}", stored.file.display()))?;
+        let file_bytes = audio_file.metadata().map_err(err)?.len();
+        let mut reader = hound::WavReader::new(std::io::BufReader::new(audio_file))
             .map_err(|error| format!("Cannot read audio '{}': {error}", stored.file.display()))?;
         let spec = reader.spec();
         if spec.channels == 0
@@ -636,6 +671,105 @@ mod tests {
         assert!(load_session(&path).unwrap_err().contains("invalid"));
         fs::remove_dir_all(dir).unwrap();
     }
+    /// Run `f` on a thread and fail instead of hanging if it blocks (e.g. opening a FIFO).
+    #[cfg(unix)]
+    fn finishes_quickly<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("loading blocked instead of rejecting a non-regular file")
+    }
+
+    #[cfg(unix)]
+    fn mkfifo(path: &Path) {
+        let status = std::process::Command::new("mkfifo")
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_manifest_is_rejected_without_blocking() {
+        let dir = test_dir();
+        let path = dir.join("pipe.batcherbird");
+        mkfifo(&path);
+        let probe = path.clone();
+        let error = finishes_quickly(move || load_session(&probe)).unwrap_err();
+        assert!(error.contains("not a regular file"), "{error}");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_settings_are_rejected_without_blocking() {
+        let dir = test_dir();
+        let path = dir.join("settings.json");
+        mkfifo(&path);
+        let probe = path.clone();
+        assert!(finishes_quickly(move || load_settings(&probe)).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_audio_is_rejected_without_blocking() {
+        let dir = test_dir();
+        let path = dir.join("patch.batcherbird");
+        save_session(&path, &SessionSettings::default(), &[sample()]).unwrap();
+        let wav = referenced_directory(&path).join("sample_0000.wav");
+        fs::remove_file(&wav).unwrap();
+        mkfifo(&wav);
+        let probe = path.clone();
+        let error = finishes_quickly(move || load_session(&probe)).unwrap_err();
+        assert!(error.contains("not a regular file"), "{error}");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_over_a_fifo_does_not_block() {
+        let dir = test_dir();
+        let path = dir.join("pipe.batcherbird");
+        mkfifo(&path);
+        let probe = path.clone();
+        // Whether the save succeeds is up to the filesystem; it must not hang
+        // reading the FIFO as a previous manifest.
+        let _ = finishes_quickly(move || {
+            save_session(&probe, &SessionSettings::default(), &[sample()])
+        });
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn repeated_audio_references_are_rejected() {
+        // One WAV referenced many times would multiply memory use far beyond
+        // the session's size on disk.
+        let dir = test_dir();
+        let path = dir.join("patch.batcherbird");
+        save_session(&path, &SessionSettings::default(), &[sample()]).unwrap();
+        let mut manifest: Manifest =
+            serde_json::from_reader(fs::File::open(&path).unwrap()).unwrap();
+        let first = manifest.samples[0].file.clone();
+        for velocity in 1..=100 {
+            manifest.samples.push(StoredSample {
+                file: first.clone(),
+                note: 61,
+                velocity,
+                recorded_at_ms: 0,
+                midi_timing_ms: 0,
+                audio_timing_ms: 0,
+            });
+        }
+        atomic_json(&path, &manifest).unwrap();
+        let error = load_session(&path).unwrap_err();
+        assert!(error.contains("more than once"), "{error}");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     fn sample() -> Sample {
         Sample {
             note: 60,

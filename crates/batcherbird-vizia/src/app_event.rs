@@ -59,6 +59,8 @@ pub enum AppEvent {
     SetExportFormat(AudioFormat),
     SetOutputDirectory(PathBuf),
     SelectOutputDirectory,
+    /// The export-folder picker closed; `None` means it was cancelled.
+    OutputDirectoryChosen(Option<PathBuf>),
     CycleExportFormat,
     CycleExportFormatBack,
     CyclePrevMidiDevice,

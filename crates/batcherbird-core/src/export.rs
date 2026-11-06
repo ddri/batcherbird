@@ -158,6 +158,70 @@ pub struct WavMetadata {
 
 pub struct SampleExporter {
     config: ExportConfig,
+    loops: LoopCache,
+}
+
+/// Loop points (start, inclusive end) by sample-content hash.
+type LoopMap = std::collections::HashMap<u64, Option<(u32, u32)>>;
+
+/// Loop points found during one exporter's lifetime, keyed by sample content.
+///
+/// The WAV `smpl` chunk, DecentSampler preset and SFZ preset all need the same
+/// loop points, and the search is the slowest step of export, so each prepared
+/// sample is searched once. Shared (`Arc`) with the short-lived exporters that
+/// write individual WAVs and staged packs.
+#[derive(Clone, Default)]
+struct LoopCache {
+    found: std::sync::Arc<std::sync::Mutex<LoopMap>>,
+    #[cfg(test)]
+    searched: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl LoopCache {
+    fn key(sample: &Sample) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (
+            sample.note,
+            sample.velocity,
+            sample.sample_rate,
+            sample.channels,
+        )
+            .hash(&mut hasher);
+        for value in &sample.audio_data {
+            value.to_bits().hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    fn get_or_search(
+        &self,
+        sample: &Sample,
+        search: impl FnOnce() -> Option<(u32, u32)>,
+    ) -> Option<(u32, u32)> {
+        let key = Self::key(sample);
+        if let Some(found) = self
+            .found
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&key).copied())
+        {
+            return found;
+        }
+        #[cfg(test)]
+        self.searched
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let result = search();
+        if let Ok(mut map) = self.found.lock() {
+            map.insert(key, result);
+        }
+        result
+    }
+
+    #[cfg(test)]
+    fn searches(&self) -> usize {
+        self.searched.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 /// Result of [`SampleExporter::export_pack`].
@@ -233,7 +297,10 @@ impl SampleExporter {
             fs::create_dir_all(&config.output_directory).map_err(BatcherbirdError::Export)?;
         }
 
-        Ok(Self { config })
+        Ok(Self {
+            config,
+            loops: LoopCache::default(),
+        })
     }
 
     /// Prepare audio once so WAV data, fades, and loop coordinates share one timeline.
@@ -274,16 +341,21 @@ impl SampleExporter {
         if !self.config.auto_loop {
             return None;
         }
-        let detector = crate::loop_detection::LoopDetector::new(Default::default());
-        detector
-            .detect_loop_points_channels(&sample.audio_data, sample.sample_rate, sample.channels)
-            .best_candidate
-            .map(|candidate| {
-                (
-                    candidate.start_sample as u32,
-                    candidate.end_sample.saturating_sub(1) as u32,
+        self.loops.get_or_search(sample, || {
+            crate::loop_detection::LoopDetector::new(Default::default())
+                .detect_loop_points_channels(
+                    &sample.audio_data,
+                    sample.sample_rate,
+                    sample.channels,
                 )
-            })
+                .best_candidate
+                .map(|candidate| {
+                    (
+                        candidate.start_sample as u32,
+                        candidate.end_sample.saturating_sub(1) as u32,
+                    )
+                })
+        })
     }
 
     pub fn export_sample(&self, sample: &Sample) -> Result<PathBuf> {
@@ -305,11 +377,11 @@ impl SampleExporter {
         ) {
             wav_config.sample_format = AudioFormat::Wav24Bit;
         }
-        SampleExporter { config: wav_config }.write_wav_file(
-            &filepath,
-            &sample.audio_data,
-            sample,
-        )?;
+        SampleExporter {
+            config: wav_config,
+            loops: self.loops.clone(),
+        }
+        .write_wav_file(&filepath, &sample.audio_data, sample)?;
         Ok(filepath)
     }
 
@@ -368,6 +440,7 @@ impl SampleExporter {
                 output_directory: staging.clone(),
                 ..self.config.clone()
             },
+            loops: self.loops.clone(),
         }
         .write_prepared(&processed);
         let staged = match staged {
@@ -429,6 +502,36 @@ impl SampleExporter {
             exported_files.push(self.generate_processed_sfz_file(processed, &exported_files)?);
         }
         Ok(exported_files)
+    }
+
+    /// Preset file name: the naming pattern with its per-sample fields removed.
+    ///
+    /// Underscores inside the instrument name are kept; only the separators
+    /// left behind by removed fields are collapsed and trimmed.
+    fn preset_name(&self) -> String {
+        let mut name = self.config.naming_pattern.clone();
+        for field in [
+            "{note_name}",
+            "{note}",
+            "{velocity}",
+            "{timestamp}",
+            "{sample_rate}",
+        ] {
+            name = name.replace(field, "");
+        }
+        let name = name.strip_suffix(".wav").unwrap_or(&name);
+        let mut collapsed = String::with_capacity(name.len());
+        for c in name.chars() {
+            if !(c == '_' && collapsed.ends_with('_')) {
+                collapsed.push(c);
+            }
+        }
+        let name = collapsed.trim_matches(|c: char| c == '_' || c.is_whitespace());
+        if name.is_empty() {
+            "Batcherbird_Instrument".to_string()
+        } else {
+            sanitize_filename(name)
+        }
     }
 
     fn generate_filename(&self, sample: &Sample) -> String {
@@ -667,22 +770,7 @@ impl SampleExporter {
         use std::io::Write;
 
         // Create the .dspreset filename (use the sample name from config or default)
-        let preset_name = self
-            .config
-            .naming_pattern
-            .replace("{note}", "")
-            .replace("{note_name}", "")
-            .replace("{velocity}", "")
-            .replace("_", "")
-            .replace(".wav", "")
-            .trim_matches('_')
-            .to_string();
-
-        let preset_name = if preset_name.is_empty() {
-            "Batcherbird_Instrument".to_string()
-        } else {
-            sanitize_filename(&preset_name)
-        };
+        let preset_name = self.preset_name();
 
         let dspreset_filename = format!("{}.dspreset", preset_name);
         let dspreset_path = self.config.output_directory.join(&dspreset_filename);
@@ -827,22 +915,7 @@ impl SampleExporter {
         use std::io::Write;
 
         // Create the .sfz filename (use the sample name from config or default)
-        let preset_name = self
-            .config
-            .naming_pattern
-            .replace("{note}", "")
-            .replace("{note_name}", "")
-            .replace("{velocity}", "")
-            .replace("_", "")
-            .replace(".wav", "")
-            .trim_matches('_')
-            .to_string();
-
-        let preset_name = if preset_name.is_empty() {
-            "Batcherbird_Instrument".to_string()
-        } else {
-            sanitize_filename(&preset_name)
-        };
+        let preset_name = self.preset_name();
 
         let sfz_filename = format!("{}.sfz", preset_name);
         let sfz_path = self.config.output_directory.join(&sfz_filename);
@@ -1616,7 +1689,76 @@ mod tests {
                 instrument_description: Some(description.to_string()),
                 ..ExportConfig::default()
             },
+            loops: Default::default(),
         }
+    }
+
+    #[test]
+    fn preset_names_keep_underscores_from_the_instrument_name() {
+        let exporter = |pattern: &str| SampleExporter {
+            config: ExportConfig {
+                naming_pattern: pattern.into(),
+                ..ExportConfig::default()
+            },
+            loops: Default::default(),
+        };
+        // The app's pattern is "{instrument}_{note_name}_{note}_{velocity}.wav".
+        assert_eq!(
+            exporter("Warm_Pad_{note_name}_{note}_{velocity}.wav").preset_name(),
+            "Warm_Pad"
+        );
+        assert_eq!(
+            exporter("DW6000 Brass_{note_name}_{note}_{velocity}_{timestamp}.wav").preset_name(),
+            "DW6000 Brass"
+        );
+        assert_eq!(
+            exporter("{note_name}_{note}_{velocity}.wav").preset_name(),
+            "Batcherbird_Instrument"
+        );
+    }
+
+    #[test]
+    fn each_sample_is_searched_for_a_loop_once_per_export() {
+        // The WAV smpl chunk, DecentSampler preset and SFZ preset all need the
+        // same loop points; the search is the slowest part of export.
+        let dir = std::env::temp_dir().join(format!(
+            "batcherbird-loop-once-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let exporter = SampleExporter::new(ExportConfig {
+            output_directory: dir.clone(),
+            sample_format: AudioFormat::All,
+            auto_loop: true,
+            embed_metadata: true,
+            ..ExportConfig::default()
+        })
+        .unwrap();
+        let samples: Vec<Sample> = [60u8, 64, 67]
+            .iter()
+            .map(|&note| Sample {
+                note,
+                velocity: 100,
+                audio_data: (0..48_000 * 2)
+                    .map(|frame| {
+                        0.3 * (std::f32::consts::TAU * 220.0 * frame as f32 / 48_000.0).sin()
+                    })
+                    .collect(),
+                sample_rate: 48_000,
+                channels: 1,
+                recorded_at: std::time::UNIX_EPOCH,
+                midi_timing: std::time::Duration::ZERO,
+                audio_timing: std::time::Duration::ZERO,
+            })
+            .collect();
+
+        exporter.export_samples(&samples).unwrap();
+
+        assert_eq!(exporter.loops.searches(), samples.len());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

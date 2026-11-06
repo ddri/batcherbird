@@ -157,53 +157,47 @@ impl MidiManager {
         Ok(conn_in)
     }
 
-    /// Send MIDI Panic - All Notes Off on all channels
-    /// Professional standard for handling stuck notes (like Logic/Ableton's panic button)
-    /// Enhanced for vintage synths like DW6000 that need specific timing
-    pub fn send_midi_panic(conn: &mut MidiOutputConnection) -> Result<()> {
-        let mut notes_sent = 0;
-
-        // PHASE 1: Quick emergency stop (most reliable for stuck notes)
-        for channel in 0..16 {
-            // Send All Notes Off CC (123) - fastest method
-            let all_notes_off = [0xB0 | channel, 123, 0];
-            let _ = conn.send(&all_notes_off); // Best effort, don't fail on error
-
-            // Send All Sound Off CC (120) - more aggressive
-            let all_sound_off = [0xB0 | channel, 120, 0];
-            let _ = conn.send(&all_sound_off);
+    /// The messages `send_midi_panic` sends, in order.
+    ///
+    /// All Sound Off (120), Reset All Controllers (121) and All Notes Off (123)
+    /// go to every channel. Explicit note-offs for all 128 keys go only to
+    /// `channel`, for synths that ignore All Notes Off. Sending note-offs on all
+    /// 16 channels (2,048 messages) takes about two seconds on a 31,250-baud DIN
+    /// link and overflows interface buffers, so this stays under 200 messages.
+    pub fn panic_messages(channel: u8) -> Vec<[u8; 3]> {
+        let channel = channel & 0x0F;
+        let mut messages = Vec::with_capacity(16 * 3 + 128);
+        for ch in 0..16 {
+            messages.push([0xB0 | ch, 123, 0]);
+            messages.push([0xB0 | ch, 120, 0]);
         }
+        for note in 0..128 {
+            messages.push([0x80 | channel, note, 0]);
+        }
+        for ch in 0..16 {
+            messages.push([0xB0 | ch, 121, 0]);
+        }
+        messages
+    }
 
-        // Brief pause for vintage synths to process CCs (DW6000 needs this)
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        // PHASE 2: Individual note offs for synths that ignore CCs
-        for channel in 0..16 {
-            for note in 0..128 {
-                let note_off = [0x80 | channel, note, 0];
-                if conn.send(&note_off).is_ok() {
-                    notes_sent += 1;
-                }
-
-                // Tiny delay every 32 notes for vintage MIDI parsing
-                if note % 32 == 31 {
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
+    /// Send a MIDI panic: silence every channel and release every key on `channel`.
+    ///
+    /// Messages are paced at roughly DIN MIDI speed (about 1 ms per 3-byte
+    /// message) so a hardware interface is never handed a burst it has to drop.
+    /// Sending is best effort; this only fails if no message could be sent.
+    pub fn send_midi_panic(conn: &mut MidiOutputConnection, channel: u8) -> Result<()> {
+        let mut sent = 0usize;
+        for message in Self::panic_messages(channel) {
+            if conn.send(&message).is_ok() {
+                sent += 1;
             }
-
-            // Reset All Controllers CC (121)
-            let reset_controllers = [0xB0 | channel, 121, 0];
-            let _ = conn.send(&reset_controllers);
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
-
-        // PHASE 3: Final safety (some synths need repeated messages)
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        for channel in 0..16 {
-            let all_notes_off = [0xB0 | channel, 123, 0];
-            let _ = conn.send(&all_notes_off);
+        if sent == 0 {
+            return Err(BatcherbirdError::Session(
+                "MIDI panic could not send any messages".into(),
+            ));
         }
-
-        let _ = notes_sent; // Suppress unused warning
         Ok(())
     }
 
