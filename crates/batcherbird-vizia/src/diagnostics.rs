@@ -57,10 +57,6 @@ pub fn report(data: &AppData) -> Value {
                 "frames": sample.audio_data.len().checked_div(sample.channels as usize),
             })
         });
-    let engine_report = data
-        .sampling_engine
-        .as_ref()
-        .map(|engine| engine.get_performance_diagnostics());
     json!({
         "schema_version": 1,
         "application": { "name": "Batcherbird", "version": env!("CARGO_PKG_VERSION"),
@@ -96,8 +92,8 @@ pub fn report(data: &AppData) -> Value {
             "diagnostics_export_busy": data.diagnostics_busy, "testing_note": data.is_testing_note },
         "recent_error": { "present": data.error_message.is_some(), "category": data.error_message.as_deref().map(error_category),
             "message": null, "message_note": "Raw errors are omitted because they may contain private paths or identifiers." },
-        "performance": { "available": false, "exposed_engine_callback_count": engine_report.as_ref().map(|report| report.callback_count),
-            "note": "The current callback paths do not populate the engine performance counters. Zero observations do not establish healthy performance." },
+        "performance": { "available": false,
+            "note": "Batcherbird does not measure audio callback timing, so this report says nothing about real-time performance." },
         "privacy": { "audio_included": false, "waveforms_included": false, "session_and_output_paths_collected": false,
             "device_names_included": true, "device_labels_may_contain_personal_text": true, "automatic_upload": false }
     })
